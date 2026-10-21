@@ -1,3 +1,4 @@
+import { LanguagePicker } from "../LanguagePicker.tsx";
 
 
 
@@ -28,6 +29,7 @@ export function Landing({ lang, onLangChange }: { lang: "fr" | "en"; onLangChang
         <a href="/privacy">{"Privacy"}</a>
         <a href="/terms">{"Terms"}</a>
         <a href="/research">{"Research"}</a>
+        <LanguagePicker compact />
       </footer>
     </div>
   );

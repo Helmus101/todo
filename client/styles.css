@@ -4985,3 +4985,12 @@ button[aria-expanded="true"] > .sm-chev { transform: rotate(45deg); }
 .tutor-subject-label { font-size: 11px; font-weight: 700; letter-spacing: .07em; text-transform: uppercase; color: var(--ink-3); }
 .tutor-subject-other { width: min(100%, 360px); text-align: center; border-radius: 999px !important; }
 .tutor-subject-other.on { border-color: var(--accent) !important; }
+.lang-picker { font: inherit; font-size: 14px; padding: 6px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface) !important; color: var(--ink) !important; max-width: 160px; }
+.lang-picker.compact { border: 0; background: transparent !important; color: var(--ink-2) !important; padding: 2px 4px; }
+/* Paper board hierarchy: what matters stands out (definitions, strategy, results, summary), the working sits quietly beside its problem. */
+.tutor-stage .sm-board-body :is(.sm-board-entry-note, .sm-board-entry-formula) .sm-board-entry-main { margin-left: 14px; padding-left: 12px; border-left: 1px solid var(--line); }
+.tutor-stage .sm-board-body :is(.sm-board-entry-note, .sm-board-entry-formula) .sm-board-line { font-size: 1rem; color: var(--ink-2); }
+.tutor-stage .sm-board-body .sm-board-entry-result .sm-board-entry-main { padding: 4px 10px; border-radius: 6px; background: rgba(60,120,80,.08) !important; }
+.tutor-stage .sm-board-body .sm-board-entry-summary .sm-board-entry-main { padding: 8px 12px; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); }
+.tutor-stage .sm-board-body .sm-board-entry-summary .sm-board-line::before { content: "In short  "; font-size: 11px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--ink-3); }
+.tutor-stage .sm-board-body .sm-board-entry-strategy .sm-board-entry-main { padding: 4px 10px; background: rgba(120,100,60,.08) !important; border-radius: 6px; }

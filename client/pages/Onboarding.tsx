@@ -1,3 +1,4 @@
+import { LanguagePicker } from "../LanguagePicker.tsx";
 import { useEffect, useState, useCallback } from "react";
 import type { ConnectionStatus } from "../../shared/types.ts";
 import { api } from "../api.ts";
@@ -123,7 +124,7 @@ export function Onboarding({ status, onStatus, onDone }: { status?: ConnectionSt
       <div className="onboard-card">
         <button className="onboard-skip" onClick={onDone} aria-label={"Skip"}>{"Skip"}</button>
         <div className="onboard-top">
-          <div className="onboard-brand"><Logo size={20} /> <span>Otto</span></div>
+          <div className="onboard-brand"><Logo size={20} /> <span>Otto</span> <LanguagePicker compact /></div>
           <div className="onboard-progress" role="progressbar" aria-valuemin={1} aria-valuemax={OB_STEPS} aria-valuenow={step + 1} aria-label={`Step ${step + 1} of ${OB_STEPS}`}>
             {Array.from({ length: OB_STEPS }).map((_, d) => <span key={d} aria-hidden="true" className={d <= step ? "on" : ""} />)}
           </div>

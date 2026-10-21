@@ -656,7 +656,7 @@ export function BoardArtifact({ task, onUndo, writing, onProblemResult, onWidget
   // Only once the board is long enough to scroll, and never repeating what is already in the first few lines
   // (reported: the definition and the laws appeared twice in a row at the top).
   const topIds = new Set(entries.filter((e) => e.kind !== "focus" && e.kind !== "annotation").slice(0, 4).map((e) => e.id));
-  const boardIsLong = entries.length + (task.problems?.length || 0) >= 7;
+  const boardIsLong = !paper && entries.length + (task.problems?.length || 0) >= 7; // on the paper board the key ideas stay where they were written, not copied to the top
   const keyIdeas = boardIsLong ? keyIdeaEntries(entries, topIds) : [];
   const latestSummary = boardIsLong ? [...entries].reverse().find((e) => e.kind === "summary" && e.owner !== "student" && !topIds.has(e.id)) : undefined;
   const [ideasOpen, setIdeasOpen] = useState<boolean>(() => { try { return localStorage.getItem("otto.board.ideasOpen") !== "0"; } catch { return true; } });

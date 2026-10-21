@@ -1,3 +1,4 @@
+import { getLanguage } from "../language.ts";
 import { useCallback, useContext, useEffect, useRef, useState } from "react";
 import { ChevronRight, ChevronDown, Maximize2, Minimize2, MessageSquare, Mic } from "lucide-react";
 import type { WebTask, TaskProblem, BoardEntry } from "../../shared/types.ts";
@@ -505,7 +506,7 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
       try {
         const lean = (t.board || []).slice(-40).map((e) => (JSON.stringify(e).length > 6000 ? { ...e, svg: undefined } : e));
         // A slow board call must never hold up the ones behind it: after 40 s it is given up on.
-        const r = await Promise.race([api.liveBoard(exchangeText(turns), lean, t.sourceSubject, exchangeText((t.chat || []).slice(-14, Math.max(0, (t.chat || []).length - turns.length)).map((m) => ({ who: m.role === "user" ? "you" as const : "otto" as const, text: String(m.text || "").slice(0, 400) })))), new Promise<{ board: any[] }>((_, rej) => setTimeout(() => rej(new Error("board timeout")), 40_000))]);
+        const r = await Promise.race([api.liveBoard(exchangeText(turns), lean, t.sourceSubject, exchangeText((t.chat || []).slice(-14, Math.max(0, (t.chat || []).length - turns.length)).map((m) => ({ who: m.role === "user" ? "you" as const : "otto" as const, text: String(m.text || "").slice(0, 400) }))), getLanguage()), new Promise<{ board: any[] }>((_, rej) => setTimeout(() => rej(new Error("board timeout")), 40_000))]);
         setBoardNote(null);
         if (!r.board?.length) return;
         const cur = taskRef.current!;
@@ -1046,13 +1047,19 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
             </div>
             <div className="tutor-chat-history">
               {!task.chat?.length && <p className="tutor-chat-empty">{"Nothing yet — say hi to Otto."}</p>}
-              {/* Otto's latest reply is already in the bubble right below — listing it here too showed it twice. */}
-              {(task.chat || []).slice(0, task.chat?.length && task.chat[task.chat.length - 1].role === "assistant" ? -1 : undefined).map((msg, i) => (
+              {/* The whole conversation, including Otto's latest answer and the words being said right now. */}
+              {(task.chat || []).map((msg, i) => (
                 <div key={i} className={`tutor-chat-message ${msg.role}`}>
                   <div className="tutor-chat-role">{msg.role === "user" ? "You" : "Otto"}</div>
                   <div className="tutor-chat-text"><MathText text={friendlyExerciseText(msg.text, "en" === "en")} /></div>
                 </div>
               ))}
+              {liveStatus === "live" && caption?.text && !(task.chat || []).some((m) => String(m.text || "").endsWith(caption.text.slice(-40))) ? (
+                <div className={`tutor-chat-message ${caption.who === "you" ? "user" : "assistant"}`}>
+                  <div className="tutor-chat-role">{caption.who === "you" ? "You" : "Otto"}</div>
+                  <div className="tutor-chat-text"><MathText text={caption.text} /></div>
+                </div>
+              ) : null}
               <div ref={chatEndRef} />
             </div>
           </div>

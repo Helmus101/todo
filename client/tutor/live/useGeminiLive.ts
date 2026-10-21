@@ -1,3 +1,4 @@
+import { getLanguage } from "../../language.ts";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "../../api.ts";
 import { startMic, Player, type Mic } from "./audio.ts";
@@ -87,7 +88,7 @@ export function useGeminiLive(opts: LiveOptions) {
     };
     try {
       const o = optsRef.current;
-      const [{ GoogleGenAI, Modality }, tok] = await Promise.all([import("@google/genai"), api.liveToken({ subject: o.subject, pastSessions: o.pastSessions, resuming: o.resuming })]);
+      const [{ GoogleGenAI, Modality }, tok] = await Promise.all([import("@google/genai"), api.liveToken({ lang: getLanguage(), subject: o.subject, pastSessions: o.pastSessions, resuming: o.resuming })]);
       if (!aliveRef.current) return;
       // Each provider is a function that either gets a live call going or throws (cleaning up after itself); they are tried in order below.
       type Cred = { token: string; model: string; models?: string[]; instructions: string };

@@ -11,8 +11,36 @@ import { backgroundBlock } from "../tutor.ts";
 import { selectJournal } from "../journal.ts";
 import { writeBoard } from "../tutorTurn/boardWriter.ts";
 import { liveInstructions } from "../../shared/liveTutor.ts";
+import { isLangCode, languageName } from "../../shared/languages.ts";
+import { createTutorChat, usageOf } from "../claude.ts";
+
+// Interface translations: fixed UI strings only (never anything the student wrote), cached per language so each string is translated once.
+const TRANSLATIONS = new Map<string, string>();
 
 export function registerTutorRoutes(app: express.Express): void {
+  app.post("/api/translate", rateLimit(40, 60_000), ah(async (req, res) => {
+    const lang = req.body?.lang;
+    const strings: string[] = (Array.isArray(req.body?.strings) ? req.body.strings : []).filter((x: unknown) => typeof x === "string" && x.trim() && x.length <= 240).slice(0, 80);
+    if (!isLangCode(lang) || lang === "en" || !strings.length) { res.json({ translations: {} }); return; }
+    const out: Record<string, string> = {};
+    const todo = strings.filter((x) => { const hit = TRANSLATIONS.get(`${lang}\n${x}`); if (hit) out[x] = hit; return !hit; });
+    if (todo.length && aiReady()) {
+      try {
+        const r: any = await createTutorChat({
+          max_tokens: 4000, temperature: 0, response_format: { type: "json_object" },
+          messages: [
+            { role: "system", content: `You translate the interface of a tutoring app from English into ${languageName(lang)}. Input: a JSON array of UI strings. Output: a JSON object {"t":[...]} with exactly one translation per input string, same order. Keep it short and natural, as a native app would word it. Keep placeholders, numbers, emoji, symbols, URLs and proper names (Otto, Pronote, Google, Gmail, SAT, Desmos) unchanged. Never explain.` },
+            { role: "user", content: JSON.stringify(todo) },
+          ],
+        }, true);
+        const parsed = JSON.parse(String(r?.choices?.[0]?.message?.content || "{}").replace(/^```(?:json)?|```$/g, ""));
+        const t: unknown[] = Array.isArray(parsed?.t) ? parsed.t : [];
+        todo.forEach((src, i) => { const v = t[i]; if (typeof v === "string" && v.trim()) { TRANSLATIONS.set(`${lang}\n${src}`, v); out[src] = v; } });
+      } catch { /* the page simply stays in English for these strings */ }
+    }
+    res.json({ translations: out });
+  }));
+
   // Otto SPEAKS FIRST: the tutor session's opening line (see tutorOpener in server/claude.ts). REAL, not a
   // template — the browser's own session history (the actual board lines and questions from the student's
   // last sessions, which exist ONLY in their browser) rides up in the request and is grounded in alongside
@@ -64,6 +92,7 @@ export function registerTutorRoutes(app: express.Express): void {
     let detail = "";
     try {
       const subject = typeof req.body?.subject === "string" ? req.body.subject.trim().slice(0, 80) : "";
+      const language = isLangCode(req.body?.lang) ? languageName(req.body.lang) : "";
       const profile = req.session.profile || emptyProfile();
       const memory = (Array.isArray(req.body?.pastSessions) ? req.body.pastSessions : []).slice(0, 3).map((m: any) => ({
         when: typeof m?.when === "string" ? m.when.trim().slice(0, 40) : undefined,
@@ -79,7 +108,7 @@ export function registerTutorRoutes(app: express.Express): void {
       // Their level, from Settings: the year or grade, plus the programme (IB / AP / Bac), so every question is pitched at it.
       const trackName = ({ ib: "IB", ap: "AP", bac: "French Bac", other: "" } as Record<string, string>)[String(profile.track || "")] || "";
       const level = [profile.yearLevel, trackName && `${trackName} programme`].filter(Boolean).join(", ");
-      const instructions = liveInstructions({ subject, level: level || undefined, background, resuming: req.body?.resuming === true });
+      const instructions = liveInstructions({ subject, level: level || undefined, background, resuming: req.body?.resuming === true, language: language || undefined });
 
       // The browser tries these in order: Gemini Live first (when GEMINI_API_KEY is set), then OpenAI Realtime (a "mini" model, over WebRTC)
       // as the fallback. LIVE_PROVIDER=gemini or =openai pins one. A provider whose credential can't be minted is simply left out.
@@ -140,7 +169,8 @@ export function registerTutorRoutes(app: express.Express): void {
     const tokens = { in: 0, out: 0, cachedIn: 0 };
     try {
       const history = typeof req.body?.history === "string" ? req.body.history.slice(-3000) : "";
-      const out = await writeBoard({ exchange, board, subject, history }, tokens);
+      const language = isLangCode(req.body?.lang) && req.body.lang !== "en" ? languageName(req.body.lang) : "";
+      const out = await writeBoard({ exchange, board, subject, history, language }, tokens);
       const profile = req.session.profile || emptyProfile();
       addUsage(profile, tokens, "chat");
       res.json({ board: out.board });

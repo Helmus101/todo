@@ -1,3 +1,4 @@
+import { LanguagePicker } from "../LanguagePicker.tsx";
 import { useEffect, useState, useCallback, useRef } from "react";
 import type { WebTask, ConnectionStatus, Profile } from "../../shared/types.ts";
 import { api, type IntegrationItem, type ConnectedAccount } from "../api.ts";
@@ -331,6 +332,10 @@ export function SettingsPage({ status, tasks, onSignOut, onChanged, onTasksChang
       <section className="settings-sec reveal" style={{ ["--d" as any]: "0.09s" }}>
         <h3>{"Preferences"}</h3>
         <div className="set-list">
+          <label className="set-row">
+            <span className="set-text"><b>{"Language"}</b><span className="settings-hint">{"The whole app, and Otto's voice and board, use this language."}</span></span>
+            <LanguagePicker />
+          </label>
           <label className="set-row">
             <span className="set-text"><b>{"Pause Otto"}</b><span className="settings-hint">{"Stops all AI activity. Your tasks stay as they are."}</span></span>
             <span className="switch"><input type="checkbox" checked={paused} onChange={(e) => {
