@@ -23,6 +23,7 @@ import { Onboarding } from "./pages/Onboarding.tsx";
 import { SettingsPage } from "./pages/Settings.tsx";
 import { StudyLogPage } from "./pages/Journal.tsx";
 import { StandaloneStudyEntry } from "./pages/StudyEntry.tsx";
+import { AdminPage } from "./pages/Admin.tsx";
 import { MistakeLogPage } from "./pages/MistakeLog.tsx";
 import { AddTask, ConnectCard, TaskSkeleton } from "./pages/Dashboard.tsx";
 import { PrivacyBody, ResearchPageBody, TermsBody } from "./pages/Legal.tsx";
@@ -699,7 +700,7 @@ export function App() {
   const [fullTry, setFullTry] = useState(0);
   useEffect(() => {
     if (!status?.loggedIn || fullApp) return;
-    const ok = route === "tutor" || route.startsWith("tutor/session/") || route === "settings" || route === "full" || route === "privacy" || route === "terms" || route === "research";
+    const ok = route === "tutor" || route.startsWith("tutor/session/") || route === "settings" || route === "full" || (route === "admin" && !!status?.isAdmin) || route === "privacy" || route === "terms" || route === "research";
     if (!ok) navigate("tutor");
   }, [status?.loggedIn, fullApp, route]);
   // /full: unlock everything for this account, then show Today.
@@ -924,6 +925,7 @@ export function App() {
           <nav className="topnav-links">
             <a className={`topnav-link ${route === "tutor" || route.startsWith("tutor/session/") ? "active" : ""}`} href="/tutor">{"Tutor"}</a>
             <a className={`topnav-link ${route === "settings" ? "active" : ""}`} href="/settings">{"Settings"}</a>
+            {!isPhone && !!status?.isAdmin && <a className={`topnav-link ${route === "admin" ? "active" : ""}`} href="/admin">{"Usage"}</a>}
             <button type="button" className="topnav-link" onClick={() => void signOut()}>{"Sign out"}</button>
           </nav>
         ) : (
@@ -959,6 +961,7 @@ export function App() {
             <div className="topnav-more-menu">
               {!isPhone && <a className={`topnav-link ${route === "errorlog" ? "active" : ""}`} href="/errorlog">{"Mistakes"}</a>}
               <a className={`topnav-link ${route === "settings" ? "active" : ""}`} href="/settings">{"Settings"}</a>
+              {!isPhone && !!status?.isAdmin && <a className={`topnav-link ${route === "admin" ? "active" : ""}`} href="/admin">{"Usage"}</a>}
             </div>
           </details>
         </nav>
@@ -987,6 +990,17 @@ export function App() {
             <span>{" You haven't checked off a task in over a week, so Otto stopped using AI. Ready to get going again?"}</span>
           </div>
           <button type="button" className="btn primary" onClick={() => { void api.setPaused(false).then(() => loadStatus()).catch((e: any) => notify(e?.message || "Couldn't resume — try again.", "error")); }}>{"Restart AI"}</button>
+        </div>
+      ) : null}
+      {status?.loggedIn && status.weekly?.over ? (
+        <div className="autopause-banner" role="alert">
+          <div>
+            <b>{"This week's AI allowance is used up."}</b>
+            <span>{` You've used $${status.weekly.usd.toFixed(2)} of $${status.weekly.limit.toFixed(2)}. It resets on Monday, or you can ask for more.`}</span>
+          </div>
+          {status.weekly.requested
+            ? <span className="settings-hint">{"Requested. You'll get it as soon as it's approved."}</span>
+            : <button type="button" className="btn primary" onClick={() => { void api.requestMoreUsage().then(() => loadStatus()).catch((e: any) => notify(e?.message || "Couldn't send the request — try again.", "error")); }}>{"Request more usage"}</button>}
         </div>
       ) : null}
       {onboard && <Onboarding status={status} onStatus={loadStatus} onDone={finishOnboard} />}
@@ -1022,6 +1036,8 @@ export function App() {
         <StandaloneStudyEntry tasks={tasks} setTasks={setTasks} status={status} notify={notify} navigate={navigate} />
       ) : route === "coursework" ? (
         <Coursework onTasksChanged={() => { void api.tasks().then(setTasks).catch(() => {}); }} />
+      ) : route === "admin" && !!status?.isAdmin ? (
+        <AdminPage />
       ) : route === "errorlog" ? (
         <MistakeLogPage lang={status?.language} />
       ) : route === "exercises" ? (
