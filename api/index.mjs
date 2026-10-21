@@ -21620,7 +21620,8 @@ var CSP = [
   // by style-src — missing here while vercel.json's copy of this CSP already listed it, so on the
   // self-hosted/Docker path (where THIS header is the one actually served) every page silently fell
   // back to a system font. Same class of drift as the font-src/connect-src fixes above.
-  "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
+  // Fonts are bundled (client/main.tsx): no request to Google Fonts, so no external stylesheet host is allowed.
+  "style-src 'self' 'unsafe-inline'",
   // blob:: a student's uploaded image material (ImageArtifact.tsx) renders straight from a same-page
   // blob: URL (StudySetup's/StudyMode's upload flow, same origin as the PDF blob: already allowed under
   // frame-src below) — without this, EVERY uploaded image silently failed to render (CSP blocks it before
@@ -21662,7 +21663,7 @@ var CSP = [
   // itself comes from fonts.googleapis.com (style-src) but the .woff2 files live on fonts.gstatic.com.
   // Missing here while vercel.json's copy of this CSP already had it: on the self-hosted/Docker path
   // (where THIS header is the one actually served) every page silently rendered in a fallback font.
-  "font-src 'self' data: https://fonts.gstatic.com",
+  "font-src 'self' data:",
   // 'self' blob: data: — tutor speech (server/index.ts's /api/tts, Gemini TTS) reaches the client as a same-page
   // blob: URL handed to an <audio> element (useSpeechSynthesis.ts). Once ANY media-src is set it replaces
   // the default-src fallback entirely (same iframe-like override trap as frame-src above), so without this

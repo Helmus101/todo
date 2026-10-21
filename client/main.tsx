@@ -5,6 +5,14 @@ import * as Sentry from "@sentry/react";
 import { App } from "./App.tsx";
 import { startTranslator } from "./language.ts";
 import "katex/dist/katex.min.css";
+// Fonts are served from our own origin (bundled by Vite), NOT from Google Fonts: loading them from fonts.googleapis.com
+// sends every visitor's IP address to Google before they have agreed to anything, which German and EU regulators
+// and courts (LG München I, 3 O 17493/20) have found unlawful without consent.
+import "@fontsource/instrument-serif/latin-400.css";
+import "@fontsource/instrument-serif/latin-400-italic.css";
+import "@fontsource/kalam/latin-400.css";
+import "@fontsource/kalam/latin-700.css";
+import "@fontsource/handlee/latin-400.css";
 import "./styles.css";
 import "./tally.css";
 import "./lab.css";

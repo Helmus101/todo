@@ -5187,6 +5187,14 @@ section("Blog: evidence-based guides, each a real prerendered page with its own 
   check("the landing page links to the blog from the nav and the footer (no guide list on the page itself)", (readFileSync("client/pages/Landing.tsx", "utf8").match(/href="\/blog"/g) || []).length === 2 && !/landing-blog/.test(readFileSync("client/pages/Landing.tsx", "utf8")));
 }
 
+section("Dropdowns share one considered style, and no page loads fonts from Google (GDPR)");
+{
+  const mc = readFileSync("client/minimal.css", "utf8");
+  check("every <select> gets a chevron, padding, hover, focus-visible and disabled state", /select:not\(\[multiple\]\):not\(\[size\]\)\s*\{[^}]*appearance: none/.test(mc) && /background-image: url\("data:image\/svg\+xml/.test(mc) && /select:not\(\[multiple\]\):not\(\[size\]\):hover/.test(mc) && /:focus-visible/.test(mc) && /select:disabled/.test(mc));
+  const idx = readFileSync("index.html", "utf8"), vj = readFileSync("vercel.json", "utf8"), srv = readFileSync("server/index.ts", "utf8"), css = readFileSync("client/styles.css", "utf8");
+  check("fonts are bundled, not fetched from Google: no Google Fonts link, @import or CSP allowance", !/fonts\.(googleapis|gstatic)\.com/.test(idx + css) && !/fonts\.(googleapis|gstatic)\.com/.test(vj) && !/"(style|font)-src[^"]*fonts\.g/.test(srv) && /@fontsource\/kalam/.test(readFileSync("client/main.tsx", "utf8")));
+}
+
 section("Board changes are undoable in the Tutor session (spec §12 #10, source pins)");
 {
   const ts = readFileSync("client/tutor/TutorSession.tsx", "utf8");
@@ -6111,7 +6119,7 @@ section("Production readiness — the two CSP copies agree, and the Docker build
   check("both CSP copies declare the same directives", directions(exprCsp) === directions(vercelCsp));
   const differing = Object.keys(exprCsp).filter((k) => vercelCsp[k] && exprCsp[k] !== vercelCsp[k]);
   check(`no directive drifted between the Express CSP and vercel.json (${differing.join(", ") || "none"})`, differing.length === 0);
-  check("the Express CSP allows the Google Fonts stylesheet both stylesheets @import", /style-src[^"]*https:\/\/fonts\.googleapis\.com/.test(cspArraySrc));
+  check("the Express CSP no longer allows Google Fonts (fonts are bundled, GDPR)", !/fonts\.g(oogleapis|static)\.com/.test(cspArraySrc.split("\n").filter((l) => /^\s*"/.test(l)).join("\n")));
 
   // .dockerignore must NOT exclude scripts/: `npm run build` ends with scripts/prerender-landing.tsx, so
   // ignoring it made the Docker image build die on ERR_MODULE_NOT_FOUND after vite had already finished
