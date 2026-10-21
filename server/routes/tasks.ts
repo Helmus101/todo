@@ -23,7 +23,7 @@ import { emptyProfile, isHandled, tzOf, addUsage, nextLeitnerReview, practiceAns
 import { computeWorkload } from "../workload.ts";
 import { schoolRecordLine } from "../schoolRecord.ts";
 import { applyRememberFact, synthesizeStudentModel, aiReady, classifyProviderError, refineManualTask, chatAboutTask, expandStep, runSubstep, studyHelp, evaluateCheckpoint, needsAdaptiveReplan, computeTaskOutcome, interactiveSceneDocument, INTERACTIVE_SCENE_CSP } from "../claude.ts";
-import { loadState, saveState, cloudEnabled, getJob, getLatestJob, eventsForTask, recordEvent, countActiveJobs, activeJobTaskIds, loadBanditState, saveBanditState, recordSessionOutcome, recordMetric, getStudyMetricsSummary } from "../store.ts";
+import { loadState, saveState, cloudEnabled, getJob, getLatestJob, eventsForTask, recordEvent, countActiveJobs, activeJobTaskIds, loadBanditState, saveBanditState, recordSessionOutcome, recordMetric, getStudyMetricsSummary, pruneOldData } from "../store.ts";
 import { contextKey as banditContextKey, chooseArm, updatePosterior, computeLatencyReward, leadingArm, POMODORO_ARMS, FLASHCARD_ARMS, AUDIO_ARMS, DENSITY_ARMS, ORDERING_ARMS, CHAT_STYLE_ARMS, GRANULARITY_ARMS } from "../bandit.ts";
 import { predictNextEngagement, predictWeakSubjects, aggregateSubjectSignals, subjectFrequency, orderingBoost, weakSubjectBoost, twoMinuteRuleBoost, stallNudgeLine } from "../patterns.ts";
 import * as tasks from "../tasks.ts";
@@ -1594,7 +1594,9 @@ export function registerTaskRoutes(app: express.Express): void {
     if (!secret && PROD) { res.status(503).json({ error: "CRON_SECRET not configured" }); return; }
     try {
       const out = await jobs.cronTick();
-      console.log(`${new Date().toISOString()} [cron] drain: ${JSON.stringify(out)}`);
+      // Retention rides the daily tick: cheap indexed deletes, and a failure never fails the drain.
+      const pruned = await pruneOldData().catch(() => undefined);
+      console.log(`${new Date().toISOString()} [cron] drain: ${JSON.stringify(out)}${pruned ? ` prune: ${JSON.stringify(pruned)}` : ""}`);
       res.json(out);
     } catch (e: any) {
       console.error("[cron] drain failed:", e);

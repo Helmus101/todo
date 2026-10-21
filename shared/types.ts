@@ -140,6 +140,8 @@ export interface Profile {
   paused?: boolean;       // "pause all AI usage" — blocks generation and task runs server-side
   /** AI spend this week (Monday–Sunday, UTC) in USD, plus any extra allowance the admin granted for THAT week. */
   weekSpend?: { key: string; usd: number; extraUsd: number };
+  /** Live voice calls this account has made: how many, total seconds, and when the last one ended. Counted server-side (admin list). */
+  liveStats?: { count: number; seconds: number; lastAt: string };
   /** The student asked for more usage this week (the admin sees it and can grant it). */
   usageRequest?: { at: string; weekKey: string; note?: string };
   autoPausedAt?: string;  // set when AI was paused automatically after 7 days with no task checked off; cleared when the student resumes
@@ -490,6 +492,7 @@ export function normalizeProfile(p: any): Profile {
     autoApprove: Array.isArray(p?.autoApprove) ? p.autoApprove.map(String) : undefined,
     highPriorityPeople: Array.isArray(p?.highPriorityPeople) ? p.highPriorityPeople.map(String) : undefined,
     autoArchivePatterns: Array.isArray(p?.autoArchivePatterns) ? p.autoArchivePatterns.map(String) : undefined,
+    liveStats: p?.liveStats && typeof p.liveStats === "object" ? { count: Math.max(0, Number(p.liveStats.count) || 0), seconds: Math.max(0, Number(p.liveStats.seconds) || 0), lastAt: typeof p.liveStats.lastAt === "string" ? p.liveStats.lastAt : "" } : undefined,
     usage: p?.usage && typeof p.usage === "object" ? {
       in: Number(p.usage.in) || 0, out: Number(p.usage.out) || 0, runs: Number(p.usage.runs) || 0,
       since: typeof p.usage.since === "string" ? p.usage.since : new Date().toISOString(),
@@ -2194,6 +2197,7 @@ export interface ConnectionStatus {
   googleConfigured: boolean;  // Composio configured (COMPOSIO_API_KEY) — powers Google + every integration
   cloud: boolean;             // Supabase configured → accounts + state persist
   weekly?: { usd: number; cap: number; limit: number; extra: number; over: boolean; requested: boolean }; // this week's AI allowance
+  writeBehind?: boolean;      // false on serverless (commits flush immediately): the client then skips the tab-hide flush
   autoPaused?: boolean;       // AI was paused automatically for inactivity: show the notice with a Resume button
   paused: boolean;            // "pause all AI usage" toggle — client skips auto-run/generate while true
   highPriorityPeople?: string[]; // used ONLY to break ranking ties (VIP's task sorts first) — no UI of its own

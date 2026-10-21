@@ -16,6 +16,7 @@
  * that happily returns a tangentially-related article (an unrelated person/place/topic that merely
  * shares a word with the query) — see wikipediaSearch's own relevance filter below.
  */
+import { htmlToPlainText, readBodyCapped } from "./safeHtml.ts";
 type SearchResult = { title: string; url: string; snippet: string };
 interface SearchOpts {
   /** Restrict results to these hosts (e.g. ["ibdocuments.com"]). Passed to the API providers natively, and as
@@ -192,11 +193,8 @@ export async function readPage(url: string, maxChars = 6000): Promise<string> {
     const r = await fetch(url, { signal: AbortSignal.timeout(6000), redirect: "error", headers: { "user-agent": "Mozilla/5.0 (compatible; OttoStudyBot/1.0)" } });
     const ct = r.headers.get("content-type") || "";
     if (!r.ok || !/text\/html|text\/plain/i.test(ct)) return "";
-    const html = (await r.text()).slice(0, 1_500_000);
-    const text = html
-      .replace(/<script[\s\S]*?<\/script>|<style[\s\S]*?<\/style>|<noscript[\s\S]*?<\/noscript>|<nav[\s\S]*?<\/nav>|<footer[\s\S]*?<\/footer>/gi, " ")
-      .replace(/<\/(p|div|li|tr|h[1-6]|br)>/gi, "\n");
-    return stripTags(text.replace(/<\/?[^>]+>/g, (m) => (/^<\/(p|div|li|tr|h[1-6])/i.test(m) ? "\n" : " "))).slice(0, maxChars);
+    const html = await readBodyCapped(r, 400_000);
+    return stripTags(htmlToPlainText(html, ["script", "style", "noscript", "nav", "footer"])).slice(0, maxChars);
   } catch { return ""; }
 }
 

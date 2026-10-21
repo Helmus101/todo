@@ -10,6 +10,8 @@ export interface LiveOptions {
   /** What Otto's server uses to build the memory the voice starts with (earlier sessions kept on this device). */
   pastSessions?: { when: string; subject?: string; lines: string[]; asked: string[] }[];
   resuming?: boolean;
+  /** When resuming: the last turns of this session ("Student: …" / "Otto: …") so the voice picks up exactly where it stopped. */
+  resumeTail?: string[];
   /** One finished utterance: what the student said, or what Otto said (from Gemini's own transcription). */
   onTurn: (who: "you" | "otto", text: string) => void;
   /** Otto finished speaking: time for the board writer. */
@@ -93,7 +95,7 @@ export function useGeminiLive(opts: LiveOptions) {
     };
     try {
       const o = optsRef.current;
-      const [{ GoogleGenAI, Modality }, tok] = await Promise.all([import("@google/genai"), api.liveToken({ lang: getLanguage(), subject: o.subject, pastSessions: o.pastSessions, resuming: o.resuming })]);
+      const [{ GoogleGenAI, Modality }, tok] = await Promise.all([import("@google/genai"), api.liveToken({ lang: getLanguage(), subject: o.subject, pastSessions: o.pastSessions, resuming: o.resuming, resumeTail: o.resumeTail })]);
       if (!aliveRef.current) return;
       // Each provider is a function that either gets a live call going or throws (cleaning up after itself); they are tried in order below.
       type Cred = { token: string; model: string; models?: string[]; instructions: string };

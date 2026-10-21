@@ -75,6 +75,7 @@ async function fetchToken(body: Record<string, string>): Promise<TokenResponse> 
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body: new URLSearchParams({ client_id: CLIENT_ID!, client_secret: CLIENT_SECRET!, ...body }).toString(),
+    signal: AbortSignal.timeout(10_000),
   });
   if (!res.ok) {
     const detail = await res.text().catch(() => "");
@@ -177,6 +178,7 @@ export async function blackbaudAssignments(email: string): Promise<BlackbaudAssi
     // verified end to end (no real access token has exercised this yet — see the file-level comment).
     const res = await fetch(`${API_BASE}/school/v1/academics/assignments?student_id=me`, {
       headers: { Authorization: `Bearer ${token}`, "Bb-Api-Subscription-Key": SUBSCRIPTION_KEY! },
+      signal: AbortSignal.timeout(10_000),
     });
     if (!res.ok) { console.warn(`[blackbaud] assignments fetch failed (${res.status})`); return []; }
     const data = await res.json();

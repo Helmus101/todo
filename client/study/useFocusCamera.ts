@@ -61,6 +61,7 @@ export function useFocusCamera({
   // previously both silently stopped the moment the widget unmounted.
   const sessionStartTimeRef = useRef<number | null>(null);
   const metricsHistoryRef = useRef<FaceTrackingState[]>([]);
+  const lastSampleAtRef = useRef<number>(0);
   const saveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastBreakSuggestionRef = useRef<number>(0);
   const lastConcentrationRef = useRef<number>(100);
@@ -138,7 +139,16 @@ export function useFocusCamera({
     onMetricsUpdate?.(tracking);
 
     if (!sessionStartTimeRef.current) sessionStartTimeRef.current = Date.now();
-    metricsHistoryRef.current.push({ ...tracking });
+    // Sampled once a second and WITHOUT the 478-point landmarks array: tracking updates ~10×/s, and keeping a
+    // full copy of each one grew this history by hundreds of MB over an hour. The session summary only needs
+    // the scalar metrics.
+    const sampleNow = Date.now();
+    if (sampleNow - lastSampleAtRef.current >= 1000) {
+      lastSampleAtRef.current = sampleNow;
+      const hist = metricsHistoryRef.current;
+      hist.push({ ...tracking, landmarks: null });
+      if (hist.length > 14400) hist.splice(0, hist.length - 14400);
+    }
 
     const now = Date.now();
     const concentration = tracking.concentration;

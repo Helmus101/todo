@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback, useRef } from "react";
+import { lazy, Suspense, useEffect, useState, useCallback, useRef } from "react";
 import type { WebTask, ConnectionStatus } from "../shared/types.ts";
 import { canonStatus, isHandled, isInFlight, sortWithinQuadrant } from "../shared/types.ts";
 import { api } from "./api.ts";
@@ -10,25 +10,28 @@ import { useIsPhone } from "./useIsPhone.ts";
 import { LangContext, useLang, todayIso, relTime, TaskModal, NotifyContext, PageInfoHint, Spinner } from "./ui.tsx";
 import { t } from "./i18n.ts";
 import { TaskCardRow, TaskFocus, TaskReadOnly } from "./TaskCard.tsx";
-import { StudyMode } from "./study/StudyMode.tsx";
-import { TutorSession } from "./tutor/TutorSession.tsx";
-import { Coursework } from "./CourseworkPage.tsx";
-import { ExercisesPage } from "./ExercisesPage.tsx";
 import { TourProvider, PageTour } from "./PageTour.tsx";
 import { TOURS } from "./tours.ts";
 import { LEGAL_EMAIL, LEGAL_ENTITY, Logo, clearAllLocalAccountData, firstName, navigate, unionChatEntries } from "./appShared.tsx";
 import { LoginPage } from "./pages/Login.tsx";
 import { Landing } from "./pages/Landing.tsx";
-import { Onboarding } from "./pages/Onboarding.tsx";
-import { SettingsPage } from "./pages/Settings.tsx";
-import { StudyLogPage } from "./pages/Journal.tsx";
-import { StandaloneStudyEntry } from "./pages/StudyEntry.tsx";
-import { AdminPage } from "./pages/Admin.tsx";
-import { MistakeLogPage } from "./pages/MistakeLog.tsx";
 import { AddTask, ConnectCard, TaskSkeleton } from "./pages/Dashboard.tsx";
 import { PrivacyBody, ResearchPageBody, TermsBody } from "./pages/Legal.tsx";
 import { PAGE_META, ORIGIN } from "../shared/seo.ts";
 import { BlogIndexPage, BlogPostPage } from "./pages/Blog.tsx";
+
+// Heavy routes load on demand (each is its own chunk) so the landing/login visit doesn't download the whole study + tutor app.
+const StudyMode = lazy(() => import("./study/StudyMode.tsx").then((m) => ({ default: m.StudyMode })));
+const TutorSession = lazy(() => import("./tutor/TutorSession.tsx").then((m) => ({ default: m.TutorSession })));
+const Coursework = lazy(() => import("./CourseworkPage.tsx").then((m) => ({ default: m.Coursework })));
+const ExercisesPage = lazy(() => import("./ExercisesPage.tsx").then((m) => ({ default: m.ExercisesPage })));
+const Onboarding = lazy(() => import("./pages/Onboarding.tsx").then((m) => ({ default: m.Onboarding })));
+const SettingsPage = lazy(() => import("./pages/Settings.tsx").then((m) => ({ default: m.SettingsPage })));
+const StudyLogPage = lazy(() => import("./pages/Journal.tsx").then((m) => ({ default: m.StudyLogPage })));
+const AdminPage = lazy(() => import("./pages/Admin.tsx").then((m) => ({ default: m.AdminPage })));
+const MistakeLogPage = lazy(() => import("./pages/MistakeLog.tsx").then((m) => ({ default: m.MistakeLogPage })));
+const StandaloneStudyEntry = lazy(() => import("./pages/StudyEntry.tsx").then((m) => ({ default: m.StandaloneStudyEntry })));
+const lazyFallback = <div className="screen"><Spinner /></div>;
 
 // How long a local optimistic mutation (confirm/dismiss/step-done/substep) outranks an incoming background
 // fetch for the same task — see `keepLocalHandled`/`patchTask` in App(). Long enough to cover a slow
@@ -158,6 +161,8 @@ const saveSeenTasks = (s: Set<string>) => {
 
 export function App() {
   const [status, setStatus] = useState<ConnectionStatus | null>(CACHED_STATUS);
+  const statusRef = useRef<ConnectionStatus | null>(status);
+  statusRef.current = status;
   // index.html hardcodes lang="fr" (the app's actual default), but the EN toggle never followed it — an
   // English-mode user got French pronunciation applied to English text by every screen reader. This is the
   // one place the whole app's active language is decided (the LangContext.Provider value below), so it's
@@ -605,7 +610,7 @@ export function App() {
     // that, so this and the cache TTL bump are complementary, not redundant. 5 min still surfaces a new task
     // well within a normal session.
     // Tab hidden or closing: ask the server to write its pending (write-behind) snapshot now. keepalive lets the request outlive the page.
-    const flushOnHide = () => { if (document.visibilityState === "hidden" && !signedOutRef.current) void api.flushSync(); };
+    const flushOnHide = () => { if (document.visibilityState === "hidden" && !signedOutRef.current && statusRef.current?.writeBehind !== false) void api.flushSync(); };
     document.addEventListener("visibilitychange", flushOnHide);
     window.addEventListener("pagehide", flushOnHide);
     const syncTick = setInterval(() => { if (!document.hidden && !signedOutRef.current) { void syncTasks(); void loadStatus(); } }, 20 * 60_000);
@@ -628,23 +633,31 @@ export function App() {
   // its own top-N by score — see processSweep/autoRunBudgetLeft in server/jobs.ts,tasks.ts), in chat, or in
   // Journal/Study Mode — not continuously throughout the day just because a tab is sitting open. A ready
   // task with no button now simply waits for the next 4pm cycle instead of being caught up mid-day.
+  const kickIdle = useRef(0), kickSkip = useRef(0), lastKickSig = useRef("");
   const hasActiveWork = (list: WebTask[]) => list.some((t) => isInFlight(t.status) || canonStatus(t.status) === "failed_retryable");
   useEffect(() => {
     if (!connected || !loaded || status?.paused) return;
     if (!hasActiveWork(tasks)) return;
+    kickIdle.current = 0; kickSkip.current = 0;
     const tick = async () => {
       // Backgrounded tabs don't need live updates within seconds — this loop runs while ANY job is in
       // flight, uncached server-side (bypassCache: true, see /api/jobs/kick), so an unguarded background
       // tab was a real, continuous Supabase egress + CPU cost for however long a job stayed
       // queued/retrying, with no one watching. Confirmed as the dominant egress driver in a live audit.
       if (kicking.current || signedOutRef.current || document.hidden) return;
+      // Back off when the server reports no job running: a "Failed — will retry" task whose job is gone would
+      // otherwise keep every open tab polling every 20s indefinitely. After 3 empty answers, ask only every 6th tick (~2 min).
+      if (kickIdle.current >= 3 && (++kickSkip.current % 6) !== 0) return;
       kicking.current = true;
       try {
         const out = await api.kick();
         if (signedOutRef.current) return; // signed out mid-flight — don't act on a stale/resurrecting response
-        setRetryingIds(Array.isArray(out.activeTaskIds) ? out.activeTaskIds : []);
+        kickIdle.current = out.active > 0 || (out.activeTaskIds?.length || 0) > 0 ? 0 : kickIdle.current + 1;
+        setRetryingIds((prev) => { const next = Array.isArray(out.activeTaskIds) ? out.activeTaskIds : []; return prev.length === next.length && prev.every((x, i) => x === next[i]) ? prev : next; });
         if (Array.isArray(out.tasks) && out.tasks.length) {
-          setTasks((prev) => keepLocalHandled(prev, out.tasks));
+          // Identical answer to last tick → skip the state update (it re-rendered the whole dashboard and rewrote localStorage for nothing).
+          const sig = JSON.stringify(out.tasks);
+          if (sig !== lastKickSig.current) { lastKickSig.current = sig; setTasks((prev) => keepLocalHandled(prev, out.tasks)); }
         }
       } catch { /* next tick retries */ }
       finally { kicking.current = false; }
@@ -854,7 +867,7 @@ export function App() {
       return (
         <LangContext.Provider value="en">
           <NotifyContext.Provider value={notify}>
-            <StudyMode
+            <Suspense fallback={lazyFallback}><StudyMode
               task={task}
               onExit={() => { setStudyModeTask(null); navigate("tasks"); }}
               onTaskUpdate={(u) => {
@@ -879,7 +892,7 @@ export function App() {
               userId={status?.user}
               language="en"
               betaFeatures={!!status?.betaFeatures}
-            />
+            /></Suspense>
           </NotifyContext.Provider>
         </LangContext.Provider>
       );
@@ -1028,7 +1041,7 @@ export function App() {
             : <button type="button" className="btn primary" onClick={() => { void api.requestMoreUsage().then(() => loadStatus()).catch((e: any) => notify(e?.message || "Couldn't send the request — try again.", "error")); }}>{"Request more usage"}</button>}
         </div>
       ) : null}
-      {onboard && <Onboarding status={status} onStatus={loadStatus} onDone={finishOnboard} />}
+      {onboard && <Suspense fallback={null}><Onboarding status={status} onStatus={loadStatus} onDone={finishOnboard} /></Suspense>}
       {/* First visit to a page: an interactive guide pointing at the real controls (client/PageTour.tsx). */}
       {(() => {
         const id = route === "" || route === "tasks" ? "tasks" : route === "log" ? "journal" : route === "errorlog" ? "mistakes" : route === "coursework" ? "coursework" : route === "settings" ? "settings" : null;
@@ -1052,26 +1065,26 @@ export function App() {
           </div>
         )
       ) : route === "settings" ? (
-        <SettingsPage status={status} tasks={tasks} onSignOut={signOut} onChanged={loadStatus} onTasksChanged={setTasks} onStatusUpdate={loadStatus} onReplayOnboarding={replayOnboarding} />
+        <Suspense fallback={lazyFallback}><SettingsPage status={status} tasks={tasks} onSignOut={signOut} onChanged={loadStatus} onTasksChanged={setTasks} onStatusUpdate={loadStatus} onReplayOnboarding={replayOnboarding} /></Suspense>
       ) : route === "log" ? (
-        <StudyLogPage lang={status?.language} tasks={tasks} status={status} phoneOnly={isPhone} />
+        <Suspense fallback={lazyFallback}><StudyLogPage lang={status?.language} tasks={tasks} status={status} phoneOnly={isPhone} /></Suspense>
       ) : route === "tutor" ? (
-        <TutorSession userId={status?.user || null} onExit={() => navigate("tasks")} visionReady={!!status?.visionReady} />
+        <Suspense fallback={lazyFallback}><TutorSession userId={status?.user || null} onExit={() => navigate("tasks")} visionReady={!!status?.visionReady} /></Suspense>
       ) : route.startsWith("tutor/session/") ? (
         // split index [2]: routeOf strips the leading slash, so "tutor/session/<id>" is ["tutor","session","<id>"].
         // It used to read [3] — ALWAYS undefined — so every deep link/refresh/history anchor loaded as if no
         // session id had been passed and the full-page review (TutorSession, .../board|.../chat) never opened.
-        <TutorSession userId={status?.user || null} onExit={() => navigate("tasks")} visionReady={!!status?.visionReady} sessionId={route.split("/")[2]} reviewView={route.split("/")[3]} />
+        <Suspense fallback={lazyFallback}><TutorSession userId={status?.user || null} onExit={() => navigate("tasks")} visionReady={!!status?.visionReady} sessionId={route.split("/")[2]} reviewView={route.split("/")[3]} /></Suspense>
       ) : route === "study" ? (
-        <StandaloneStudyEntry tasks={tasks} setTasks={setTasks} status={status} notify={notify} navigate={navigate} />
+        <Suspense fallback={lazyFallback}><StandaloneStudyEntry tasks={tasks} setTasks={setTasks} status={status} notify={notify} navigate={navigate} /></Suspense>
       ) : route === "coursework" ? (
-        <Coursework onTasksChanged={() => { void api.tasks().then(setTasks).catch(() => {}); }} />
+        <Suspense fallback={lazyFallback}><Coursework onTasksChanged={() => { void api.tasks().then(setTasks).catch(() => {}); }} /></Suspense>
       ) : route === "admin" && !!status?.isAdmin ? (
-        <AdminPage />
+        <Suspense fallback={lazyFallback}><AdminPage /></Suspense>
       ) : route === "errorlog" ? (
-        <MistakeLogPage lang={status?.language} />
+        <Suspense fallback={lazyFallback}><MistakeLogPage lang={status?.language} /></Suspense>
       ) : route === "exercises" ? (
-        <ExercisesPage />
+        <Suspense fallback={lazyFallback}><ExercisesPage /></Suspense>
       ) : !status.googleConnected && !status.pronoteConnected && !skippedConnect ? (
         <main className="list-wrap"><ConnectCard status={status} onSkip={() => {
           setSkippedConnect(true);

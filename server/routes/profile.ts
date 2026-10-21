@@ -10,7 +10,7 @@ import { predictNextEngagement, predictWeakSubjects, aggregateSubjectSignals } f
 import * as tasks from "../tasks.ts";
 import * as integrations from "../integrations.ts";
 import { M, ah, commit, isAdmin, isPaused, rateLimit, requireAuth } from "../http.ts";
-import { listUsageRequests, grantExtraUsage } from "../store.ts";
+import { listUsageRequests, grantExtraUsage, setFullAccessFor, listAdminUsers } from "../store.ts";
 import { weekKeyOf } from "../../shared/types.ts";
 
 // ── Profile (who the user is) — available once logged in ───────────────────────
@@ -436,5 +436,25 @@ export function registerProfileRoutes(app: express.Express): void {
     if (!ok) { res.status(404).json({ error: "No account with that email." }); return; }
     void recordEvent(req.session.user!, "usage_granted", { message: `${email} +$${usd}` });
     res.json({ ok: true });
+  }));
+  // Admin: every account with its usage. Never polled — the admin page only calls it from its Refresh button.
+  app.get("/api/admin/users", requireAuth, rateLimit(10, 60_000), ah(async (req, res) => {
+    if (!isAdmin(req)) { res.status(403).json({ error: "Access denied." }); return; }
+    res.json({ users: await listAdminUsers(), at: new Date().toISOString() });
+  }));
+  // Admin: turn an account into full mode (or back to tutor-only). Takes effect on their next load.
+  app.post("/api/admin/full-access", requireAuth, rateLimit(30, 60_000), ah(async (req, res) => {
+    if (!isAdmin(req)) { res.status(403).json({ error: "Access denied." }); return; }
+    const email = typeof req.body?.email === "string" ? req.body.email.trim().toLowerCase() : "";
+    const on = req.body?.on !== false;
+    if (!email.includes("@")) { res.status(400).json({ error: "Give an account email." }); return; }
+    // Own account: change the live session too, otherwise the next commit would merge the old value back.
+    if (email === String(req.session.user || "").toLowerCase()) {
+      const p = (req.session.profile ||= emptyProfile());
+      p.fullAccess = on; p.fullAccessAt = new Date().toISOString();
+      await commit(req);
+    } else if (!(await setFullAccessFor(email, on))) { res.status(404).json({ error: "No account with that email." }); return; }
+    void recordEvent(req.session.user!, "full_access_set", { message: `${email} ${on ? "on" : "off"}` });
+    res.json({ ok: true, fullApp: on });
   }));
 }

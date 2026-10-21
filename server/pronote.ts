@@ -37,6 +37,7 @@ import { loadState, loadPronoteConnection, savePronoteConnection, type StoredPro
 import { credentialEncryptionConfigured } from "./crypto.ts";
 import { reportError } from "./sentry.ts";
 import { connectionStatusesCached, sendSystemEmail } from "./integrations.ts";
+import { setBounded } from "./lru.ts";
 
 // pawnote (the unofficial Pronote client this file wraps — see the module doc comment above) talks to a
 // real school's own server, which has no uptime/latency guarantee at all — a slow or hanging school portal
@@ -46,10 +47,11 @@ import { connectionStatusesCached, sendSystemEmail } from "./integrations.ts";
 // legitimately needs more room than a search API.
 const PRONOTE_TIMEOUT_MS = 20_000;
 function withPronoteTimeout<T>(label: string, p: Promise<T>): Promise<T> {
+  let timer: ReturnType<typeof setTimeout>;
   return Promise.race([
     p,
-    new Promise<T>((_, reject) => setTimeout(() => reject(new Error(`Pronote call timed out: ${label}`)), PRONOTE_TIMEOUT_MS)),
-  ]);
+    new Promise<T>((_, reject) => { timer = setTimeout(() => reject(new Error(`Pronote call timed out: ${label}`)), PRONOTE_TIMEOUT_MS); }),
+  ]).finally(() => clearTimeout(timer));
 }
 
 // A dev-only mock mode (PRONOTE_MOCK=1, a fake "demo" account) used to live here so local testing could
@@ -97,7 +99,9 @@ const pronoteLocks = new Map<string, Promise<unknown>>();
 function withPronoteLock<T>(email: string, fn: () => Promise<T>): Promise<T> {
   const prior = pronoteLocks.get(email) || Promise.resolve();
   const run = prior.then(fn, fn);
-  pronoteLocks.set(email, run.catch(() => undefined));
+  const tail = run.catch(() => undefined);
+  pronoteLocks.set(email, tail);
+  void tail.then(() => { if (pronoteLocks.get(email) === tail) pronoteLocks.delete(email); }); // nothing queued behind us: free the entry
   return run;
 }
 
@@ -656,6 +660,6 @@ export async function pronoteContext(email: string, profile?: Profile, opts: { f
   const lessons = ls.status === "fulfilled" ? ls.value : [];
   if (profile && lessons.length) applyPronoteLessons(profile, lessons);
   const value = { homework, lessons: lessons.length ? lessons : (profile?.pronoteLessons || []) };
-  if (hw.status === "fulfilled" || ls.status === "fulfilled") contextCache.set(email, { at: Date.now(), value });
+  if (hw.status === "fulfilled" || ls.status === "fulfilled") setBounded(contextCache, email, { at: Date.now(), value });
   return value;
 }

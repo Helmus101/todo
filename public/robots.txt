@@ -13,9 +13,13 @@ Disallow: /flashcards
 Disallow: /coursework
 Disallow: /errorlog
 Disallow: /exercises
-Disallow: /log
+Disallow: /log$
+Disallow: /log/
+Allow: /logos/
 Disallow: /study
 Disallow: /login
 Disallow: /signup
+Disallow: /reset-password
+Disallow: /admin
 
 Sitemap: https://hiotto.vercel.app/sitemap.xml

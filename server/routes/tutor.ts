@@ -17,16 +17,27 @@ import { isLangCode, languageName } from "../../shared/languages.ts";
 import { createTutorChat, usageOf } from "../claude.ts";
 
 // Interface translations: fixed UI strings only (never anything the student wrote), cached per language so each string is translated once.
+// Public (the landing's language picker runs before login), so it is bounded two ways: the Map is capped
+// (oldest entry evicted — Map keeps insertion order) and uncached AI calls share a per-instance hourly budget.
 const TRANSLATIONS = new Map<string, string>();
+const TRANSLATIONS_MAX = 3000;
+const TRANSLATE_CALLS_PER_HOUR = 60;
+let translateWindowStart = 0;
+let translateCalls = 0;
+function translateBudgetLeft(): boolean {
+  const now = Date.now();
+  if (now - translateWindowStart > 3_600_000) { translateWindowStart = now; translateCalls = 0; }
+  return translateCalls++ < TRANSLATE_CALLS_PER_HOUR;
+}
 
 export function registerTutorRoutes(app: express.Express): void {
-  app.post("/api/translate", rateLimit(40, 60_000), ah(async (req, res) => {
+  app.post("/api/translate", rateLimit(20, 60_000), ah(async (req, res) => {
     const lang = req.body?.lang;
     const strings: string[] = (Array.isArray(req.body?.strings) ? req.body.strings : []).filter((x: unknown) => typeof x === "string" && x.trim() && x.length <= 240).slice(0, 80);
     if (!isLangCode(lang) || lang === "en" || !strings.length) { res.json({ translations: {} }); return; }
     const out: Record<string, string> = {};
     const todo = strings.filter((x) => { const hit = TRANSLATIONS.get(`${lang}\n${x}`); if (hit) out[x] = hit; return !hit; });
-    if (todo.length && aiReady()) {
+    if (todo.length && aiReady() && translateBudgetLeft()) {
       try {
         const r: any = await createTutorChat({
           max_tokens: 4000, temperature: 0, response_format: { type: "json_object" },
@@ -37,7 +48,13 @@ export function registerTutorRoutes(app: express.Express): void {
         }, true);
         const parsed = JSON.parse(String(r?.choices?.[0]?.message?.content || "{}").replace(/^```(?:json)?|```$/g, ""));
         const t: unknown[] = Array.isArray(parsed?.t) ? parsed.t : [];
-        todo.forEach((src, i) => { const v = t[i]; if (typeof v === "string" && v.trim()) { TRANSLATIONS.set(`${lang}\n${src}`, v); out[src] = v; } });
+        todo.forEach((src, i) => {
+          const v = t[i];
+          if (typeof v === "string" && v.trim()) {
+            if (TRANSLATIONS.size >= TRANSLATIONS_MAX) TRANSLATIONS.delete(TRANSLATIONS.keys().next().value as string);
+            TRANSLATIONS.set(`${lang}\n${src}`, v.slice(0, 600)); out[src] = v;
+          }
+        });
       } catch { /* the page simply stays in English for these strings */ }
     }
     res.json({ translations: out });
@@ -119,7 +136,11 @@ export function registerTutorRoutes(app: express.Express): void {
       // Their level, from Settings: the year or grade, plus the programme (IB / AP / Bac), so every question is pitched at it.
       const trackName = ({ ib: "IB", ap: "AP", bac: "French Bac", other: "" } as Record<string, string>)[String(profile.track || "")] || "";
       const level = [profile.yearLevel, trackName && `${trackName} programme`].filter(Boolean).join(", ");
-      const instructions = liveInstructions({ subject, level: level || undefined, background, resuming: req.body?.resuming === true, language: language || undefined });
+      // The last turns of the session being resumed (client-built; untrusted, so capped line by line).
+      const resumeContext = req.body?.resuming === true && Array.isArray(req.body?.resumeTail)
+        ? req.body.resumeTail.filter((x: unknown) => typeof x === "string" && x.trim()).slice(-8).map((x: string) => x.replace(/\s+/g, " ").trim().slice(0, 260)).join("\n").slice(0, 2000)
+        : "";
+      const instructions = liveInstructions({ subject, level: level || undefined, background, resuming: req.body?.resuming === true, resumeContext, language: language || undefined });
 
       // The browser tries these in order: Gemini Live first (when GEMINI_API_KEY is set), then OpenAI Realtime (a "mini" model, over WebRTC)
       // as the fallback. LIVE_PROVIDER=gemini or =openai pins one. A provider whose credential can't be minted is simply left out.
@@ -131,6 +152,7 @@ export function registerTutorRoutes(app: express.Express): void {
           const r = await fetch(`https://generativelanguage.googleapis.com/v1alpha/auth_tokens?key=${encodeURIComponent(geminiKey)}`, {
             method: "POST", headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ uses: 3, expireTime: new Date(now + 35 * 60_000).toISOString(), newSessionExpireTime: new Date(now + 60_000).toISOString() }),
+            signal: AbortSignal.timeout(6000),
           });
           const token = r.ok ? String(((await r.json()) as { name?: string }).name || "") : "";
           if (token) {
@@ -147,7 +169,7 @@ export function registerTutorRoutes(app: express.Express): void {
           for (const model of candidates) {
             for (const full of [true, false]) {
               const session: any = { type: "realtime", model, instructions, output_modalities: ["audio"], audio: { output: { voice: "marin" }, ...(full ? { input: { transcription: { model: "gpt-4o-mini-transcribe" }, turn_detection: { type: "semantic_vad" } } } : {}) } };
-              const r = await fetch("https://api.openai.com/v1/realtime/client_secrets", { method: "POST", headers: { Authorization: `Bearer ${openaiKey}`, "Content-Type": "application/json" }, body: JSON.stringify({ session }) });
+              const r = await fetch("https://api.openai.com/v1/realtime/client_secrets", { method: "POST", headers: { Authorization: `Bearer ${openaiKey}`, "Content-Type": "application/json" }, body: JSON.stringify({ session }), signal: AbortSignal.timeout(6000) });
               if (r.ok) {
                 const j: any = await r.json();
                 const value = String(j?.value || j?.client_secret?.value || "");
@@ -213,6 +235,7 @@ export function registerTutorRoutes(app: express.Express): void {
     const seconds = Math.max(0, Math.min(3 * 3600, Number(req.body?.seconds) || 0));
     const profile = (req.session.profile ||= emptyProfile());
     addWeeklyCost(profile, (seconds / 60) * LIVE_VOICE_USD_PER_MIN);
+    if (seconds >= 5) profile.liveStats = { count: (profile.liveStats?.count || 0) + 1, seconds: (profile.liveStats?.seconds || 0) + Math.round(seconds), lastAt: new Date().toISOString() };
     await commit(req);
     res.json({ ok: true });
   }));

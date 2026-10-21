@@ -2948,7 +2948,7 @@ section("/api/study/free — resumes an active freestudy session by default, onl
   // ONLY way in is the /study URL. Pin both halves so neither can regress silently: a cleanup must not
   // delete the URL-only entry, and a well-meaning "restore" must not re-add a live tab/buttons without
   // consciously updating these pins.
-  check("the /study route still renders StandaloneStudyEntry (the URL-only entry point)", /: route === "study" \? \(\s*<StandaloneStudyEntry/.test(appSrc));
+  check("the /study route still renders StandaloneStudyEntry (the URL-only entry point)", /: route === "study" \? \(\s*(?:<Suspense[^>]*>)?<StandaloneStudyEntry/.test(appSrc));
   check("Study Mode has no live sidebar tab (absent, or present but flag-gated)", !appSrc.includes('sidebar-item ${route === "study"') || /STUDY_MODE_ENABLED && !isPhone && \(\s*<a\s+className=\{`sidebar-item \$\{route === "study"/.test(appSrc));
   check("the Study Mode tab/buttons flag is actually OFF (/study stays URL-only by design)", /const STUDY_MODE_ENABLED = false;/.test(appSrc));
   // View Transitions on route swaps: a NEWER transition starting first rejects the older one's `ready`
@@ -5199,7 +5199,7 @@ section("Security + SEO audit fixes (source pins)");
   check("robots.txt keeps crawlers out of the API and the logged-in screens, and points at the sitemap", /Disallow: \/api\//.test(robots) && /Disallow: \/tasks/.test(robots) && /Sitemap: https:\/\/hiotto\.vercel\.app\/sitemap\.xml/.test(robots) && /Allow: \//.test(robots));
   check("a security.txt exists with a contact", /Contact: mailto:/.test(readFileSync("public/.well-known/security.txt", "utf8")));
   check("deleting the account needs the password again (server) and the UI asks for it", /Enter your password to delete the account/.test(auth) && /deleteAccount: \(password: string\)/.test(readFileSync("client/api.ts", "utf8")) && /type="password"[^>]*Your password, to confirm deleting/.test(readFileSync("client/pages/Settings.tsx", "utf8")));
-  check("failed logins are capped per ACCOUNT across all IPs, not just per IP", /limitBy\(`login-fail:\$\{email\}`/.test(auth));
+  check("failed logins are capped per ACCOUNT across all IPs, not just per IP", /limitBy\(lockKey/.test(auth));
   check("app screens and unknown paths are noindex on client-side navigation", /robots\.content = "noindex, nofollow"/.test(readFileSync("client/App.tsx", "utf8")));
 }
 
@@ -5940,7 +5940,7 @@ section("CREATE_INTERACTIVE — sandboxed, scoped to Study Mode, capped (source 
   check("the route 404s anything that isn't an interactive board entry on a task you own", /entry\.kind !== "interactive"/.test(idxSrc) && /req\.session\.tasks \|\| \[\]\)\.find/.test(idxSrc));
   check("that scene CSP allows inline script + the two allowlisted CDNs, and nothing else out (connect-src 'none')", /script-src 'unsafe-inline' https:\/\/cdn\.jsdelivr\.net https:\/\/cdnjs\.cloudflare\.com/.test(claude) && /connect-src 'none'/.test(claude));
   const vercel = readFileSync(new URL("../vercel.json", import.meta.url), "utf8");
-  check("vercel.json's edge headers EXCLUDE the scene route (they'd otherwise re-apply the app CSP + XFO: DENY and re-break it)", /\(\?!assets\/\|api\/interactive\/\)/.test(vercel));
+  check("vercel.json's edge headers EXCLUDE the scene route (they'd otherwise re-apply the app CSP + XFO: DENY and re-break it)", /\(\?!assets\/\|api\/interactive\/[|)]/.test(vercel));
 
   // Direct instruction: "make sure artifacts aren't blank". The sandbox has NO allow-same-origin, so the
   // parent can't inspect the frame to detect a blank scene — the guard has to run inside the frame itself.
@@ -7079,7 +7079,7 @@ section("Live voice (Gemini Live) — audio helpers, the voice's instructions, t
   const hook = readFileSync(new URL("../client/tutor/live/useGeminiLive.ts", import.meta.url), "utf8");
   const ts = readFileSync(new URL("../client/tutor/TutorSession.tsx", import.meta.url), "utf8");
   check("the live hook: credential and instructions from the token route, v1alpha, several model ids tried, 16 kHz mic audio, playback stops when interrupted, images go in as video frames, typed text goes in as a turn", /api\.liveToken\(/.test(hook) && /apiVersion: "v1alpha"/.test(hook) && /setupComplete/.test(hook) && /audio\/pcm;rate=16000/.test(hook) && /sc\.interrupted\) \{ player\.interrupt\(\)/.test(hook) && /sendRealtimeInput\(\{ video/.test(hook) && /sendClientContent/.test(hook));
-  check("the tutor page: the call's transcript is kept as chat, each finished exchange goes to the board writer, drawings go to the voice as pictures, typed text while live goes to the voice, and when live voice cannot start the SAME bar stays (reason shown, try again, typing goes to the engine) — the old chat dock is gone", /onTurn: onLiveTurn/.test(ts) && /api\.liveBoard\(/.test(ts) && /canvasRef\.current\?\.snapshot\(\)/.test(ts) && /live\.sendText\(t\)/.test(ts) && /<LiveBar/.test(ts) && !/<AskOttoPanel/.test(ts) && /void send\(t, false\)/.test(ts)); }
+  check("the tutor page: the call's transcript is kept as chat, each finished exchange goes to the board writer, drawings go to the voice as pictures, typed text while live goes to the voice, and when live voice cannot start the SAME bar stays (reason shown, try again, typing goes to the engine) — the old chat dock is gone", /onTurn: onLiveTurn/.test(ts) && /api\.liveBoard\(/.test(ts) && /canvasRef\.current\?\.snapshot\(\)/.test(ts) && /live\.sendText\(`[^`]*\$\{t\}`\)/.test(ts) && /<LiveBar/.test(ts) && !/<AskOttoPanel/.test(ts) && /void send\(t, false\)/.test(ts)); }
 
 section("Tutor first — only the owner account and accounts that opened /full see the rest of the app (source pins)");
 { const idx = readFileSync(new URL("../server/index.ts", import.meta.url), "utf8");

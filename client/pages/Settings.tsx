@@ -1,6 +1,7 @@
 import { LanguagePicker } from "../LanguagePicker.tsx";
 import { PronoteContext } from "./PronoteContext.tsx";
 import { FeedbackForm } from "./FeedbackForm.tsx";
+import { StudyStatsSection } from "./StudyStats.tsx";
 import { useEffect, useState, useCallback, useRef } from "react";
 import type { WebTask, ConnectionStatus, Profile } from "../../shared/types.ts";
 import { api, type IntegrationItem, type ConnectedAccount } from "../api.ts";
@@ -28,15 +29,6 @@ function useReveal(deps: readonly unknown[] = []) {
 // A "YYYY-MM-DD" (or ISO) date → "Aug 1". Optional `L(fr, en)` (same
 // one every caller already has from useLang()) picks the locale — a French account no longer falls back to
 // whatever locale the BROWSER happens to be set to, which isn't necessarily the same language at all.
-const USAGE_CATEGORY_LABEL: Record<string, [string, string]> = {
-  sweep: ["Recherche de tâches", "Finding tasks"],
-  autorun: ["Préparation automatique", "Auto-prep"],
-  chat: ["Chat et tuteur", "Chat & tutor"],
-  manual_refine: ["Tâches ajoutées", "Added tasks"],
-  studylog: ["Journal", "Journal"],
-  student_model: ["Profil d'apprentissage", "Learning profile"],
-  other: ["Autre", "Other"],
-};
 
 function fmtDay(iso: string, L?: (fr: string, en: string) => string): string {
   const d = new Date(/T/.test(iso) ? iso : `${iso}T00:00:00`);
@@ -172,7 +164,6 @@ export function SettingsPage({ status, tasks, onSignOut, onChanged, onTasksChang
   const L = useLang();
   const notify = useNotify();
   const [profile, setProfile] = useState<Profile | null>(null);
-  const [usage, setUsage] = useState<{ in: number; out: number; total: number; runs: number; since: string | null; monthCostUsd: number; byCategory: Partial<Record<"sweep" | "autorun" | "chat" | "manual_refine" | "studylog" | "student_model" | "other", number>> } | null>(null);
   const [showKnows, setShowKnows] = useState(false);
   const [showStudentModel, setShowStudentModel] = useState(false);
   const [patterns, setPatterns] = useState<{
@@ -260,7 +251,7 @@ export function SettingsPage({ status, tasks, onSignOut, onChanged, onTasksChang
   const [fullOptimistic, setFullOptimistic] = useState<boolean | null>(null);
   const loadProfile = () => { setProfileError(false); void api.profile().then(setProfile).catch(() => setProfileError(true)); };
   useEffect(() => { setPausedLocal(status.paused); }, [status.paused]);
-  useEffect(() => { loadProfile(); void api.usage().then(setUsage).catch(() => {}); }, []);
+  useEffect(() => { loadProfile(); }, []);
   useReveal();
 
   return (
@@ -382,29 +373,9 @@ export function SettingsPage({ status, tasks, onSignOut, onChanged, onTasksChang
         </section>
       ) : null}
 
-      <ConceptsPanel profile={profile} />
+      <StudyStatsSection userId={status.user || null} />
 
-      {status.fullApp && usage && (
-        <section className="settings-sec reveal" style={{ ["--d" as any]: "0.11s" }}>
-          <h3>{"AI usage"}</h3>
-          <div className="set-list">
-            <div className="set-row">
-              <span className="set-text"><b>{"Cost this month"}</b><span className="settings-hint">{"Estimate, in US dollars."}</span></span>
-              <span className="usage-figure">${usage.monthCostUsd.toFixed(2)}</span>
-            </div>
-            {Object.entries(usage.byCategory).filter(([, v]) => (v || 0) > 0).sort((a, b) => (b[1] || 0) - (a[1] || 0)).map(([k, v]) => (
-              <div className="set-row" key={k}>
-                <span className="set-text">{USAGE_CATEGORY_LABEL[k] ? L(...USAGE_CATEGORY_LABEL[k]) : k}</span>
-                <span className="usage-figure muted">${(v || 0).toFixed(2)}</span>
-              </div>
-            ))}
-            <div className="set-row">
-              <span className="set-text">{"Total tokens used"}</span>
-              <span className="usage-figure muted">{usage.total.toLocaleString()}</span>
-            </div>
-          </div>
-        </section>
-      )}
+      <ConceptsPanel profile={profile} />
 
       <section className="settings-sec reveal" style={{ ["--d" as any]: "0.13s" }}>
         <button className="sec-toggle" aria-expanded={showKnows} onClick={() => setShowKnows((v) => !v)}>

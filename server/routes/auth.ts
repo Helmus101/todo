@@ -108,10 +108,13 @@ export function registerAuthRoutes(app: express.Express): void {
     // can't be verified without live credentials.
     // Brute force from MANY IPs at ONE account: the route limit above is per IP, so a botnet could still try thousands of
     // passwords against a single email. Cap failures per account across all IPs (successful logins don't count).
-    const perAccount = await limitBy(`login-fail:${email}`, 30, 60 * 60_000).catch(() => ({ allowed: true, retryAfterMs: 0 }));
-    if (!perAccount.allowed) { res.set("Retry-After", String(Math.ceil(perAccount.retryAfterMs / 1000))).status(429).json({ error: "Too many failed attempts on this account — try again later, or reset your password." }); return; }
+    // The limiter counts every call it sees, so it is only CONSUMED after a wrong password (below) — a stranger
+    // hammering a victim's email with bad guesses is what trips it, but correct logins never count toward it.
+    const lockKey = `login-fail:${email}`;
     const validPassword = await verifyAuthPassword(email, password);
     if (!validPassword) {
+      const perAccount = await limitBy(lockKey, 30, 60 * 60_000).catch(() => ({ allowed: true, retryAfterMs: 0 }));
+      if (!perAccount.allowed) { res.set("Retry-After", String(Math.ceil(perAccount.retryAfterMs / 1000))).status(429).json({ error: "Too many failed attempts on this account — try again later, or reset your password." }); return; }
       void recordEvent(email, "login_failed", {}); // never the password — email only, for brute-force visibility
       res.status(401).json({ error: "Wrong email or password." });
       return;
@@ -292,6 +295,15 @@ export function registerAuthRoutes(app: express.Express): void {
     }
     try {
       const incomingProfile = normalizeProfile(body.profile);
+      // Budget / access state is server-owned: an uploaded file must never be able to raise the weekly cap
+      // (weekSpend.extraUsd merges by max), grant itself full access, or flip pause state.
+      delete incomingProfile.weekSpend;
+      delete incomingProfile.usageRequest;
+      delete incomingProfile.fullAccess;
+      delete incomingProfile.fullAccessAt;
+      delete incomingProfile.paused;
+      delete incomingProfile.pausedAt;
+      delete incomingProfile.autoPausedAt;
       const incomingTasks: WebTask[] = Array.isArray(body.tasks) ? body.tasks : [];
       const current = cloudEnabled() ? await loadState(email) : { profile: req.session.profile || emptyProfile(), tasks: req.session.tasks || [] };
       const mergedProfile = tasks.mergeProfileStates(current.profile, incomingProfile);

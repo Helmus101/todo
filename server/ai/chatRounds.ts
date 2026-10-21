@@ -244,6 +244,7 @@ export async function runChatRounds(ctx: RunChatRoundsContext): Promise<ChatResu
     // One-shot: a reply that points the student at the board/screen when nothing was actually written there
     // gets ONE corrective round to write it for real (see CHAT_CLAIMS_BOARD's own comment). Latched so a
     // model that keeps doing it can't spin the loop.
+    const seenUrls = new Set<string>(); // URLs returned by web_search this turn — the only pages read_page may open when mailbox tools are present
     let boardClaimCorrected = false;
     let boardNudgeDone = false;
     let reasoningNudgeDone = false;
@@ -930,10 +931,16 @@ export async function runChatRounds(ctx: RunChatRoundsContext): Promise<ChatResu
         const madeEnough = result.notes.length + result.flashcards.length + result.quizzes.length + result.problems.length >= CHAT_MAX_ARTIFACTS;
         if (name === "web_search") {
           content = await runWebSearch(input);
+          try { for (const r of JSON.parse(content)) if (typeof r?.url === "string") seenUrls.add(r.url); } catch { /* not JSON: nothing to remember */ }
           logAudit("tool", `Web search: "${String((input as any)?.query || "").slice(0, 140)}"`);
         }
         else if (name === "read_page") {
-          content = await runReadPage(input);
+          // Prompt-injection guard: when this run can also read the student's mailbox/Drive, a page fetch could
+          // smuggle that data out in a URL an injected email told the model to open. So only pages that came
+          // from a search in this run, or that the student typed themselves, may be read.
+          const wanted = String((input as any)?.url || "").trim();
+          if (readOnlyExtras?.tools.length && !seenUrls.has(wanted) && !message.includes(wanted)) content = "ERROR: only pages returned by a web search (or links the student gave) can be read.";
+          else content = await runReadPage(input);
           logAudit("tool", `Read page: ${String((input as any)?.url || "").slice(0, 140)}`);
         }
         else if (name === "CREATE_CALC") {

@@ -4,7 +4,7 @@ import session from "express-session";
 import { createHash } from "node:crypto";
 import type { Credentials } from "google-auth-library";
 import type { WebTask, Profile, StudySession, StudyProfile } from "../shared/types.ts";
-import { emptyProfile, normalizeProfile } from "../shared/types.ts";
+import { emptyProfile, normalizeProfile, monthKeyOf } from "../shared/types.ts";
 import { compactTasksForStorage } from "../shared/taskCompaction.ts";
 import { encryptSecret, decryptSecret } from "./crypto.ts";
 import { reportError } from "./sentry.ts";
@@ -142,6 +142,7 @@ export async function makeSessionStore(): Promise<session.Store | undefined> {
   let hasUserEmailCol = true;
   const getCache = new Map<string, { at: number; sess: any }>();
   const lastWritten = new Map<string, string>();
+  const lastTouched = new Map<string, number>();
   const cacheSet = (sid: string, sess: any) => {
     getCache.delete(sid); // re-insert to the end so this counts as "most recently used" for eviction below
     getCache.set(sid, { at: Date.now(), sess });
@@ -166,13 +167,16 @@ export async function makeSessionStore(): Promise<session.Store | undefined> {
       // Cache the just-written value immediately (not just invalidate) — the very next get() in the same
       // burst (extremely common: a route calls commit() then the response handler re-reads) would otherwise
       // do a real round-trip anyway, right after we already had the answer in hand.
-      cacheSet(sid, sess);
+      // MEMORY: cache the SLIM session. The full object carries the account's entire task list + profile, and
+      // up to 500 of those per warm instance was hundreds of MB; the re-hydrate middleware in index.ts restores
+      // tasks/profile from loadState (itself cached) exactly as it already does for a cold instance.
+      const { tasks: _t, profile: _p, ...slim } = sess || {};
+      cacheSet(sid, slim);
       // EGRESS/CPU: the account's profile + tasks already live in their own row (saveState, written by
       // commit()). Persisting them a SECOND time inside every session row doubled every write and made each
       // cold-instance session read drag the whole blob across the wire. Persist only the slim session
       // (user, cookie, small flags); the "re-hydrate from the account row" middleware in index.ts restores
       // tasks/profile from loadState (cached) when a fresh instance reads a slim session.
-      const { tasks: _t, profile: _p, ...slim } = sess || {};
       const payload = JSON.stringify(slim);
       // Skip identical rewrites (touching the session on every request used to re-upload it unchanged).
       if (lastWritten.get(sid) === payload) { cb?.(); return; }
@@ -199,6 +203,12 @@ export async function makeSessionStore(): Promise<session.Store | undefined> {
       c.from(SESSIONS).delete().eq("sid", sid).then(({ error }) => cb?.(error || undefined), (e) => cb?.(e));
     }
     touch(sid: string, sess: any, cb?: (err?: any) => void) {
+      // The expiry window is 30 days, so extending it more than once an hour buys nothing — but every request
+      // used to cost a Supabase UPDATE here.
+      const last = lastTouched.get(sid) || 0;
+      if (Date.now() - last < 3_600_000) { cb?.(); return; }
+      lastTouched.set(sid, Date.now());
+      while (lastTouched.size > GET_CACHE_MAX * 4) { const oldest = lastTouched.keys().next().value; if (oldest === undefined) break; lastTouched.delete(oldest); }
       c.from(SESSIONS).update({ expire: expiry(sess) }).eq("sid", sid).then(() => cb?.(), () => cb?.());
     }
   }
@@ -546,6 +556,41 @@ export async function savePronoteConnection(email: string | undefined, pronote: 
   if (error) {
     console.warn("[store] pronote save failed:", error.message);
     reportError("save-pronote", error, { email });
+    if (opts?.throwOnError) throw new Error(error.message || "Cloud save failed.");
+  }
+}
+
+/** Retention: these tables are append-mostly and nothing ever trimmed them, so reads/backups/storage grew
+ *  without bound. Called from the daily cron; best-effort (each delete is independent and never throws). */
+export async function pruneOldData(): Promise<Record<string, string>> {
+  if (!client) return {};
+  const c = client;
+  const iso = (daysAgo: number) => new Date(Date.now() - daysAgo * 86_400_000).toISOString();
+  const out: Record<string, string> = {};
+  const run = async (label: string, q: PromiseLike<{ error: { message: string } | null }>) => {
+    try { const { error } = await q; out[label] = error ? `error: ${error.message}`.slice(0, 120) : "ok"; } catch (e: any) { out[label] = `error: ${String(e?.message || e).slice(0, 100)}`; }
+  };
+  await run("sessions", c.from(SESSIONS).delete().lt("expire", new Date().toISOString()));
+  await run("ratelimits", c.from(RATELIMITS).delete().lt("updated_at", iso(2)));
+  await run("job_events", c.from(EVENTS).delete().lt("at", iso(30)));
+  await run("jobs", c.from(JOBS).delete().in("status", ["succeeded", "failed_terminal", "cancelled"]).lt("created_at", iso(30)));
+  return out;
+}
+
+/** Narrow write of ONE column (study sessions). saveState rewrites profile+tasks too — for a high-frequency
+ *  save like a study-session tick that meant re-uploading the whole account blob (and, from a cached read,
+ *  could clobber a newer write). Same shape as savePronoteConnection above. */
+export async function saveStudySessions(email: string | undefined, studySessions: StudySession[], opts?: { throwOnError?: boolean }): Promise<void> {
+  if (!client || !email) return;
+  const row = { email, studySessions, updated_at: new Date().toISOString() };
+  const heldBefore = stateCache.get(email);
+  stateCache.delete(email);
+  const { error } = await withRetry("save-study-sessions", async () =>
+    client!.from(TABLE).upsert(row, { onConflict: "email" }).then((r) => ({ data: null, error: r.error })));
+  if (!error && heldBefore?.ver && Date.now() - heldBefore.at < 60_000) cacheSetState(email, { ...heldBefore.state, studySessions }, row.updated_at);
+  if (error) {
+    console.warn("[store] study-sessions save failed:", error.message);
+    reportError("save-study-sessions", error, { email });
     if (opts?.throwOnError) throw new Error(error.message || "Cloud save failed.");
   }
 }
@@ -1174,6 +1219,41 @@ export async function listUsageRequests(): Promise<{ email: string; at: string; 
   return out.sort((a, b) => b.at.localeCompare(a.at));
 }
 
+export interface AdminUserRow {
+  email: string; name: string; lastActive: string; fullMode: boolean | null;
+  monthCostUsd: number; weekUsd: number; weekLimitExtra: number; tokens: number;
+  tutorSessions: number; voiceCalls: number; voiceMinutes: number; lastVoiceAt: string;
+}
+/** Every account, for the admin's users list. Reads only the few profile fields it shows (PostgREST json paths),
+ *  never the task list or the study columns, and only runs when the admin presses Refresh. */
+export async function listAdminUsers(): Promise<AdminUserRow[]> {
+  if (!client) return [];
+  const mk = monthKeyOf();
+  const out: AdminUserRow[] = [];
+  try {
+    for (let from = 0; from < 5000; from += 500) {
+      const { data, error } = await client.from(TABLE)
+        .select("email,updated_at,name:profile->name,full:profile->fullAccess,usage:profile->usage,week:profile->weekSpend,live:profile->liveStats,recaps:profile->sessions")
+        .order("updated_at", { ascending: false }).range(from, from + 499);
+      if (error) { console.warn("[store] listAdminUsers failed:", error.message); break; }
+      for (const r of (data || []) as any[]) {
+        const u = r.usage || {};
+        out.push({
+          email: String(r.email || ""), name: typeof r.name === "string" ? r.name : "", lastActive: String(r.updated_at || ""),
+          fullMode: typeof r.full === "boolean" ? r.full : null,
+          monthCostUsd: u.monthKey === mk ? Number(u.monthCost) || 0 : 0,
+          weekUsd: Number(r.week?.usd) || 0, weekLimitExtra: Number(r.week?.extraUsd) || 0,
+          tokens: (Number(u.in) || 0) + (Number(u.out) || 0),
+          tutorSessions: Array.isArray(r.recaps) ? r.recaps.length : 0,
+          voiceCalls: Number(r.live?.count) || 0, voiceMinutes: Math.round((Number(r.live?.seconds) || 0) / 60), lastVoiceAt: String(r.live?.lastAt || ""),
+        });
+      }
+      if (!data || data.length < 500) break;
+    }
+  } catch (e: any) { console.warn("[store] listAdminUsers failed:", String(e?.message || e)); }
+  return out;
+}
+
 /** Give an account extra AI allowance for the CURRENT week and clear its request. Returns false when the account doesn't exist. */
 export async function grantExtraUsage(email: string, usd: number, weekKey: string): Promise<boolean> {
   if (!client || !email) return false;
@@ -1183,6 +1263,19 @@ export async function grantExtraUsage(email: string, usd: number, weekKey: strin
   const w = p.weekSpend?.key === weekKey ? p.weekSpend : { key: weekKey, usd: 0, extraUsd: 0 };
   p.weekSpend = { key: weekKey, usd: w.usd, extraUsd: w.extraUsd + usd };
   p.usageRequest = undefined;
+  await saveState(email, { ...state, profile: p }, { throwOnError: true });
+  return true;
+}
+
+/** Admin switch: put an account into (or out of) the full app. The stamp is "now", so the cross-device merge
+ *  (latest fullAccessAt wins) beats whatever stale copy the user's open session still holds. */
+export async function setFullAccessFor(email: string, on: boolean): Promise<boolean> {
+  if (!client || !email) return false;
+  const state = await loadState(email, { bypassCache: true });
+  if (!state.profile || (!state.tasks?.length && !Object.keys(state.profile).length)) return false;
+  const p = state.profile;
+  p.fullAccess = on;
+  p.fullAccessAt = new Date().toISOString();
   await saveState(email, { ...state, profile: p }, { throwOnError: true });
   return true;
 }

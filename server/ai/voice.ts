@@ -80,9 +80,10 @@ const EDGE_MALE_VOICES: Record<"fr" | "en", string[]> = {
 const xmlEscape = (t: string) => t.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 
 async function synthesizeChunkWithEdge(text: string, voice: string): Promise<{ mp3: Buffer } | { error: string; status: number }> {
+  let tts: any;
   try {
     const { MsEdgeTTS, OUTPUT_FORMAT } = await import("msedge-tts");
-    const tts = new MsEdgeTTS();
+    tts = new MsEdgeTTS();
     await tts.setMetadata(voice, OUTPUT_FORMAT.AUDIO_24KHZ_48KBITRATE_MONO_MP3);
     const { audioStream } = tts.toStream(xmlEscape(text));
     const mp3 = await new Promise<Buffer>((resolve, reject) => {
@@ -92,11 +93,13 @@ async function synthesizeChunkWithEdge(text: string, voice: string): Promise<{ m
       audioStream.on("error", (e: any) => { clearTimeout(timer); reject(e); });
       audioStream.on("close", () => { clearTimeout(timer); resolve(Buffer.concat(parts)); });
     });
-    try { (tts as any).close?.(); } catch { /* ignore */ }
     if (!mp3.length) return { error: `edge ${voice} returned empty audio`, status: 502 };
     return { mp3 };
   } catch (e: any) {
     return { error: `edge ${voice} failed: ${e?.message || e}`, status: 502 };
+  } finally {
+    // Closed on every path (timeout and error included) — the websocket used to stay open on failure.
+    try { tts?.close?.(); } catch { /* ignore */ }
   }
 }
 

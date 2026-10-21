@@ -10,6 +10,7 @@
  * into firing one; they surface as "needs you" steps. (Email keeps the rule you set: draft only, you send.)
  */
 import { Composio } from "@composio/core";
+import { setBounded } from "./lru.ts";
 /** Tool shape in the (Anthropic-style) format the agent loop converts for the OpenAI-compatible API. */
 export interface AgentTool { name: string; description?: string; input_schema: { type: "object"; properties: Record<string, unknown>; required?: string[] }; }
 
@@ -163,10 +164,11 @@ function sdk(): Composio {
 // leave real budget for the rest of a run/sweep afterward.
 const COMPOSIO_TIMEOUT_MS = 25_000;
 function withComposioTimeout<T>(label: string, p: Promise<T>): Promise<T> {
+  let timer: ReturnType<typeof setTimeout>;
   return Promise.race([
     p,
-    new Promise<T>((_, reject) => setTimeout(() => reject(new Error(`Composio call timed out: ${label}`)), COMPOSIO_TIMEOUT_MS)),
-  ]);
+    new Promise<T>((_, reject) => { timer = setTimeout(() => reject(new Error(`Composio call timed out: ${label}`)), COMPOSIO_TIMEOUT_MS); }),
+  ]).finally(() => clearTimeout(timer));
 }
 
 const isActive = (i: any) => ["ACTIVE", "CONNECTED", "ENABLED"].includes(String(i?.status ?? i?.connectionStatus ?? i?.state ?? "").toUpperCase());
@@ -225,7 +227,7 @@ export async function initiateConnection(app: string, userId: string, callbackUr
 /** Connected/not for every app in one sweep (matches by toolkit, or by the captured connectionId hint). */
 export async function getAllConnectionStatuses(userId: string, apps: string[], connIdByApp: Record<string, string> = {}): Promise<Record<string, boolean>> {
   try {
-    const list: any = await sdk().connectedAccounts.list({ userIds: [userId], limit: 200 } as any);
+    const list: any = await withComposioTimeout("list accounts", sdk().connectedAccounts.list({ userIds: [userId], limit: 200 } as any));
     const items: any[] = (list?.items ?? (Array.isArray(list) ? list : [])).filter(isActive);
     const toolkits = new Set(items.map(acctToolkit));
     const ids = new Set(items.map(acctId));
@@ -272,9 +274,9 @@ const acctListCache = new Map<string, { at: number; items: any[] }>();
 async function rawConnectedAccounts(userId: string): Promise<any[]> {
   const hit = acctListCache.get(userId);
   if (hit && Date.now() - hit.at < 30_000) return hit.items;
-  const list: any = await sdk().connectedAccounts.list({ userIds: [userId], limit: 200 } as any);
+  const list: any = await withComposioTimeout("list accounts", sdk().connectedAccounts.list({ userIds: [userId], limit: 200 } as any));
   const items: any[] = (list?.items ?? (Array.isArray(list) ? list : [])).filter(isActive);
-  acctListCache.set(userId, { at: Date.now(), items });
+  setBounded(acctListCache, userId, { at: Date.now(), items });
   return items;
 }
 
@@ -309,7 +311,7 @@ export async function getConnectedAccounts(userId: string, app: string, resolveE
 /** Disconnect an app by deleting its active connected account. */
 export async function disconnect(app: string, userId: string): Promise<{ ok: boolean; error?: string }> {
   try {
-    const list: any = await sdk().connectedAccounts.list({ userIds: [userId], limit: 200 } as any);
+    const list: any = await withComposioTimeout("list accounts", sdk().connectedAccounts.list({ userIds: [userId], limit: 200 } as any));
     const items: any[] = list?.items ?? (Array.isArray(list) ? list : []);
     const accounts = items.filter((i) => isActive(i) && acctToolkit(i) === norm(TOOLKIT_OF(app)));
     for (const account of accounts) {
@@ -338,7 +340,7 @@ export async function disconnectAccount(accountId: string): Promise<{ ok: boolea
 /** Lowercase toolkit slugs the user has ACTIVELY connected (any Composio app, not just our catalog). */
 async function listConnectedToolkits(userId: string): Promise<string[]> {
   try {
-    const list: any = await sdk().connectedAccounts.list({ userIds: [userId], limit: 200 } as any);
+    const list: any = await withComposioTimeout("list accounts", sdk().connectedAccounts.list({ userIds: [userId], limit: 200 } as any));
     const items: any[] = list?.items ?? (Array.isArray(list) ? list : []);
     const slugs = new Set<string>();
     for (const i of items) {
@@ -898,7 +900,7 @@ export async function getAgentTools(userId: string, opts?: { accountApp?: string
   if (hit && Date.now() - hit.at < CACHE_MS) return hit.data;
 
   const connected = await listConnectedToolkits(userId);
-  if (!connected.length) { const data = { ...EMPTY, connected }; cache.set(cacheKey, { at: Date.now(), data }); return data; }
+  if (!connected.length) { const data = { ...EMPTY, connected }; setBounded(cache, cacheKey, { at: Date.now(), data }); return data; }
 
   // For multi-account toolkits this run ISN'T already routed to a specific account (routeToolkit covers
   // that case) — resolve which connected account write actions should implicitly target. Without this,
@@ -939,7 +941,7 @@ export async function getAgentTools(userId: string, opts?: { accountApp?: string
     // limit: pull the FULL action set, not Composio's small write-heavy default (~20) — otherwise big
     // toolkits like GitHub never surface their read actions (list issues/PRs/repos), and Calendar never
     // surfaces UPDATE_EVENT. We rank + cap below, so fetching extra is cheap (cached 120s).
-    try { raw = await sdk().tools.get(userId, { toolkits: [app.toUpperCase()], limit: 300 } as any) as any[]; } catch { raw = []; }
+    try { raw = await withComposioTimeout("get tools", sdk().tools.get(userId, { toolkits: [app.toUpperCase()], limit: 300 } as any)) as any[]; } catch { raw = []; }
     // Rank by usefulness, THEN take the top perToolkit — so the slots go to read/create/update on the core
     // nouns (events, messages, files) instead of whatever sorts first alphabetically.
     const ranked = (Array.isArray(raw) ? raw : [])
@@ -1027,7 +1029,7 @@ export async function getAgentTools(userId: string, opts?: { accountApp?: string
   };
   const data: AgentTools = { tools, call: makeCall(), connected, _rawByName: map, _permCall: makeCall(undefined, true) };
   data.withAllowedArtifacts = (ids: string[]) => ({ ...data, call: makeCall(new Set(ids.filter(Boolean))), withAllowedArtifacts: data.withAllowedArtifacts, _rawByName: map, _permCall: data._permCall });
-  cache.set(cacheKey, { at: Date.now(), data });
+  setBounded(cache, cacheKey, { at: Date.now(), data });
   return data;
 }
 
@@ -1040,7 +1042,7 @@ export async function connectionStatusesCached(userId: string, apps: string[]): 
   const hit = statusCache.get(userId);
   if (hit && Date.now() - hit.at < 60_000) return hit.data;
   const data = await getAllConnectionStatuses(userId, apps);
-  statusCache.set(userId, { at: Date.now(), data });
+  setBounded(statusCache, userId, { at: Date.now(), data });
   return data;
 }
 

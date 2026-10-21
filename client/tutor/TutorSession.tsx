@@ -530,6 +530,7 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
     subject: task?.sourceSubject,
     pastSessions: task ? sessionMemoryForPrompt(pastSessions, task.sourceSubject, Date.now(), openerLang) : undefined,
     resuming: (task?.chat?.length || 0) > 0,
+    resumeTail: (task?.chat || []).slice(-8).map((m) => `${m.role === "user" ? "Student" : "Otto"}: ${String(m.text || "")}`),
     onTurn: onLiveTurn,
     onTurnComplete: onLiveTurnComplete,
     onPartial: (you, otto) => {
@@ -1110,7 +1111,7 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
             caption={liveStatus === "live" ? caption : lastOttoText ? { who: "otto", text: lastOttoText } : null}
             sending={sending} blocked={live.blocked} onResume={live.resumePlayback}
             onStart={() => void live.start()} onStop={live.stop} onMute={live.setMuted}
-            onType={(t) => { if (liveStatus === "live") { onLiveTurn("you", t); live.sendText(t); } else void send(t, false); }}
+            onType={(t) => { if (liveStatus === "live") { onLiveTurn("you", t); live.sendText(`(Typed by the student — their full message, read it as given: ) ${t}`); } else void send(t, false); }}
             onHistory={() => setChatDrawer((v) => !v)} historyCount={task.chat?.length || 0}
             onAttach={(f) => attachRef.current(f)} attaching={attaching}
           />

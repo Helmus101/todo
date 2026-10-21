@@ -10,6 +10,7 @@
  * as usual", and the tutor is told so. A source's host is the ONLY thing a question may cite — a link on a
  * problem is validated against this registry, so the model can't attach an invented source.
  */
+import { htmlToPlainText, readBodyCapped } from "./safeHtml.ts";
 import { webSearch } from "./websearch.ts";
 import { assertSafeExternalUrl } from "./pronote.ts";
 
@@ -59,14 +60,7 @@ export function cleanProblemSource(url: unknown): { name: string; url: string } 
 
 const clamp = (s: string, n: number) => (s.length > n ? s.slice(0, n) : s);
 
-function htmlToText(html: string): string {
-  return html
-    .replace(/<script[\s\S]*?<\/script>|<style[\s\S]*?<\/style>|<noscript[\s\S]*?<\/noscript>/gi, " ")
-    .replace(/<\/(p|div|li|tr|h[1-6]|br)>/gi, "\n")
-    .replace(/<[^>]+>/g, " ")
-    .replace(/&nbsp;/g, " ").replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"').replace(/&#39;/g, "'")
-    .replace(/[ \t]+/g, " ").replace(/\n\s*\n+/g, "\n").trim();
-}
+const htmlToText = (html: string): string => htmlToPlainText(html);
 
 /** The ~max chars of a page most relevant to the topic: a window around the densest cluster of topic words,
  *  preferring text that looks like a question. "" when the page never mentions the topic (a login wall, a
@@ -99,7 +93,7 @@ async function realFetchPage(url: string): Promise<string> {
   const r = await fetch(url, { signal: AbortSignal.timeout(5000), redirect: "error", headers: { "user-agent": "Mozilla/5.0 (compatible; OttoStudyBot/1.0)" } });
   const ct = r.headers.get("content-type") || "";
   if (!r.ok || !/text\/html|text\/plain/i.test(ct)) return "";
-  return htmlToText((await r.text()).slice(0, 1_500_000));
+  return htmlToText(await readBodyCapped(r, 400_000));
 }
 const realSourceDeps: SourceDeps = { search: (q, domains) => webSearch(q, { domains }), fetchPage: realFetchPage };
 

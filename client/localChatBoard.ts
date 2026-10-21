@@ -46,11 +46,23 @@ function getKey(userId: string | null): string {
 // a quota/private-mode failure degrades to "doesn't survive a reload" instead of "vanishes immediately."
 const memory = new Map<string, Record<string, LocalTaskThread>>();
 
+// Parse cache: components call getLocalThread during render (StudyMode re-renders every second), and
+// JSON.parse of a multi-MB blob on each call froze the main thread. Re-parse only when the raw string changed
+// (another tab wrote it); writeAll refreshes it so our own writes never trigger a re-parse either.
+const parsedCache = new Map<string, { raw: string; parsed: Record<string, LocalTaskThread> }>();
+
 function readAll(userId: string | null): Record<string, LocalTaskThread> {
   const key = getKey(userId);
   try {
     const raw = localStorage.getItem(key);
-    if (raw) { const parsed = JSON.parse(raw); memory.set(key, parsed); return parsed; }
+    if (raw) {
+      const hit = parsedCache.get(key);
+      if (hit && hit.raw === raw) return hit.parsed;
+      const parsed = JSON.parse(raw);
+      parsedCache.set(key, { raw, parsed });
+      memory.set(key, parsed);
+      return parsed;
+    }
   } catch { /* corrupt/unavailable — fall through to memory mirror below */ }
   return memory.get(key) || {};
 }
@@ -67,7 +79,7 @@ function writeAll(map: Record<string, LocalTaskThread>, userId: string | null, k
   memory.set(key, map); // always succeeds — the durable fallback when disk fails
   const evictable = Object.keys(map).filter((id) => id !== keepTaskId).sort((a, b) => lastActivity(map[a]) - lastActivity(map[b]));
   for (let attempt = 0; ; attempt++) {
-    try { localStorage.setItem(key, JSON.stringify(map)); return; } catch {
+    try { const raw = JSON.stringify(map); localStorage.setItem(key, raw); parsedCache.set(key, { raw, parsed: map }); return; } catch {
       const victim = evictable.shift();
       if (!victim) return; // nothing else to drop — the memory mirror still has it for this tab
       delete map[victim];

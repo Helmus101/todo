@@ -16,6 +16,7 @@ export async function sendTransactionalEmail(to: string, subject: string, html: 
       method: "POST",
       headers: { Authorization: `Bearer ${RESEND_API_KEY}`, "Content-Type": "application/json" },
       body: JSON.stringify({ from: MAIL_FROM, to, subject, html }),
+      signal: AbortSignal.timeout(10_000),
     });
     if (!res.ok) { console.warn("[mailer] send failed:", res.status, await res.text().catch(() => "")); return false; }
     return true;

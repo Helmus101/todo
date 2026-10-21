@@ -12,6 +12,7 @@ import { makeSyncScheduler } from "./syncScheduler.ts";
 import { loadState, saveState, checkRateLimit, peekSessionCsrfToken } from "./store.ts";
 import * as tasks from "./tasks.ts";
 import * as integrations from "./integrations.ts";
+import { setBounded } from "./lru.ts";
 
 
 // The `> 0` guard matters: `Number("0") || 8788` is 0 (a non-empty string is truthy, so the || never
@@ -112,7 +113,7 @@ export const commit = async (req: express.Request, opts?: { awaitCloud?: boolean
     // High-value write (a journal save): written NOW, with a fresh read of the account row, and it supersedes anything pending.
     scheduler.cancel(email);
     await writeAccount(email, localTasks, localProfile, { throwOnError: true, bypassCache: true });
-    sessionDirtyCache.set(sessionId, currentHash);
+    setBounded(sessionDirtyCache, sessionId, currentHash);
   } else if (isDirty) {
     if (process.env.VERCEL) {
       // Serverless: a timer set after the response may never fire (the instance freezes). Write now and let
@@ -122,7 +123,7 @@ export const commit = async (req: express.Request, opts?: { awaitCloud?: boolean
       // Long-running server: write-behind — a burst of step ticks / reviews / chat turns is one write (syncScheduler.ts).
       scheduler.schedule(email, { tasks: localTasks, profile: localProfile });
     }
-    sessionDirtyCache.set(sessionId, currentHash);
+    setBounded(sessionDirtyCache, sessionId, currentHash);
   }
 };
 

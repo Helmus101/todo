@@ -99,7 +99,9 @@ export async function tutorOpener(
     `question about that work (get THEM to recall it — don't just tell them what it was): recalling beats ` +
     `re-reading. Otherwise ask what's tripping them up. Vary the wording — this line must never read like a ` +
     `template.\n` +
-    `Spoken tone: contractions, plain words, the rhythm of speech.`;
+    `Spoken tone: contractions, plain words, the rhythm of speech. Never write "It looks like you've been", ` +
+    `"dive in", "dive into", "shall we", "journey" or "let's explore" — say it the way a friend would, in plain words, and only ` +
+    `about what the memory actually shows.`;
   const recorded =
     sessionRecapLine(profile?.sessions, subject || undefined) +
     studentModelLine(profile) +

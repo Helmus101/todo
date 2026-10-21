@@ -264,6 +264,7 @@ app.get("/api/status", ah(async (req, res) => {
     paused: !!req.session.profile?.paused,
     weekly: req.session.user ? (() => { const w = weeklyUsage(req.session.profile, weeklyCap()); return { usd: Math.round(w.usd * 100) / 100, cap: w.cap, limit: w.limit, extra: w.extra, over: w.over && !isAdmin(req), requested: w.requested }; })() : undefined,
     autoPaused: !!req.session.profile?.paused && !!req.session.profile?.autoPausedAt,
+    writeBehind: !process.env.VERCEL, // on Vercel every commit flushes immediately, so a tab-hide flush call is a wasted invocation
     highPriorityPeople: req.session.profile?.highPriorityPeople,
     genPerDay: req.session.profile?.genPerDay,
     timezone: req.session.profile?.timezone,
@@ -303,7 +304,8 @@ registerStudyRoutes(app);
 // On Vercel the built client is served by Vercel's static layer (see vercel.json), not Express.
 if (PROD && !process.env.VERCEL) {
   const dist = path.resolve(__dirname, "../dist");
-  app.use(express.static(dist));
+  // Hashed build assets never change, so they cache for a year; everything else (index.html, the public pages) revalidates.
+  app.use(express.static(dist, { setHeaders: (res, file) => { res.setHeader("Cache-Control", /[\\/]assets[\\/]/.test(file) ? "public, max-age=31536000, immutable" : "no-cache"); } }));
   // The public pages have their own prerendered HTML (own title / canonical / content) — see scripts/prerender-landing.tsx.
   for (const page of ["research", "privacy", "terms"]) app.get(`/${page}`, (_req, res) => { res.sendFile(path.join(dist, `${page}.html`)); });
   app.get("/blog", (_req, res) => { res.sendFile(path.join(dist, "blog.html")); });

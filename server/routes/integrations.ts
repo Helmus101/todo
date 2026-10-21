@@ -36,6 +36,9 @@ export function registerIntegrationRoutes(app: express.Express): void {
 
   // GET so a plain <a href> can carry the user through the OAuth redirect (like /auth/google).
   app.get("/integrations/:app/connect", requireAuth, async (req, res) => {
+    // Connecting replaces an existing connection, so a cross-site link must not be able to trigger it.
+    const site = req.headers["sec-fetch-site"];
+    if (site && site !== "same-origin" && site !== "none") { res.status(403).send("Start this connection from inside Otto."); return; }
     try {
       if (!integrations.integrationsReady()) { res.status(500).send("Integrations aren't configured on the server (COMPOSIO_API_KEY)."); return; }
       const app2 = String(req.params.app);

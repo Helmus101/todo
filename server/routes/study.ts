@@ -8,7 +8,8 @@ import type { WebTask, Profile, StudySession, StudyProfile, FocusSession } from 
 import { emptyProfile, isHandled, addUsage, bumpActivityHour, MAX_DUE_SETS_PER_DAY, subjectMastery } from "../../shared/types.ts";
 import { findSourceQuestions, sourcesForTrack } from "../questionSources.ts";
 import { summarizeCoursework, fallbackCourseworkSummary, aiReady, generateDailyStudyCards, generateDailyPracticeProblem, checkFeynmanGap, extractJournalMemory, generateWeeklyStudyDeck, generateWeeklyQuiz, generateMonthlyStudyDeck, generateMonthlyQuiz, generateSchedulingSuggestion, recommendArtifactType } from "../claude.ts";
-import { loadState, saveState, cloudEnabled, loadBanditState, saveBanditState, recordSessionOutcome, recordMetric } from "../store.ts";
+import { htmlToPlainText, readBodyCapped } from "../safeHtml.ts";
+import { saveStudySessions, loadState, saveState, cloudEnabled, loadBanditState, saveBanditState, recordSessionOutcome, recordMetric } from "../store.ts";
 import { contextKey as banditContextKey, chooseArm, updatePosterior, computeReward, computeCardReward, POMODORO_ARMS, FLASHCARD_ARMS, AUDIO_ARMS, DENSITY_ARMS } from "../bandit.ts";
 import * as tasks from "../tasks.ts";
 import * as jobs from "../jobs.ts";
@@ -69,16 +70,7 @@ const GDOC_URL_RE = /^https:\/\/docs\.google\.com\/document\/d\/([^/]+)/;
 
 const MAX_EXTRACTED_CHARS = 6000;
 
-function stripHtmlToText(html: string): string {
-  return html
-    .replace(/<script[\s\S]*?<\/script>/gi, " ")
-    .replace(/<style[\s\S]*?<\/style>/gi, " ")
-    .replace(/<!--[\s\S]*?-->/g, " ")
-    .replace(/<[^>]+>/g, " ")
-    .replace(/&nbsp;/g, " ").replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"').replace(/&#39;/g, "'")
-    .replace(/[ \t]+/g, " ").replace(/\n\s*\n+/g, "\n\n")
-    .trim();
-}
+const stripHtmlToText = (html: string): string => htmlToPlainText(html);
 
 // Calculate aggregated focus statistics from session history
 function recalculateFocusStats(p: Profile) {
@@ -722,7 +714,7 @@ export function registerStudyRoutes(app: express.Express): void {
       const r = await fetch(url, { signal: AbortSignal.timeout(8000), redirect: "error", headers: { "user-agent": "Mozilla/5.0 (compatible; OttoStudyBot/1.0)" } });
       const ct = r.headers.get("content-type") || "";
       if (!r.ok || !/text\/html|text\/plain/i.test(ct)) { res.json({ text: "" }); return; }
-      const html = (await r.text()).slice(0, 2_000_000);
+      const html = await readBodyCapped(r, 400_000);
       res.json({ text: stripHtmlToText(html).slice(0, MAX_EXTRACTED_CHARS) });
     } catch {
       res.json({ text: "" }); // best-effort — never a hard error over an enhancement, matches pdfText.ts's own posture
@@ -899,7 +891,10 @@ export function registerStudyRoutes(app: express.Express): void {
   app.post("/api/focus/session", requireAuth, async (req, res) => {
     try {
       const p = (req.session.profile ||= emptyProfile());
-      const session: FocusSession = req.body;
+      // Whitelist: only the scalar fields a focus session has (the body used to be stored as-is, so any extra key rode into the account row).
+      const FOCUS_KEYS = ["id", "taskId", "taskTitle", "subject", "startTime", "endTime", "duration", "avgConcentration", "avgMovement", "avgBlinkRate", "gazeOnScreenPct", "avgHeadYaw", "avgHeadPitch", "avgHeadRoll", "concentrationVariance", "focusStability", "taskCompleted", "quality"];
+      const raw = req.body && typeof req.body === "object" ? req.body : {};
+      const session = Object.fromEntries(FOCUS_KEYS.filter((k) => ["string", "number", "boolean"].includes(typeof raw[k])).map((k) => [k, typeof raw[k] === "string" ? raw[k].slice(0, 200) : raw[k]])) as unknown as FocusSession;
       
       // Validate required fields
       if (!session.id || !session.startTime || !session.endTime || session.duration === undefined) {
@@ -1047,7 +1042,7 @@ export function registerStudyRoutes(app: express.Express): void {
       // Keep only last 100 sessions
       const trimmedSessions = sessions.length > 100 ? sessions.slice(-100) : sessions;
       
-      await saveState(email, { profile: current.profile, tasks: current.tasks, studySessions: trimmedSessions }, { throwOnError: true });
+      await saveStudySessions(email, trimmedSessions, { throwOnError: true });
       res.json(session);
     } catch (e: any) { console.error(e);
       res.status(500).json({ error: "Couldn't save study session." }); }

@@ -202,6 +202,7 @@ const j = async (r: Response) => {
 // "still running" by US (with a follow-up re-sync) rather than by the platform killing the request and
 // handing back an error page.
 const GENERATE_TIMEOUT_MS = 120_000;
+export interface AdminUser { email: string; name: string; lastActive: string; fullMode: boolean | null; monthCostUsd: number; weekUsd: number; weekLimitExtra: number; tokens: number; tutorSessions: number; voiceCalls: number; voiceMinutes: number; lastVoiceAt: string }
 export interface FeedbackItem { id: string; helpful: "yes" | "somewhat" | "no"; comment: string; publish: boolean; status: "pending" | "approved" | "rejected"; name: string; level: string; at: string }
 const post = (url: string, body?: unknown) =>
   req(url, { method: "POST", headers: body ? { "content-type": "application/json" } : undefined, body: body ? JSON.stringify(body) : undefined }).then(j);
@@ -299,7 +300,7 @@ export const api = {
   // needs to reach the student as a real message ("nothing's configured" / "try drawing it bigger"), not
   // silently vanish, since this is the one thing they actually asked Otto to look at.
   /** A short-lived credential for the live voice (Gemini Live) plus the tutor's instructions with what Otto knows about the student. 503/502 means live voice is unavailable: the classic voice takes over. */
-  liveToken: (body: { lang?: string; subject?: string; pastSessions?: unknown[]; resuming?: boolean }): Promise<{ provider?: "gemini" | "openai"; token: string; model: string; models?: string[]; instructions: string; providers?: Array<{ provider: "gemini" | "openai"; token: string; model: string; models?: string[]; instructions: string }> }> => post("/api/tutor/live/token", body),
+  liveToken: (body: { lang?: string; subject?: string; pastSessions?: unknown[]; resuming?: boolean; resumeTail?: string[] }): Promise<{ provider?: "gemini" | "openai"; token: string; model: string; models?: string[]; instructions: string; providers?: Array<{ provider: "gemini" | "openai"; token: string; model: string; models?: string[]; instructions: string }> }> => post("/api/tutor/live/token", body),
   /** After each spoken exchange: what should go on the paper (entries to merge into the board). */
   liveBoard: (exchange: string, board: unknown[], subject?: string, history?: string, lang?: string): Promise<{ board: any[] }> => post("/api/tutor/live/board", { exchange, board, subject, history, lang }),
   readWhiteboard: (image: string, context?: string): Promise<{ description: string }> => post("/api/tutor/read-whiteboard", { image, context }),
@@ -462,6 +463,8 @@ export const api = {
   adminFeedback: (status: "pending" | "approved" | "rejected" | "all" = "pending"): Promise<{ feedback: FeedbackItem[] }> => req(`/api/admin/feedback?status=${status}`).then(j),
   adminDecideFeedback: (id: string, decision: "approve" | "reject"): Promise<{ ok: boolean }> => post(`/api/admin/feedback/${encodeURIComponent(id)}`, { decision }),
   adminUsageRequests: (): Promise<{ requests: { email: string; at: string; note?: string; usd: number; extraUsd: number }[]; weekKey: string }> => req("/api/admin/usage-requests").then(j),
+  adminUsers: (): Promise<{ users: AdminUser[]; at: string }> => req("/api/admin/users").then(j),
+  adminSetFullAccess: (email: string, on: boolean): Promise<{ ok: boolean; fullApp: boolean }> => post("/api/admin/full-access", { email, on }),
   adminGrantUsage: (email: string, usd: number): Promise<{ ok: boolean }> => post("/api/admin/grant-usage", { email, usd }),
   setFullApp: (on: boolean): Promise<{ ok: boolean; fullApp: boolean }> => post("/api/full-access", { on }),
   logout: (): Promise<{ ok: boolean }> => post("/api/auth/logout").then((r) => { taskSync.reset(); return r; }),
