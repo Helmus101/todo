@@ -223,8 +223,11 @@ const geminiBreaker = { fails: 0, openUntil: 0 };
  *  quota, an unsupported param) hands the SAME turn to the next provider instead of failing the reply —
  *  which is what makes "Gemini, falling back to DeepSeek" real rather than nominal. Usage/cost accounting
  *  downstream is provider-agnostic (usageOf reads the OpenAI-shaped fields both return). */
-export async function createTutorChat(params: any, fast: boolean, opts?: { deadline?: number }): Promise<any> {
-  const providers = tutorProviders();
+export async function createTutorChat(params: any, fast: boolean, opts?: { deadline?: number; deepseekOnly?: boolean }): Promise<any> {
+  // `deepseekOnly`: everything that is NOT a live tutor session (task chat, UI translation) stays on DeepSeek;
+  // Gemini is only for the tutor.
+  const all = tutorProviders();
+  const providers = opts?.deepseekOnly ? all.filter((p) => p.name !== "gemini") : all;
   if (!providers.length) throw new Error("Set GEMINI_API_KEY or DEEPSEEK_API_KEY in web/.env.");
   let lastErr: any;
   for (let i = 0; i < providers.length; i++) {

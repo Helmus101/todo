@@ -45,7 +45,7 @@ export function registerTutorRoutes(app: express.Express): void {
             { role: "system", content: `You translate the interface of a tutoring app from English into ${languageName(lang)}. Input: a JSON array of UI strings. Output: a JSON object {"t":[...]} with exactly one translation per input string, same order. Keep it short and natural, as a native app would word it. Keep placeholders, numbers, emoji, symbols, URLs and proper names (Otto, Pronote, Google, Gmail, SAT, Desmos) unchanged. Never explain.` },
             { role: "user", content: JSON.stringify(todo) },
           ],
-        }, true);
+        }, true, { deepseekOnly: true });
         const parsed = JSON.parse(String(r?.choices?.[0]?.message?.content || "{}").replace(/^```(?:json)?|```$/g, ""));
         const t: unknown[] = Array.isArray(parsed?.t) ? parsed.t : [];
         todo.forEach((src, i) => {

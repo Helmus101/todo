@@ -678,7 +678,7 @@ export async function runChatRounds(ctx: RunChatRoundsContext): Promise<ChatResu
           // The chat tool set is deliberately in-app only (CREATE_*/web_search) — NEVER Composio. A tutoring
           // chat must not be able to touch the student's connected accounts, unlike runTask's tool set.
           ...(lastRound ? {} : { tools: (forceArtifactTools && !includeArtifactTools ? [CREATE_NOTE_TOOL, CREATE_FLASHCARDS_TOOL, CREATE_QUIZ_TOOL, ...tools] : tools).map((t) => ({ type: "function" as const, function: { name: t.name, description: t.description, parameters: t.input_schema } })) }),
-        }, !!opts?.primer), opts?.primer ? 2 : 3, 400);
+        }, !!opts?.primer, { deepseekOnly: !opts?.primer }), opts?.primer ? 2 : 3, 400);
       } catch (e: any) {
         // This used to swallow the real error completely — the ONLY visible symptom was every chat
         // message (even "hello") silently landing on the generic fallback line, with nothing in server
@@ -745,7 +745,7 @@ export async function runChatRounds(ctx: RunChatRoundsContext): Promise<ChatResu
           const retryRes: any = await retryRequest(() => createTutorChat({
             max_tokens: Math.round(OUT.chat * 1.5), temperature: 0.6,
             messages: [...apiMessages, { role: "user" as const, content: "Reply in plain words now — no tool use." }],
-          }, false), 1, 400);
+          }, false, { deepseekOnly: !opts?.primer }), 1, 400);
           const u = usageOf(retryRes);
           result.tokens.in += u.in; result.tokens.out += u.out; result.tokens.cachedIn = (result.tokens.cachedIn || 0) + u.cachedIn;
           textContent = retryRes.choices?.[0]?.message?.content || "";
@@ -760,7 +760,7 @@ export async function runChatRounds(ctx: RunChatRoundsContext): Promise<ChatResu
             const shortRes: any = await retryRequest(() => createTutorChat({
               max_tokens: OUT.chat * 2, temperature: 0.6,
               messages: [...apiMessages, { role: "user" as const, content: "Reply in ONE short sentence only — just the single most useful fact/answer, no explanation, no formatting." }],
-            }, false), 1, 400);
+            }, false, { deepseekOnly: !opts?.primer }), 1, 400);
             const u2 = usageOf(shortRes);
             result.tokens.in += u2.in; result.tokens.out += u2.out; result.tokens.cachedIn = (result.tokens.cachedIn || 0) + u2.cachedIn;
             textContent = shortRes.choices?.[0]?.message?.content || "";
@@ -805,7 +805,7 @@ export async function runChatRounds(ctx: RunChatRoundsContext): Promise<ChatResu
               max_tokens: OUT.chat, temperature: 0.6,
               messages: [...apiMessages, { role: "assistant" as const, content: textContent },
                 { role: "user" as const, content: "That got cut off. Continue from EXACTLY where it stopped — a couple of short sentences, concisely — don't restart or repeat what you already said, just complete the thought." }],
-            }, false), 2, 400);
+            }, false, { deepseekOnly: !opts?.primer }), 2, 400);
             const u = usageOf(contRes);
             result.tokens.in += u.in; result.tokens.out += u.out; result.tokens.cachedIn = (result.tokens.cachedIn || 0) + u.cachedIn;
             const completion = contRes.choices?.[0]?.message?.content?.trim();
