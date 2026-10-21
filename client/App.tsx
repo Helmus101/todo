@@ -27,6 +27,7 @@ import { AdminPage } from "./pages/Admin.tsx";
 import { MistakeLogPage } from "./pages/MistakeLog.tsx";
 import { AddTask, ConnectCard, TaskSkeleton } from "./pages/Dashboard.tsx";
 import { PrivacyBody, ResearchPageBody, TermsBody } from "./pages/Legal.tsx";
+import { PAGE_META, ORIGIN } from "../shared/seo.ts";
 
 // How long a local optimistic mutation (confirm/dismiss/step-done/substep) outranks an incoming background
 // fetch for the same task — see `keepLocalHandled`/`patchTask` in App(). Long enough to cover a slow
@@ -75,6 +76,23 @@ function todayLong(lang?: string): string {
 const STUDY_MODE_ENABLED = false;
 
 /** Strip leading/trailing slashes → the bare route ("" = dashboard, "settings", "login", "task/<id>"). */
+const HOME_TITLE = "Otto — the voice tutor that never gives you the answer";
+const PUBLIC_ROUTES = new Set(["", "research", "privacy", "terms"]);
+/** Title, canonical and robots for the current route. Public pages are indexable; everything behind login (and any
+ *  path the app doesn't know) is `noindex` so search engines never index app screens or soft-404s. */
+function applyPageMeta(route: string): void {
+  try {
+    const meta = PAGE_META[route];
+    document.title = meta ? meta.title : route === "" ? HOME_TITLE : document.title;
+    const canonical = document.querySelector<HTMLLinkElement>('link[rel="canonical"]');
+    if (canonical) canonical.href = ORIGIN + (meta ? meta.path : "/");
+    let robots = document.querySelector<HTMLMetaElement>('meta[name="robots"]');
+    if (!PUBLIC_ROUTES.has(route)) {
+      if (!robots) { robots = document.createElement("meta"); robots.name = "robots"; document.head.appendChild(robots); }
+      robots.content = "noindex, nofollow";
+    } else robots?.remove();
+  } catch { /* meta is best-effort */ }
+}
 const routeOf = (pathname: string) => pathname.replace(/^\/+/, "").replace(/\/+$/, "");
 
 /**
@@ -217,6 +235,9 @@ export function App() {
   // still wins because it sets signedOutRef before calling the server.
   const lastAuthenticatedStatusRef = useRef<ConnectionStatus | null>(CACHED_STATUS?.loggedIn ? CACHED_STATUS : null);
   const [route] = usePathRoute();
+  // Keep the tab title, canonical and robots meta right when the page changes without a reload (the static HTML
+  // already carries them for a direct load): public pages get their own, app screens and unknown paths are noindex.
+  useEffect(() => { applyPageMeta(route); }, [route]);
   // Phone-sized screens keep the focused tutor available alongside the task list, journal, and settings.
   // Dense workspaces remain restricted, but tutor is intentionally designed as a single-column, touch-first
   // surface and must be reachable from a phone without being redirected back to Today.

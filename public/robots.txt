@@ -1,4 +1,21 @@
 User-agent: *
 Allow: /
+Disallow: /api/
+Disallow: /auth/
+Disallow: /integrations/
+Disallow: /tasks
+Disallow: /task/
+Disallow: /settings
+Disallow: /tutor
+Disallow: /journal
+Disallow: /full
+Disallow: /flashcards
+Disallow: /coursework
+Disallow: /errorlog
+Disallow: /exercises
+Disallow: /log
+Disallow: /study
+Disallow: /login
+Disallow: /signup
 
 Sitemap: https://hiotto.vercel.app/sitemap.xml

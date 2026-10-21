@@ -11,7 +11,7 @@ import * as tasks from "../tasks.ts";
 import * as integrations from "../integrations.ts";
 import * as pronoteSvc from "../pronote.ts";
 import { getAgeBand, getPolicyProfileFromBirthYear } from "../policyProfiles.ts";
-import { M, PROD, ah, rateLimit, requireAuth, saveSession } from "../http.ts";
+import { M, PROD, ah, rateLimit, limitBy, requireAuth, saveSession } from "../http.ts";
 
 // ── Email account auth ─────────────────────────────────────────────────────────
 const normEmail = (s: unknown) => String(s || "").trim().toLowerCase();
@@ -106,6 +106,10 @@ export function registerAuthRoutes(app: express.Express): void {
     // skippable, and this call unconditionally hits Supabase's own signInWithPassword endpoint either way —
     // worth a manual real-vs-fake-email timing spot-check after deploying, since that specific guarantee
     // can't be verified without live credentials.
+    // Brute force from MANY IPs at ONE account: the route limit above is per IP, so a botnet could still try thousands of
+    // passwords against a single email. Cap failures per account across all IPs (successful logins don't count).
+    const perAccount = await limitBy(`login-fail:${email}`, 30, 60 * 60_000).catch(() => ({ allowed: true, retryAfterMs: 0 }));
+    if (!perAccount.allowed) { res.set("Retry-After", String(Math.ceil(perAccount.retryAfterMs / 1000))).status(429).json({ error: "Too many failed attempts on this account — try again later, or reset your password." }); return; }
     const validPassword = await verifyAuthPassword(email, password);
     if (!validPassword) {
       void recordEvent(email, "login_failed", {}); // never the password — email only, for brute-force visibility
@@ -205,6 +209,8 @@ export function registerAuthRoutes(app: express.Express): void {
   // store.deleteAccount) and destroys the session. Irreversible — the client confirms before calling this.
   app.post("/api/account/delete", requireAuth, rateLimit(5, 60_000), async (req, res) => {
     const email = req.session.user!;
+    // Deleting everything needs the password again — a stolen or left-open session must not be enough to erase an account.
+    if (!(await verifyAuthPassword(email, String(req.body?.password || "")))) { res.status(403).json({ error: "Enter your password to delete the account." }); return; }
     // NOT recordEvent(): deleteAccount() below purges this account's OWN rows from the events table as
     // part of the erasure, so a "deleted" event written there would erase itself in the same request —
     // the one event that most needs to survive would leave zero trace. console.warn instead: platform log

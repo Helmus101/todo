@@ -15,6 +15,9 @@ import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
 import { renderToStaticMarkup } from "react-dom/server";
 import { Landing } from "../client/pages/Landing.tsx";
+import { PrivacyBody, TermsBody, ResearchPageBody } from "../client/pages/Legal.tsx";
+import { LangContext } from "../client/ui.tsx";
+import { PAGE_META, ORIGIN, headFor } from "../shared/seo.ts";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const distIndexPath = resolve(__dirname, "../dist/index.html");
@@ -31,3 +34,35 @@ const markup = renderToStaticMarkup(<Landing lang="fr" onLangChange={() => {}} /
 const out = html.replace('<div id="root"></div>', `<div id="root">${markup}</div>`);
 writeFileSync(distIndexPath, out, "utf-8");
 console.log(`[prerender-landing] baked ${(markup.length / 1024).toFixed(1)}kb of static landing markup into dist/index.html`);
+
+// ── The other public pages get their OWN static HTML (title, description, canonical, social tags, real content) ──
+// Before this, /research, /privacy and /terms all served the home page's index.html: identical title and a canonical
+// pointing at "/", so search engines treated them as duplicates of the home page. Each is written to dist/<name>.html
+// and served at /<name> (vercel.json rewrite; server/index.ts for self-hosting).
+const bodies: Record<string, React.ReactElement> = {
+  research: <ResearchPageBody />,
+  privacy: <PrivacyBody />,
+  terms: <TermsBody />,
+};
+for (const [route, node] of Object.entries(bodies)) {
+  const meta = PAGE_META[route];
+  const inner = renderToStaticMarkup(
+    <LangContext.Provider value="en">
+      <div className="landing legal-page">
+        <header className="landing-nav glass-nav"><a className="brand" href="/">Otto</a><nav className="landing-navlinks"><a className="btn ghost" href="/research">Approach</a><a className="btn ghost" href="/privacy">Privacy</a><a className="btn ghost" href="/terms">Terms</a></nav></header>
+        <main className="legal">{node}<a className="legal-back" href="/">← Back to Otto</a></main>
+      </div>
+    </LangContext.Provider>,
+  );
+  const page = headFor(html, meta).replace('<div id="root"></div>', `<div id="root">${inner}</div>`);
+  writeFileSync(resolve(__dirname, `../dist/${route}.html`), page, "utf-8");
+  console.log(`[prerender] ${route}.html — ${(inner.length / 1024).toFixed(1)}kb, title "${meta.title}"`);
+}
+
+// Sitemap freshness: lastmod is the build date, not a hand-edited constant that goes stale.
+try {
+  const smPath = resolve(__dirname, "../dist/sitemap.xml");
+  const today = new Date().toISOString().slice(0, 10);
+  writeFileSync(smPath, readFileSync(smPath, "utf-8").replace(/<lastmod>[^<]*<\/lastmod>/g, `<lastmod>${today}</lastmod>`), "utf-8");
+} catch { /* the static copy in public/ stays as is */ }
+void ORIGIN;

@@ -27,6 +27,10 @@
     { "source": "/googleeb88d5ba4c78424d.html", "destination": "/googleeb88d5ba4c78424d.html" },
     { "source": "/llms.txt", "destination": "/llms.txt" },
     { "source": "/og-image.png", "destination": "/og-image.png" },
+    { "source": "/.well-known/:path*", "destination": "/.well-known/:path*" },
+    { "source": "/research", "destination": "/research.html" },
+    { "source": "/privacy", "destination": "/privacy.html" },
+    { "source": "/terms", "destination": "/terms.html" },
     { "source": "/:path*", "destination": "/index.html" }
   ],
   "headers": [
@@ -38,7 +42,9 @@
         { "key": "X-Content-Type-Options", "value": "nosniff" },
         { "key": "X-Frame-Options", "value": "DENY" },
         { "key": "Referrer-Policy", "value": "strict-origin-when-cross-origin" },
-        { "key": "Strict-Transport-Security", "value": "max-age=31536000; includeSubDomains" }
+        { "key": "Strict-Transport-Security", "value": "max-age=31536000; includeSubDomains" },
+        { "key": "Permissions-Policy", "value": "microphone=(self), camera=(self), geolocation=(), payment=(), usb=(), interest-cohort=()" },
+        { "key": "Cross-Origin-Opener-Policy", "value": "same-origin-allow-popups" }
       ]
     },
     {
