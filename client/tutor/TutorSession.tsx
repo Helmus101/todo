@@ -609,41 +609,26 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
     }
   }, [task, sessionStart, endingSession, saveAndClose]);
 
-  // Resume (explicit): the only way an existing session reopens — the student clicks "Reprendre" on the
-  // landing. Opening /tutor by itself never puts them back into a session; the landing always comes
-  // first, and what happens next is their choice.
-  const resumeActiveSession = useCallback(() => {
-    if (!pendingActiveSession) return;
+  // Any past session can be picked up again at any point: its board and conversation come back exactly as they were (this browser holds the
+  // record), and the next thing said or typed continues it. There is no "session in progress" prompt any more.
+  const resumePast = useCallback((s: TutorSessionSummary) => {
     enterFullscreen(); // tutor mode is full screen (this click is the user gesture the browser requires)
-    // This browser is the record of truth for the session's content: the server no longer writes chat/board/
-    // problems/objectives at all, so `pendingActiveSession` (a list-route row, which carries none of them)
-    // comes back EMPTY for a session that is already underway — reading it first is what makes "Reprendre"
-    // open a blank thread. getLocalThread is the real copy; the task's own fields are the fallback, for a
-    // conversation that predates the local switch and hasn't been carried into storage yet.
-    const local = getLocalThread(pendingActiveSession.id, userId);
-    const chat = local.chat.length ? local.chat : (pendingActiveSession.chat || []);
-    const board = local.board.length ? local.board : (pendingActiveSession.board || []);
-    const problems = local.problems.length ? local.problems : (pendingActiveSession.problems || []);
-    const objectives = local.objectives.length ? local.objectives : (pendingActiveSession.objectives || []);
-    // Only load relevant fields from the task, ignore irrelevant ones
+    const local = getLocalThread(s.id, userId);
+    const chat = local.chat.length ? local.chat : (s.chat || []);
+    const board = local.board.length ? local.board : (s.board || []);
+    const now = new Date().toISOString();
+    setPendingActiveSession(null);
+    setError(null);
     setTask({
-      ...pendingActiveSession,
-      chat,
-      board,
-      problems,
-      objectives,
-      // Clear irrelevant context from previous sessions
-      context: "",
-      steps: [],
-      links: [],
-      flashcards: [],
-      quizzes: [],
-      artifacts: [],
-    });
-    setSessionStart(new Date().toISOString());
+      id: s.id, title: s.subject ? `${s.subject} session` : "Tutor session", why: "", source: "freestudy", status: "pending",
+      sourceSubject: s.subject, createdAt: s.startTime || now, updatedAt: now,
+      chat, board, problems: local.problems, objectives: local.objectives,
+      context: "", steps: [], links: [], flashcards: [], quizzes: [], artifacts: [],
+    } as unknown as WebTask);
+    setSessionStart(now);
     setDesmosOpen(false);
     desmosEverOpenedRef.current = false;
-  }, [pendingActiveSession, userId]);
+  }, [userId]);
 
   const [talkRequest, setTalkRequest] = useState(0);
   // "Start talking" is the student's own tap: once the session exists the call starts by itself (voice is the main way in; typing is a side door).
@@ -729,6 +714,7 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
     return (
       <main className="list-wrap tutor-review">
         <a href="/tutor" className="tutor-back-btn">← {"All sessions"}</a>
+        <button type="button" className="btn primary tutor-review-resume" onClick={() => resumePast(reviewSession)}>{"Continue this session"}</button>
         <div className="tutor-review-head">
           <span className="tutor-review-subject">{reviewSession.subject || "Past session"}</span>
           <span className="tutor-review-meta">{dateStr} · {reviewSession.messageCount} {"messages"}</span>
@@ -788,24 +774,6 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
           <div className="tutor-face" aria-hidden><span className="tutor-face-eye" /><span className="tutor-face-eye" /></div>
           <h2 className="tutor-landing-title">{"I'm Otto, your thinking partner."}</h2>
           <p className="tutor-landing-sub">{"What are we sharpening today? I won't hand you answers — I'll make you find them."}</p>
-
-          {/* If there's an active session, show resume option */}
-          {pendingActiveSession && (
-            <div className="tutor-active-session-card">
-              <div className="tutor-active-session-header">
-                <span className="tutor-active-session-badge">{"In progress"}</span>
-                <span className="tutor-active-session-subject">{pendingActiveSession.sourceSubject || ""}</span>
-              </div>
-              <p className="tutor-active-session-text">
-                {"You have a session in progress. Resume it?"}
-              </p>
-              <div className="tutor-active-session-actions">
-                <button className="btn primary tutor-resume-btn" onClick={resumeActiveSession}>
-                  {"Resume"}
-                </button>
-              </div>
-            </div>
-          )}
 
           {/* Always show subject selector so you can create a new session even when one is active —
               rendered as the prototype's single wide pill: subject select left, orange "Start a session"
@@ -906,6 +874,7 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
                           board or chat, not session". No vague "View session" entry, no modals stacked over
                           the landing; an older saved session may have no `board` field to reopen. */}
                       <div className="tutor-history-actions">
+                        <button type="button" className="btn primary xs tutor-history-resume" onClick={() => resumePast(s)}>{"Resume"}</button>
                         {!!s.board?.length && (
                           <a href={`/tutor/session/${s.id}/board`} className="btn ghost xs tutor-history-view-board">
                             {"See the board"}

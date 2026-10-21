@@ -298,7 +298,7 @@ export const api = {
   // needs to reach the student as a real message ("nothing's configured" / "try drawing it bigger"), not
   // silently vanish, since this is the one thing they actually asked Otto to look at.
   /** A short-lived credential for the live voice (Gemini Live) plus the tutor's instructions with what Otto knows about the student. 503/502 means live voice is unavailable: the classic voice takes over. */
-  liveToken: (body: { subject?: string; pastSessions?: unknown[]; resuming?: boolean }): Promise<{ token: string; model: string; models?: string[]; instructions: string }> => post("/api/tutor/live/token", body),
+  liveToken: (body: { subject?: string; pastSessions?: unknown[]; resuming?: boolean }): Promise<{ provider?: "gemini" | "openai"; token: string; model: string; models?: string[]; instructions: string }> => post("/api/tutor/live/token", body),
   /** After each spoken exchange: what should go on the paper (entries to merge into the board). */
   liveBoard: (exchange: string, board: unknown[], subject?: string): Promise<{ board: any[] }> => post("/api/tutor/live/board", { exchange, board, subject }),
   readWhiteboard: (image: string, context?: string): Promise<{ description: string }> => post("/api/tutor/read-whiteboard", { image, context }),

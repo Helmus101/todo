@@ -120,7 +120,7 @@ const CSP = [
   // https://*.ingest.*.sentry.io: client-side Sentry (main.tsx) reports errors straight from the browser —
   // this was missing here while vercel.json's copy of this CSP (the one actually served on Vercel) already
   // had it, so client error reporting was silently CSP-blocked on the self-hosted/Docker path only.
-  "connect-src 'self' https://freedictionaryapi.com https://*.ingest.sentry.io https://*.ingest.us.sentry.io https://*.ingest.de.sentry.io https://cdn.jsdelivr.net https://storage.googleapis.com",
+  "connect-src 'self' https://api.openai.com https://generativelanguage.googleapis.com wss://generativelanguage.googleapis.com https://freedictionaryapi.com https://*.ingest.sentry.io https://*.ingest.us.sentry.io https://*.ingest.de.sentry.io https://cdn.jsdelivr.net https://storage.googleapis.com",
   // Study Mode embeds several things in iframes: a Spotify playlist/album/track widget (client/study/
   // spotify.ts, no OAuth needed), a Google Doc, a YouTube video, and — critically — the student's own
   // uploaded PDFs, which load from a same-page blob: URL (StudySetup's upload flow). Once frame-src is set

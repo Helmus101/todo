@@ -58,17 +58,11 @@ export function registerTutorRoutes(app: express.Express): void {
   // student (profile, past sessions kept on their device, journal, school record), so the voice has Otto's memory. Capped per day.
   app.post("/api/tutor/live/token", requireAuth, rateLimit(6, 60_000), dailyCap("live", Number(process.env.TUTOR_DAILY_LIVE) || 20), ah(async (req, res) => {
     if (isPaused(req)) { res.status(403).json({ error: "AI is paused — resume it in Settings to chat." }); return; }
-    const key = process.env.GEMINI_API_KEY;
-    if (!key) { res.status(503).json({ error: "Live voice isn't set up on this server.", code: "live_unavailable" }); return; }
+    const geminiKey = process.env.GEMINI_API_KEY;
+    const openaiKey = process.env.OPENAI_API_KEY;
+    if (!geminiKey && !openaiKey) { res.status(503).json({ error: "Live voice isn't set up on this server.", code: "live_unavailable" }); return; }
+    let detail = "";
     try {
-      const now = Date.now();
-      const r = await fetch(`https://generativelanguage.googleapis.com/v1alpha/auth_tokens?key=${encodeURIComponent(key)}`, {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ uses: 3, expireTime: new Date(now + 35 * 60_000).toISOString(), newSessionExpireTime: new Date(now + 60_000).toISOString() }),
-      });
-      if (!r.ok) throw new Error(`token request ${r.status}`);
-      const token = String(((await r.json()) as { name?: string }).name || "");
-      if (!token) throw new Error("no token returned");
       const subject = typeof req.body?.subject === "string" ? req.body.subject.trim().slice(0, 80) : "";
       const profile = req.session.profile || emptyProfile();
       const memory = (Array.isArray(req.body?.pastSessions) ? req.body.pastSessions : []).slice(0, 3).map((m: any) => ({
@@ -82,12 +76,44 @@ export function registerTutorRoutes(app: express.Express): void {
         const journal = selectJournal(req.session.tasks || [], { subject, query: subject, known: profile.subjects });
         background = backgroundBlock({ profile, subject, journal: journal.entries, journalMeta: { total: journal.total, subjects: journal.subjects }, schoolRecord: schoolRecordLine(req.session.tasks, profile, subject), memory } as any);
       } catch { /* memory is a bonus: the voice works without it */ }
+      const instructions = liveInstructions({ subject, level: undefined, background, resuming: req.body?.resuming === true });
+
+      // 1) OpenAI Realtime (WebRTC from the browser, a "mini" model): preferred when a key is configured (LIVE_PROVIDER=gemini forces Gemini).
+      if (openaiKey && process.env.LIVE_PROVIDER !== "gemini") {
+        const candidates = [...new Set([process.env.OPENAI_REALTIME_MODEL, "gpt-realtime-mini", "gpt-realtime-2.1-mini", "gpt-realtime-2.1"].filter((m): m is string => !!m))];
+        for (const model of candidates) {
+          for (const full of [true, false]) {
+            const session: any = { type: "realtime", model, instructions, output_modalities: ["audio"], audio: { output: { voice: "marin" }, ...(full ? { input: { transcription: { model: "gpt-4o-mini-transcribe" }, turn_detection: { type: "semantic_vad" } } } : {}) } };
+            const r = await fetch("https://api.openai.com/v1/realtime/client_secrets", { method: "POST", headers: { Authorization: `Bearer ${openaiKey}`, "Content-Type": "application/json" }, body: JSON.stringify({ session }) });
+            if (r.ok) {
+              const j: any = await r.json();
+              const value = String(j?.value || j?.client_secret?.value || "");
+              if (value) { res.json({ provider: "openai", token: value, model, models: [model], instructions }); return; }
+            }
+            detail = `openai ${model}: ${r.status}`;
+            if (r.status === 401 || r.status === 403 || r.status === 429) break;
+          }
+          if (/: (401|403|429)$/.test(detail)) break;
+        }
+        console.warn(`[live] OpenAI realtime token failed (${detail})`);
+      }
+
+      // 2) Gemini Live (WebSocket from the browser).
+      if (!geminiKey) { res.status(502).json({ error: "Live voice isn't available right now.", code: "live_unavailable", detail }); return; }
+      const now = Date.now();
+      const r = await fetch(`https://generativelanguage.googleapis.com/v1alpha/auth_tokens?key=${encodeURIComponent(geminiKey)}`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ uses: 3, expireTime: new Date(now + 35 * 60_000).toISOString(), newSessionExpireTime: new Date(now + 60_000).toISOString() }),
+      });
+      if (!r.ok) throw new Error(`gemini token request ${r.status}`);
+      const token = String(((await r.json()) as { name?: string }).name || "");
+      if (!token) throw new Error("no token returned");
       // Model ids change often; the browser tries them in order until Google accepts one (a configured id always goes first).
-      const models = [...new Set([process.env.GEMINI_LIVE_MODEL, "gemini-live-2.5-flash-native-audio", "gemini-2.5-flash-native-audio-preview-09-2025", "gemini-3.8-live"].filter((m): m is string => !!m))];
-      res.json({ token, model: models[0], models, instructions: liveInstructions({ subject, level: undefined, background, resuming: req.body?.resuming === true }) });
+      const models = [...new Set([process.env.GEMINI_LIVE_MODEL, "gemini-3.8-live", "gemini-2.5-flash-native-audio-preview-09-2025"].filter((m): m is string => !!m))];
+      res.json({ provider: "gemini", token, model: models[0], models, instructions });
     } catch (e: any) {
       console.warn(`[live] token request failed: ${String(e?.message || e).slice(0, 160)}`);
-      res.status(502).json({ error: "Live voice isn't available right now.", code: "live_unavailable" });
+      res.status(502).json({ error: "Live voice isn't available right now.", code: "live_unavailable", detail: String(e?.message || e).slice(0, 120) });
     }
   }));
 

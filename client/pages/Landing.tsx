@@ -15,19 +15,17 @@ export function Landing({ lang, onLangChange }: { lang: "fr" | "en"; onLangChang
       <header className="landing-min-nav">
         <span className="landing-min-brand">otto</span>
         <nav>
-          <a href="/research">{"Approach"}</a>
           <a href="/login">{"Log in"}</a>
         </nav>
       </header>
       <main className="landing-min-main">
-        <h1>{"A thinking partner, not an answer machine."}</h1>
-        <p>{"Otto runs your school week, then makes you do the thinking: it questions your reasoning, finds the gaps in it, and never thinks for you. Built for students who want to be sharp, not just finished."}</p>
-        <p><a className="landing-min-cta" href="/signup">{"Start thinking"}</a></p>
+        <h1>{"Talk it through with Otto."}</h1>
+        <p>{"A voice tutor with a shared whiteboard. Otto asks instead of telling, explains anything when you're stuck, writes the working on paper as you go, and remembers what you studied before."}</p>
+        <p><a className="landing-min-cta" href="/signup">{"Start talking"}</a></p>
       </main>
       <footer className="landing-min-foot">
         <a href="/privacy">{"Privacy"}</a>
         <a href="/terms">{"Terms"}</a>
-        <a href="/research">{"Research"}</a>
       </footer>
     </div>
   );

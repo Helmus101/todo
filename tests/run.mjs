@@ -2177,7 +2177,7 @@ section("Board renders each entry ONCE (the duplicated render block is gone) + p
   { const css = readFileSync(new URL("../client/minimal.css", import.meta.url), "utf8"); const cl = claudeSource(); const app = appSource();
     check("task check-offs are clear circles with a visible check; marker swatches stay coloured; the board is ONE font (KaTeX's textbook serif)", /\.card-check, \.step-mark \{[^}]*border: 2px solid var\(--ink\)/.test(css) && /\.card-check\.checked::before/.test(css) && /:where\(button:not\(\.tc-swatch\):not\(\.card-check\)/.test(css) && /\.sm-board-body, \.sm-board-body \*:not\(\.katex\):not\(\.katex \*\) \{ font-family: var\(--font-board\) !important; \}/.test(css));
     check("Otto keeps the original face (no overrides)", !/\.tutor-face::after/.test(css) && /avatar"\]:not\(\.tutor-face\)/.test(css));
-    check("copy is bolder: thinking partner, not an answer machine; tutor voice holds a high bar", /thinking partner, not an answer machine/.test(app) && /You hold a high bar and you are plainly on their side/.test(cl)); }
+    check("the landing page is only about the tutor (talk it through, asks instead of telling); the tutor voice holds a high bar", /Talk it through with Otto/.test(app) && /asks instead of telling/.test(app) && !/Pronote|homework|school week/i.test(app.slice(app.indexOf("export function Landing"), app.indexOf("export function Landing") + 1800)) && /You hold a high bar and you are plainly on their side/.test(cl)); }
   check("board is flat: plain lines, no section numbers or boxes", /sm-board-line/.test(boardSrc) && !/sm-board-section-num/.test(boardSrc));
   check("kind:\"summary\" renders as an ordinary line — no trace box, no heading, no category", !/ReasoningTrace|sm-board-trace/.test(boardSrc));
   check("no 'Your turn' / 'à toi' chips under board lines (reported: too many of them) — a gap is just its '= ?' line", !/isCompletionGap/.test(boardSrc) && !/sm-board-todo-chip/.test(boardSrc));
@@ -2545,7 +2545,6 @@ section("Tutor Session — sessions never auto-start, and past boards read at a 
     const peekBody = tutorSrc.slice(peekStart, tutorSrc.indexOf("}, []);", peekStart) + 6);
     return /peekForActiveSession/.test(tutorSrc) && /api\.tasks\(\)\.then/.test(peekBody) && !/setTask\(/.test(peekBody) && /setPendingActiveSession\(t \|\| null\)/.test(peekBody) && !/api\.studyFreeSession\(\)\.then/.test(tutorSrc);
   })());
-  check("an in-progress session is offered back ONLY via an explicit Resume button (no auto-open on mount)", /resumeActiveSession/.test(tutorSrc) && /onClick=\{resumeActiveSession\}/.test(tutorSrc) && /"Resume"/.test(tutorSrc));
   check("Start is the only create path and always passes fresh (a new lesson starts clean)", /api\.studyFreeSession\(true, chosenSubject\)/.test(tutorSrc));
   check("voice stays manual (no startInVoiceMode on the panel — the mic toggle is the student's)", !/startInVoiceMode=/.test(tutorSrc));
   // Report-live: "for summary there should be ONE title — what was the main thing — and then a bit of
@@ -2902,7 +2901,6 @@ section("/api/study/free — resumes an active freestudy session by default, onl
   // combined map under `otto-local-chat-board:${userId}`, not a key per task) — so the guess always read as
   // empty. getLocalThread is localChatBoard.ts's own real read API; resumeActiveSession must use it, and the
   // old guessed-key pattern must never reappear anywhere in this file.
-  check("resumeActiveSession reads local chat/board/problems via getLocalThread (the real API), never guessed raw keys", /const local = getLocalThread\(pendingActiveSession\.id, userId\)/.test(tutorSrc) && !/otto-chat-\$\{/.test(tutorSrc) && !/otto-board-\$\{/.test(tutorSrc) && !/otto-problems-\$\{/.test(tutorSrc));
 }
 
 section("Task UX: breakdowns don't vanish, Help opens the chat, popup is bigger, steps follow learning science (source pins)");
@@ -5840,7 +5838,7 @@ section("Landing page redesign — prototype copy, real features only, no fabric
   const landing = readFileSync(new URL("../client/pages/Landing.tsx", import.meta.url), "utf8");
   check("no fabricated testimonial content (no quote attributed to a named 'customer')", !/testimonial/i.test(landing));
   check("no certifications this app doesn't hold (SOC 2 / ISO 27001 / SAML)", !/SOC\s*2/i.test(landing) && !/ISO\s*27001/i.test(landing) && !/SAML/i.test(landing));
-  check("the footer keeps Privacy/Terms (+ Research, not Unlimited) and the Research page stays reachable", landing.includes('href="/terms"') && landing.includes('href="/research"') && !landing.includes('href="/unlimited"'));
+  check("the footer keeps Privacy/Terms only (the legal pages stay reachable)", landing.includes('href="/terms"') && landing.includes('href="/privacy"') && !landing.includes('href="/unlimited"'));
 }
 
 section("Task detail view — removed the big bold current-step hero, 'To get started', and the 'Done' bullet log (source pins)");
@@ -6655,9 +6653,6 @@ section("Tutor sessions are fully local — the server stores no chat/board/prob
     /api\.checkGap\(task\.id, entry\.id, given, \{ text: entry\.text, expectedAnswer: entry\.expectedAnswer, keyToken: entry\.keyToken \}\)/.test(tutorSrcL));
 
   // Resume must read the LOCAL copy: the server row this browser just fetched carries none of it.
-  check("resuming a session reads local storage first and only falls back to the task row",
-    /const chat = local\.chat\.length \? local\.chat : \(pendingActiveSession\.chat \|\| \[\]\)/.test(tutorSrcL)
-    && /const board = local\.board\.length \? local\.board : \(pendingActiveSession\.board \|\| \[\]\)/.test(tutorSrcL));
   const { overlayLocalThread } = await import("../client/localChatBoard.ts");
   const cloudTask = { id: "t1", chat: [{ role: "user", text: "cloud" }], board: [], problems: [] };
   const overlaid = overlayLocalThread(cloudTask, { chat: [{ role: "user", text: "local" }, { role: "assistant", text: "re" }], board: [{ id: "b1", text: "x = 2", kind: "result" }], problems: [], objectives: [] });
@@ -6952,7 +6947,7 @@ section("Live voice (Gemini Live) — audio helpers, the voice's instructions, t
   check("the voice IS the tutor: Socratic by default, never gives the final answer, one question per reply, CAN explain anything plainly when asked or lost, fresh-example check, memory included", /SOCRATIC/.test(ins) && /Never state the final answer/.test(ins) && /exactly ONE short question/.test(ins) && /YOU CAN EXPLAIN ANYTHING/.test(ins) && /fresh example/.test(ins) && /Last time they did momentum/.test(ins) && /Physics/.test(ins) && !/ask_otto/.test(ins));
   check("the exchange handed to the board writer is Student / Tutor lines", lt.exchangeText([{ who: "you", text: "x is 3" }, { who: "otto", text: "Why?" }]) === "Student: x is 3\nTutor: Why?");
   const route = readFileSync(new URL("../server/routes/tutor.ts", import.meta.url), "utf8");
-  check("the live token route needs a login, is rate-limited and capped per day, returns a short-lived token plus the tutor's instructions with Otto's memory (never the API key)", /"\/api\/tutor\/live\/token", requireAuth, rateLimit\(6, 60_000\), dailyCap\("live"/.test(route) && /uses: 3/.test(route) && /newSessionExpireTime/.test(route) && /backgroundBlock\(/.test(route) && /instructions: liveInstructions/.test(route) && !/res\.json\([^)]*process\.env\.GEMINI_API_KEY/.test(route));
+  check("the live token route needs a login, is rate-limited and capped per day, returns a short-lived token plus the tutor's instructions with Otto's memory (never the API key)", /"\/api\/tutor\/live\/token", requireAuth, rateLimit\(6, 60_000\), dailyCap\("live"/.test(route) && /uses: 3/.test(route) && /newSessionExpireTime/.test(route) && /backgroundBlock\(/.test(route) && /const instructions = liveInstructions\(/.test(route) && !/res\.json\([^)]*process\.env\.GEMINI_API_KEY/.test(route));
   check("the live board route needs a login, is rate-limited and capped, and goes through the board writer", /"\/api\/tutor\/live\/board", requireAuth, rateLimit\(30, 60_000\), dailyCap\("live-board"/.test(route) && /writeBoard\(/.test(route));
   const hook = readFileSync(new URL("../client/tutor/live/useGeminiLive.ts", import.meta.url), "utf8");
   const ts = readFileSync(new URL("../client/tutor/TutorSession.tsx", import.meta.url), "utf8");
@@ -6968,6 +6963,17 @@ section("Tutor first — only the owner account and accounts that opened /full s
   check("the owner account is phillipe@gafsi.net by default (FULL_APP_EMAILS overrides); status says fullApp and where to land (tutor for everyone else)", /FULL_APP_EMAILS = \(process\.env\.FULL_APP_EMAILS \|\| "phillipe@gafsi\.net"\)/.test(idx) && /fullApp: FULL_APP_EMAILS\.includes\(String\(req\.session\.user \|\| ""\)\.toLowerCase\(\)\) \|\| req\.session\.profile\?\.fullAccess === true/.test(idx) && /home: FULL_APP_EMAILS\.includes\([^)]*\)[^?]*\? "tasks" : "tutor"/.test(idx));
   check("opening /full records fullAccess on the account (login required, rate-limited), and the flag survives profile normalising and merging across devices", /"\/api\/full-access", requireAuth, rateLimit\(10, 60_000\)/.test(prof) && /p\.fullAccess = true/.test(prof) && /fullAccess: p\?\.fullAccess === true \? true : undefined/.test(types) && /fullAccess: p1\.fullAccess \|\| p2\.fullAccess \? true : undefined/.test(tasksSrc));
   check("the client: non-full accounts are sent to the tutor from every other page, /full unlocks then lands on Today, the nav shows only 'Sign out' until then, and a signed-out /full visit returns to /full after login", /if \(!fullApp\) \{ \}|const ok = route === "tutor" \|\| route\.startsWith\("tutor\/session\/"\) \|\| route === "full"/.test(app) && /if \(!ok\) navigate\("tutor"\)/.test(app) && /api\.enableFullApp\(\)/.test(app) && /\{!fullApp \? \(/.test(app) && /navigate\(status\.home === "tasks" \? "tasks" : "tutor"\)/.test(app) && /onDone=\{async \(\) => \{ signedOutRef\.current = false; await loadStatus\(\); navigate\(route\); \}\}/.test(app)); }
+
+section("Past sessions — any of them can be resumed at any point; OpenAI Realtime (mini) is the preferred live voice, Gemini the fallback; CSP and worklet (source pins)");
+{ const ts = readFileSync(new URL("../client/tutor/TutorSession.tsx", import.meta.url), "utf8");
+  const route = readFileSync(new URL("../server/routes/tutor.ts", import.meta.url), "utf8");
+  const hook = readFileSync(new URL("../client/tutor/live/useGeminiLive.ts", import.meta.url), "utf8");
+  const audio = readFileSync(new URL("../client/tutor/live/audio.ts", import.meta.url), "utf8");
+  check("there is no 'session in progress — resume it?' card; every past session has a Resume button (and the review page a Continue button) that reopens it from this browser's own copy", !/tutor-active-session-card/.test(ts) && !/resumeActiveSession/.test(ts) && /const resumePast = useCallback\(\(s: TutorSessionSummary\)/.test(ts) && /getLocalThread\(s\.id, userId\)/.test(ts) && /tutor-history-resume" onClick=\{\(\) => resumePast\(s\)\}/.test(ts) && /tutor-review-resume" onClick=\{\(\) => resumePast\(reviewSession\)\}/.test(ts));
+  check("the live voice prefers OpenAI Realtime (a mini model, client secret minted server-side, LIVE_PROVIDER=gemini forces Gemini) and falls back to Gemini Live; the OpenAI key never reaches the browser", /api\.openai\.com\/v1\/realtime\/client_secrets/.test(route) && /"gpt-realtime-mini"/.test(route) && /LIVE_PROVIDER !== "gemini"/.test(route) && /provider: "openai", token: value/.test(route) && !/res\.json\([^)]*openaiKey/.test(route) && /provider: "gemini"/.test(route));
+  check("the OpenAI path in the browser: WebRTC with an 'oai-events' data channel, SDP posted to /v1/realtime/calls, transcripts and response.done drive the board writer, speaking state from output_audio_buffer events, mic muting, typed text and drawings sent as conversation items", /api\.openai\.com\/v1\/realtime\/calls/.test(hook) && /createDataChannel\("oai-events"\)/.test(hook) && /response\.output_audio_transcript\.delta/.test(hook) && /case "response\.done": flush\(\); optsRef\.current\.onTurnComplete\(\)/.test(hook) && /output_audio_buffer\.started/.test(hook) && /input_image/.test(hook) && /conversation\.item\.create/.test(hook));
+  const idx = readFileSync(new URL("../server/index.ts", import.meta.url), "utf8"), vj = readFileSync(new URL("../vercel.json", import.meta.url), "utf8");
+  check("both CSP copies let the page reach the live voice services (OpenAI and Gemini, https and wss), and the mic worklet is a same-origin file (a blob: script is blocked by script-src)", [idx, vj].every((c) => /connect-src 'self' https:\/\/api\.openai\.com https:\/\/generativelanguage\.googleapis\.com wss:\/\/generativelanguage\.googleapis\.com/.test(c)) && /addModule\("\/otto-tap\.js"\)/.test(audio) && !/createObjectURL/.test(audio) && /registerProcessor\("otto-tap"/.test(readFileSync(new URL("../public/otto-tap.js", import.meta.url), "utf8"))); }
 
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

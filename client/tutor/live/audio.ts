@@ -1,15 +1,12 @@
 import { SPEAKER_RATE, micChunk, speakerChunk } from "./pcm.ts";
 
-/** Microphone → fixed ~100 ms base64 PCM16 chunks (16 kHz), through an AudioWorklet built from a Blob (no bundler config). */
-const WORKLET = `class Tap extends AudioWorkletProcessor { process(inputs) { const ch = inputs[0] && inputs[0][0]; if (ch && ch.length) this.port.postMessage(ch.slice(0)); return true; } } registerProcessor("otto-tap", Tap);`;
-
+/** Microphone → fixed ~100 ms base64 PCM16 chunks (16 kHz), through an AudioWorklet loaded from /otto-tap.js (same origin: the CSP forbids blob: scripts). */
 export interface Mic { setMuted(m: boolean): void; stop(): void; level(): number }
 
 export async function startMic(onChunk: (b64: string) => void): Promise<Mic> {
   const stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } });
   const ctx = new AudioContext();
-  const url = URL.createObjectURL(new Blob([WORKLET], { type: "application/javascript" }));
-  try { await ctx.audioWorklet.addModule(url); } finally { URL.revokeObjectURL(url); }
+  await ctx.audioWorklet.addModule("/otto-tap.js");
   const src = ctx.createMediaStreamSource(stream);
   const node = new AudioWorkletNode(ctx, "otto-tap");
   const mute = ctx.createGain();

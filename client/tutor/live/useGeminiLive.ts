@@ -34,6 +34,12 @@ export function useGeminiLive(opts: LiveOptions) {
   const youRef = useRef("");
   const ottoRef = useRef("");
   const aliveRef = useRef(false);
+  // OpenAI Realtime (WebRTC): the browser carries the audio itself, so there is no PCM plumbing on this side.
+  const pcRef = useRef<RTCPeerConnection | null>(null);
+  const dcRef = useRef<RTCDataChannel | null>(null);
+  const oaiStreamRef = useRef<MediaStream | null>(null);
+  const audioElRef = useRef<HTMLAudioElement | null>(null);
+  const providerRef = useRef<"gemini" | "openai">("gemini");
 
   const flush = useCallback(() => {
     const you = youRef.current.trim(), otto = ottoRef.current.trim();
@@ -51,6 +57,10 @@ export function useGeminiLive(opts: LiveOptions) {
     sessionRef.current = null;
     micRef.current?.stop(); micRef.current = null;
     playerRef.current?.close(); playerRef.current = null;
+    try { dcRef.current?.close(); } catch { /* */ } dcRef.current = null;
+    try { pcRef.current?.close(); } catch { /* */ } pcRef.current = null;
+    oaiStreamRef.current?.getTracks().forEach((t) => t.stop()); oaiStreamRef.current = null;
+    if (audioElRef.current) { audioElRef.current.pause(); audioElRef.current.srcObject = null; audioElRef.current = null; }
     setSpeaking(false); setMutedState(false); setBlocked(false);
     setStatus(next);
   }, [flush]);
@@ -79,6 +89,47 @@ export function useGeminiLive(opts: LiveOptions) {
       const o = optsRef.current;
       const [{ GoogleGenAI, Modality }, tok] = await Promise.all([import("@google/genai"), api.liveToken({ subject: o.subject, pastSessions: o.pastSessions, resuming: o.resuming })]);
       if (!aliveRef.current) return;
+      if (tok.provider === "openai") {
+        providerRef.current = "openai";
+        player.close(); playerRef.current = null;
+        const pc = new RTCPeerConnection();
+        pcRef.current = pc;
+        const audio = new Audio(); audio.autoplay = true; audioElRef.current = audio;
+        pc.ontrack = (e) => { audio.srcObject = e.streams[0]; void audio.play().catch(() => setBlocked(true)); };
+        const ms = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } });
+        if (!aliveRef.current) { ms.getTracks().forEach((t) => t.stop()); return; }
+        oaiStreamRef.current = ms;
+        pc.addTrack(ms.getAudioTracks()[0], ms);
+        const dc = pc.createDataChannel("oai-events");
+        dcRef.current = dc;
+        const handleOai = (ev: any) => {
+          if (!aliveRef.current) return;
+          switch (ev.type) {
+            case "conversation.item.input_audio_transcription.completed": youRef.current += (youRef.current ? " " : "") + String(ev.transcript || "").trim(); optsRef.current.onPartial?.(youRef.current, ottoRef.current); break;
+            case "response.output_audio_transcript.delta": ottoRef.current += String(ev.delta || ""); optsRef.current.onPartial?.(youRef.current, ottoRef.current); break;
+            case "output_audio_buffer.started": setSpeaking(true); break;
+            case "output_audio_buffer.stopped": case "output_audio_buffer.cleared": setSpeaking(false); break;
+            case "input_audio_buffer.speech_started": flush(); break;
+            case "response.done": flush(); optsRef.current.onTurnComplete(); break;
+            default: break;
+          }
+        };
+        dc.onmessage = (e) => { try { handleOai(JSON.parse(e.data)); } catch { /* not ours */ } };
+        dc.onopen = () => {
+          // The model speaks first: a plain text turn, then ask for a response.
+          dc.send(JSON.stringify({ type: "conversation.item.create", item: { type: "message", role: "user", content: [{ type: "input_text", text: "(Session started. Greet me briefly.)" }] } }));
+          dc.send(JSON.stringify({ type: "response.create" }));
+        };
+        pc.onconnectionstatechange = () => { if (aliveRef.current && ["failed", "closed", "disconnected"].includes(pc.connectionState)) teardown("ended"); };
+        await pc.setLocalDescription(await pc.createOffer());
+        const r = await fetch("https://api.openai.com/v1/realtime/calls", { method: "POST", body: pc.localDescription?.sdp, headers: { Authorization: `Bearer ${tok.token}`, "Content-Type": "application/sdp" } });
+        if (!r.ok) throw Object.assign(new Error(`The voice service refused the call (${r.status}).`), { status: 503 });
+        await pc.setRemoteDescription({ type: "answer", sdp: await r.text() });
+        if (!aliveRef.current) return;
+        setStatus("live");
+        return;
+      }
+      providerRef.current = "gemini";
       const ai = new GoogleGenAI({ apiKey: tok.token, httpOptions: { apiVersion: "v1alpha" } });
       const config = {
         responseModalities: [Modality.AUDIO],
@@ -93,21 +144,22 @@ export function useGeminiLive(opts: LiveOptions) {
         if (!aliveRef.current) return;
         try {
           session = await new Promise<any>((resolve, reject) => {
-            let opened: any = null, settled = false;
+            let opened: any = null, connecting: Promise<any> | null = null, settled = false;
             const done = (fn: () => void) => { if (!settled) { settled = true; clearTimeout(timer); fn(); } };
             const timer = setTimeout(() => done(() => { try { opened?.close(); } catch { /* */ } reject(new Error("timeout")); }), 10_000);
-            ai.live.connect({
+            connecting = ai.live.connect({
               model, config,
               callbacks: {
                 onopen: () => {},
-                onmessage: (msg: any) => { if (msg.setupComplete && !settled) { done(() => resolve(opened)); return; } if (settled) handle(msg); },
+                onmessage: (msg: any) => { if (msg.setupComplete && !settled) { done(() => { (connecting ?? Promise.resolve(opened)).then(resolve, reject); }); return; } if (settled) handle(msg); },
                 onerror: (e: any) => { if (!settled) done(() => reject(new Error(String(e?.message || "error")))); else if (aliveRef.current) { setError(String(e?.message || "The voice connection failed.")); teardown("ended"); } },
                 onclose: (e: any) => { if (!settled) done(() => reject(new Error(String(e?.reason || "closed")))); else if (aliveRef.current) { if (e?.code && e.code !== 1000) setError(String(e?.reason || "The voice connection closed.")); teardown("ended"); } },
               },
-            }).then((sess: any) => { opened = sess; }, (e: any) => done(() => reject(e)));
+            });
+            connecting.then((sess: any) => { opened = sess; }, (e: any) => done(() => reject(e)));
           });
           break;
-        } catch (e: any) { lastErr = String(e?.message || e); session = null; }
+        } catch (e: any) { lastErr = `${model}: ${String(e?.message || e)}`.slice(0, 200); session = null; }
       }
       if (!session) throw Object.assign(new Error(lastErr || "Live voice isn't available right now."), { status: 503 });
       if (!aliveRef.current) { try { session.close(); } catch { /* */ } return; }
@@ -125,9 +177,14 @@ export function useGeminiLive(opts: LiveOptions) {
     }
   }, [teardown, flush]);
 
-  const setMuted = useCallback((m: boolean) => { micRef.current?.setMuted(m); setMutedState(m); }, []);
+  const setMuted = useCallback((m: boolean) => { micRef.current?.setMuted(m); oaiStreamRef.current?.getAudioTracks().forEach((t) => { t.enabled = !m; }); setMutedState(m); }, []);
   /** A picture of the student's drawing, as a video frame: the voice sees it and answers when they next speak. */
   const sendImage = useCallback((dataUrl: string) => {
+    if (providerRef.current === "openai") {
+      const dc = dcRef.current;
+      if (!dc || dc.readyState !== "open") return false;
+      try { dc.send(JSON.stringify({ type: "conversation.item.create", item: { type: "message", role: "user", content: [{ type: "input_text", text: "(My drawing on the board right now.)" }, { type: "input_image", image_url: dataUrl }] } })); return true; } catch { return false; }
+    }
     const s = sessionRef.current;
     const m = /^data:(image\/[a-z]+);base64,(.+)$/.exec(dataUrl);
     if (!s || !m) return false;
@@ -135,12 +192,21 @@ export function useGeminiLive(opts: LiveOptions) {
   }, []);
   /** Something the student TYPED while the call is open: the voice answers it out loud. */
   const sendText = useCallback((text: string) => {
+    if (providerRef.current === "openai") {
+      const dc = dcRef.current;
+      if (!dc || dc.readyState !== "open" || !text.trim()) return false;
+      try {
+        dc.send(JSON.stringify({ type: "conversation.item.create", item: { type: "message", role: "user", content: [{ type: "input_text", text }] } }));
+        dc.send(JSON.stringify({ type: "response.create" }));
+        return true;
+      } catch { return false; }
+    }
     const s = sessionRef.current;
     if (!s || !text.trim()) return false;
     try { s.sendClientContent({ turns: [{ role: "user", parts: [{ text }] }], turnComplete: true }); youRef.current += ""; return true; } catch { return false; }
   }, []);
   /** The play button: one tap lets the browser play Otto's voice. */
-  const resumePlayback = useCallback(() => { playerRef.current?.unlock(); setBlocked(false); }, []);
+  const resumePlayback = useCallback(() => { playerRef.current?.unlock(); void audioElRef.current?.play().catch(() => {}); setBlocked(false); }, []);
 
   useEffect(() => () => { if (aliveRef.current) teardown("ended"); }, [teardown]);
   return { status, error, speaking, muted, blocked, start, stop, setMuted, sendImage, sendText, resumePlayback };
