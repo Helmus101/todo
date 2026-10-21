@@ -51,7 +51,7 @@ export function clearAllLocalAccountData(userId: string | null): void {
   // their definitions below) — date/deck-id isn't known here, so sweep every localStorage key for this
   // user's namespace rather than needing a list of dates/deck ids.
   try {
-    const ns = [`${STUDYLOG_CACHE_PREFIX}${userId || "anon"}:`, `${STUDYLOG_MONTH_CACHE_PREFIX}${userId || "anon"}:`, `otto-deck:${userId || "anon"}:`, `otto-quiz:${userId || "anon"}:`];
+    const ns = [`${STUDYLOG_CACHE_PREFIX}${userId || "anon"}:`, `${STUDYLOG_MONTH_CACHE_PREFIX}${userId || "anon"}:`, `otto-deck:${userId || "anon"}:`, `otto-quiz:${userId || "anon"}:`, `otto-tutor-ink:${userId || "anon"}:`];
     const toRemove: string[] = [];
     for (let i = 0; i < localStorage.length; i++) {
       const k = localStorage.key(i);

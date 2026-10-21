@@ -63,7 +63,7 @@ export interface TutorCanvasHandle {
   snapshot: () => Promise<string | null>;
 }
 
-export const TutorCanvas = forwardRef<TutorCanvasHandle, { visionReady: boolean; hidden: boolean; surface: HTMLElement | null; onDesmos: () => void; contextText?: string; onInk?: () => void }>(function TutorCanvas({ visionReady, hidden, surface, onDesmos, contextText, onInk }, handleRef) {
+export const TutorCanvas = forwardRef<TutorCanvasHandle, { visionReady: boolean; hidden: boolean; surface: HTMLElement | null; onDesmos: () => void; contextText?: string; onInk?: () => void; storageKey?: string }>(function TutorCanvas({ visionReady, hidden, surface, onDesmos, contextText, onInk, storageKey }, handleRef) {
   const L = useLang();
   // What they're working on, handed to the image reader so it can name what they drew (kept in a ref: readInk is async).
   const contextRef = useRef("");
@@ -143,6 +143,28 @@ export const TutorCanvas = forwardRef<TutorCanvasHandle, { visionReady: boolean;
   }, [surface, fit]);
 
   useEffect(() => { if (typing) textRef.current?.focus(); }, [typing]);
+
+  // The drawing is kept in this browser only (never on the server), per session, so resuming a session brings it back.
+  useEffect(() => {
+    if (!storageKey) return;
+    try {
+      const raw = localStorage.getItem(storageKey);
+      const saved = raw ? JSON.parse(raw) : null;
+      items.current = Array.isArray(saved) ? saved : [];
+    } catch { items.current = []; }
+    redo.current = []; setVersion((v) => v + 1); repaint();
+  }, [storageKey, repaint]);
+  useEffect(() => {
+    if (!storageKey) return;
+    const t = setTimeout(() => {
+      try {
+        const json = JSON.stringify(items.current);
+        if (!items.current.length) localStorage.removeItem(storageKey);
+        else if (json.length < 1_500_000) localStorage.setItem(storageKey, json);
+      } catch { /* storage full or blocked — the drawing just isn't kept */ }
+    }, 400);
+    return () => clearTimeout(t);
+  }, [version, storageKey]);
 
   const pos = (e: React.PointerEvent): Pt => { const r = canvasRef.current!.getBoundingClientRect(); return { x: e.clientX - r.left, y: e.clientY - r.top }; };
   const commit = (it: Item) => { inkStamp.current++; onInk?.(); items.current.push(it); redo.current = []; setVersion((v) => v + 1); setError(null); };
