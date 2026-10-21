@@ -39,9 +39,25 @@ button, .btn { border-radius: var(--radius); }
 }
 .btn.ghost, .btn.xs, .sm-btn:not(.sm-btn-primary), .btn:not(.primary) { background: transparent !important; color: var(--ink) !important; border: 0 !important; text-decoration: none; padding-left: var(--space-3); padding-right: var(--space-3); border-radius: var(--radius) !important; }
 .btn.ghost:hover, .btn.xs:hover, .sm-btn:not(.sm-btn-primary):hover, .btn:not(.primary):hover { background: var(--accent-soft) !important; }
-input, select, textarea { border: 1px solid var(--line) !important; border-radius: var(--radius) !important; background: #fff !important; padding-left: var(--space-3) !important; }
-input:focus, select:focus, textarea:focus { border-color: var(--ink) !important; outline: 0; }
-input:focus-visible, select:focus-visible, textarea:focus-visible { outline: 2px solid var(--ink) !important; outline-offset: 0; }
+/* Text boxes and text areas: one look everywhere. Zero specificity (:where) and no !important, so a component
+   class (.addinput, .field input, .chat-input) can still set its own size or colour. Dropdowns: see below. */
+:where(input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="file"]), textarea) {
+  font-family: inherit;
+  font-size: 16px; /* iOS zooms the page when a field under 16px is focused */
+  color: var(--ink);
+  background: var(--surface, #fff);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 0 var(--space-3);
+  min-height: 42px;
+  box-sizing: border-box;
+  transition: border-color .15s ease, box-shadow .15s ease;
+}
+:where(textarea) { padding: var(--space-3); line-height: 1.5; }
+:where(input, textarea)::placeholder { color: var(--ink-3); opacity: 1; }
+:where(input, textarea, select):hover:not(:disabled) { border-color: var(--ink-3); }
+:where(input, textarea, select):focus { outline: 0; border-color: var(--ink); box-shadow: 0 0 0 3px rgba(38, 34, 31, .12); }
+:where(input, textarea, select):disabled { opacity: .55; cursor: not-allowed; }
 input[type="checkbox"], input[type="radio"] { padding-left: 0 !important; }
 a { color: var(--ink); text-decoration-color: var(--ink-3); text-underline-offset: 3px; }
 :focus-visible { outline: 2px solid var(--ink) !important; outline-offset: 2px; }

@@ -1,7 +1,7 @@
 import { LanguagePicker } from "../LanguagePicker.tsx";
-import { PronoteContext } from "./PronoteContext.tsx";
 import { FeedbackForm } from "./FeedbackForm.tsx";
 import { StudyStatsSection } from "./StudyStats.tsx";
+import { AdminTools } from "./AdminTools.tsx";
 import { useEffect, useState, useCallback, useRef } from "react";
 import type { WebTask, ConnectionStatus, Profile } from "../../shared/types.ts";
 import { api, type IntegrationItem, type ConnectedAccount } from "../api.ts";
@@ -333,7 +333,6 @@ export function SettingsPage({ status, tasks, onSignOut, onChanged, onTasksChang
         {showSources ? <div className="settings-reveal">
         <p className="settings-hint">{status.fullApp ? "Otto reads these sources and preps the work — " : "Connect Pronote so Otto knows what you are studying: your homework (cahier de texte) and the lesson content your teachers publish. "}<b>{"It never sends or hands anything in for you"}</b>.</p>
         <PronoteTile status={status} onStatusUpdate={onStatusUpdate} />
-        {status.pronoteConnected ? <PronoteContext /> : null}
         {status.fullApp ? <GoogleTiles onChanged={onChanged} restricted={profile?.track !== "ib" && profile?.track !== "ap" && profile?.track !== "other"} /> : null}
         </div> : null}
       </section>
@@ -406,6 +405,8 @@ export function SettingsPage({ status, tasks, onSignOut, onChanged, onTasksChang
           </div>
         )}
       </section>
+
+      {status.isAdmin ? <AdminTools /> : null}
 
       <section className="settings-sec reveal">
         <h3>{"Feedback"}</h3>

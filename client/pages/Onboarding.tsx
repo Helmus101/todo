@@ -138,7 +138,10 @@ export function Onboarding({ status, onStatus, onDone }: { status?: ConnectionSt
               <input className="addinput" placeholder={"Your first name (optional)"} value={name} maxLength={60} autoFocus
                 onChange={(e) => setName(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") void saveName(); }} />
             </label>
-            <p className="muted small">{"You can set this later in Settings."}</p>
+            <label className="field onboard-name"><span>{"Language"}</span>
+              <LanguagePicker />
+            </label>
+            <p className="muted small">{"You can change these later in Settings."}</p>
             <div className="onboard-actions"><button className="btn primary big" onClick={() => void saveName()}>{"Get started"}</button></div>
           </div>
         )}
