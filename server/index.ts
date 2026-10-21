@@ -12,7 +12,8 @@ import { aiReady, visionReady } from "./claude.ts";
 import { loadState, cloudEnabled, makeSessionStore } from "./store.ts";
 import * as integrations from "./integrations.ts";
 import * as pronoteSvc from "./pronote.ts";
-import { PROD, ah, commit, isAdmin, scheduler } from "./http.ts";
+import { PROD, ah, commit, isAdmin, scheduler, weeklyCap } from "./http.ts";
+import { weeklyUsage } from "../shared/types.ts";
 import { shouldAutoPause } from "./autoPause.ts";
 
 /** Accounts that always see the whole app (the others get the tutor only, until they open /full). Comma-separated in FULL_APP_EMAILS. */
@@ -171,6 +172,8 @@ app.use((req, res, next) => {
   res.setHeader("X-Frame-Options", "DENY");
   res.setHeader("X-XSS-Protection", "1; mode=block");
   res.setHeader("Referrer-Policy", "strict-origin-when-cross-origin");
+  res.setHeader("Permissions-Policy", "microphone=(self), camera=(self), geolocation=(), payment=(), usb=(), interest-cohort=()");
+  res.setHeader("Cross-Origin-Opener-Policy", "same-origin-allow-popups");
   if (PROD) res.setHeader("Strict-Transport-Security", "max-age=31536000; includeSubDomains");
   next();
 });
@@ -257,6 +260,7 @@ app.get("/api/status", ah(async (req, res) => {
     googleConfigured: integrations.integrationsReady(), // Composio is what powers Google + every integration now
     cloud: cloudEnabled(),
     paused: !!req.session.profile?.paused,
+    weekly: req.session.user ? (() => { const w = weeklyUsage(req.session.profile, weeklyCap()); return { usd: Math.round(w.usd * 100) / 100, cap: w.cap, limit: w.limit, extra: w.extra, over: w.over && !isAdmin(req), requested: w.requested }; })() : undefined,
     autoPaused: !!req.session.profile?.paused && !!req.session.profile?.autoPausedAt,
     highPriorityPeople: req.session.profile?.highPriorityPeople,
     genPerDay: req.session.profile?.genPerDay,
@@ -297,6 +301,8 @@ registerStudyRoutes(app);
 if (PROD && !process.env.VERCEL) {
   const dist = path.resolve(__dirname, "../dist");
   app.use(express.static(dist));
+  // The public pages have their own prerendered HTML (own title / canonical / content) — see scripts/prerender-landing.tsx.
+  for (const page of ["research", "privacy", "terms"]) app.get(`/${page}`, (_req, res) => { res.sendFile(path.join(dist, `${page}.html`)); });
   // SPA fallback for NAVIGATION routes only. A request that looks like an asset (has a file extension) but
   // didn't match a real file 404s instead of returning index.html — otherwise /favicon.ico (and any missing
   // asset) resolves to the HTML page, which browsers can't use as an icon (a cause of a stale/blank favicon).

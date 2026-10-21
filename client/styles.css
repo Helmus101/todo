@@ -5035,3 +5035,7 @@ html[data-i18n="loading"] body { opacity: 0; }
 .concept-bar { height: 5px; border-radius: 3px; background: var(--line); margin: 6px 0 4px; overflow: hidden; }
 .concept-bar span { display: block; height: 100%; background: var(--ink); border-radius: 3px; }
 .concept-meta { display: flex; gap: 14px; flex-wrap: wrap; font-size: 12.5px; color: var(--ink-2); }
+.admin-request { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 12px 0; border-bottom: 1px solid var(--line); flex-wrap: wrap; }
+.admin-actions { display: flex; gap: 8px; }
+.admin-note { margin: 4px 0 0; color: var(--ink-2); }
+.admin-grant { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }

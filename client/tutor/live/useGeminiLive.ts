@@ -50,9 +50,12 @@ export function useGeminiLive(opts: LiveOptions) {
     optsRef.current.onPartial?.("", "");
   }, []);
 
+  const liveSinceRef = useRef(0);
   const teardown = useCallback((next: LiveStatus) => {
     const wasAlive = aliveRef.current;
     aliveRef.current = false;
+    // How long the call lasted is metered against the weekly AI allowance.
+    if (wasAlive && liveSinceRef.current) { const secs = Math.round((Date.now() - liveSinceRef.current) / 1000); liveSinceRef.current = 0; if (secs > 3) void api.reportVoiceSeconds(secs).catch(() => {}); }
     if (wasAlive) flush();
     try { sessionRef.current?.close(); } catch { /* already closed */ }
     sessionRef.current = null;
@@ -129,7 +132,7 @@ export function useGeminiLive(opts: LiveOptions) {
         if (!r.ok) throw Object.assign(new Error(`The voice service refused the call (${r.status}).`), { status: 503 });
         await pc.setRemoteDescription({ type: "answer", sdp: await r.text() });
         if (!aliveRef.current) return;
-        setStatus("live");
+        liveSinceRef.current = Date.now(); setStatus("live");
       };
       const tryGemini = async (tok: Cred) => {
       providerRef.current = "gemini";
@@ -172,7 +175,7 @@ export function useGeminiLive(opts: LiveOptions) {
       // The call may have been ended while the microphone was still starting: then the microphone must not stay open.
       if (!aliveRef.current) { mic.stop(); try { session.close(); } catch { /* */ } return; }
       micRef.current = mic;
-      setStatus("live");
+      liveSinceRef.current = Date.now(); setStatus("live");
       window.setTimeout(() => { if (aliveRef.current && player.state !== "running") setBlocked(true); }, 800);
       // The model speaks first: nudge it so it greets from what it knows.
       session.sendClientContent({ turns: [{ role: "user", parts: [{ text: "(Session started. Greet me briefly.)" }] }], turnComplete: true });

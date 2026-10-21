@@ -1,12 +1,12 @@
 
 import "../env.ts";
 import express from "express";
-import { emptyProfile, addUsage, bumpActivityHour } from "../../shared/types.ts";
+import { emptyProfile, addUsage, addWeeklyCost, bumpActivityHour, LIVE_VOICE_USD_PER_MIN, weeklyUsage } from "../../shared/types.ts";
 import { parsePolicy, summarize as summarizePolicy } from "../tutorPolicy.ts";
 import { schoolRecordLine } from "../schoolRecord.ts";
 import { aiReady, visionReady, describeWhiteboard, describeUploadedPhoto, synthesizeSpeech, TTS_MAX_TEXT, tutorOpener } from "../claude.ts";
 import { recordEvent, loadBanditState, saveBanditState } from "../store.ts";
-import { M, ah, commit, dailyCap, isPaused, rateLimit, requireAuth } from "../http.ts";
+import { M, ah, commit, dailyCap, isAdmin, isPaused, overWeeklyCap, rateLimit, requireAuth } from "../http.ts";
 import { backgroundBlock } from "../tutor.ts";
 import { selectJournal } from "../journal.ts";
 import { writeBoard } from "../tutorTurn/boardWriter.ts";
@@ -86,6 +86,7 @@ export function registerTutorRoutes(app: express.Express): void {
   // short-lived token — the real key never leaves the server — and returns the tutor's instructions WITH what Otto knows about the
   // student (profile, past sessions kept on their device, journal, school record), so the voice has Otto's memory. Capped per day.
   app.post("/api/tutor/live/token", requireAuth, rateLimit(6, 60_000), dailyCap("live", Number(process.env.TUTOR_DAILY_LIVE) || 20), ah(async (req, res) => {
+    if (overWeeklyCap(req)) { res.status(429).json({ error: "This week's AI allowance is used up. Ask for more usage and it comes back as soon as it's approved.", code: "weekly_cap" }); return; }
     if (isPaused(req)) { res.status(403).json({ error: "AI is paused — resume it in Settings to chat." }); return; }
     const geminiKey = process.env.GEMINI_API_KEY;
     const openaiKey = process.env.OPENAI_API_KEY;
@@ -151,6 +152,8 @@ export function registerTutorRoutes(app: express.Express): void {
         } catch (e: any) { detail += `openai ${String(e?.message || e).slice(0, 60)}; `; }
       }
       if (!providers.length) { console.warn(`[live] no live voice credential could be minted (${detail.trim()})`); res.status(502).json({ error: `Live voice couldn't start: no credential could be created (${detail.trim().slice(0, 160) || "no details"}).`, code: "live_unavailable", detail: detail.trim().slice(0, 160) }); return; }
+      addWeeklyCost(profile, 0.05); // a call has started (the report of its length adds the rest)
+      await commit(req);
       res.json({ ...providers[0], providers });
     } catch (e: any) {
       console.warn(`[live] token request failed: ${String(e?.message || e).slice(0, 160)}`);
@@ -161,6 +164,7 @@ export function registerTutorRoutes(app: express.Express): void {
   // THE BOARD FOR THE LIVE VOICE: after each spoken exchange the browser sends what was said and the board as it stands; one call decides
   // what goes on the paper (the problem, the student's correct steps as Otto's own lines, a takeaway of what was explained, figures).
   app.post("/api/tutor/live/board", requireAuth, rateLimit(30, 60_000), dailyCap("live-board", Number(process.env.TUTOR_DAILY_LIVE_BOARD) || 400), ah(async (req, res) => {
+    if (overWeeklyCap(req)) { res.status(429).json({ error: "This week's AI allowance is used up. Ask for more usage and it comes back as soon as it's approved.", code: "weekly_cap" }); return; }
     if (isPaused(req)) { res.status(403).json({ error: "AI is paused — resume it in Settings to chat." }); return; }
     if (!aiReady()) { res.status(503).json({ error: "AI isn't configured." }); return; }
     const exchange = typeof req.body?.exchange === "string" ? req.body.exchange.slice(0, 4000) : "";
@@ -193,6 +197,15 @@ export function registerTutorRoutes(app: express.Express): void {
       console.warn(`[live] board writer failed: ${String(e?.message || e).slice(0, 120)}`);
       res.status(502).json({ error: "The board couldn't be updated just now.", board: [] });
     }
+  }));
+
+  // The browser reports how long a voice call lasted; it is metered at the estimated voice price (plus a small charge when a call starts, so a missing report is not free).
+  app.post("/api/tutor/live/usage", requireAuth, rateLimit(30, 60_000), ah(async (req, res) => {
+    const seconds = Math.max(0, Math.min(3 * 3600, Number(req.body?.seconds) || 0));
+    const profile = (req.session.profile ||= emptyProfile());
+    addWeeklyCost(profile, (seconds / 60) * LIVE_VOICE_USD_PER_MIN);
+    await commit(req);
+    res.json({ ok: true });
   }));
 
   app.post("/api/tutor/read-whiteboard", requireAuth, rateLimit(15, 60_000), express.json({ limit: "8mb" }), ah(async (req, res) => {

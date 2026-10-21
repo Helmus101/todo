@@ -10,6 +10,8 @@ import { predictNextEngagement, predictWeakSubjects, aggregateSubjectSignals } f
 import * as tasks from "../tasks.ts";
 import * as integrations from "../integrations.ts";
 import { M, ah, commit, isAdmin, isPaused, rateLimit, requireAuth } from "../http.ts";
+import { listUsageRequests, grantExtraUsage } from "../store.ts";
+import { weekKeyOf } from "../../shared/types.ts";
 
 // ── Profile (who the user is) — available once logged in ───────────────────────
 const listKey = (c: string) => (c === "preference" ? "preferences" : c === "person" ? "people" : c === "project" ? "projects" : c === "course" ? "courses" : "");
@@ -410,4 +412,29 @@ export function registerProfileRoutes(app: express.Express): void {
     } catch (e: any) { console.error(e);
       res.status(500).json({ error: "Couldn't delete that — try again." }); }
   });
+
+  // The student asks for more AI usage once this week's allowance is used up; the admin sees it and grants it.
+  app.post("/api/usage/request", requireAuth, rateLimit(5, 60_000), ah(async (req, res) => {
+    const p = (req.session.profile ||= emptyProfile());
+    p.usageRequest = { at: new Date().toISOString(), weekKey: weekKeyOf(), ...(typeof req.body?.note === "string" && req.body.note.trim() ? { note: req.body.note.trim().slice(0, 300) } : {}) };
+    void recordEvent(req.session.user!, "usage_requested", { message: p.usageRequest.note });
+    await commit(req);
+    res.json({ ok: true });
+  }));
+
+  // Admin only (tjong.willem@gmail.com unless ADMIN_EMAILS says otherwise): who asked, and a grant button.
+  app.get("/api/admin/usage-requests", requireAuth, ah(async (req, res) => {
+    if (!isAdmin(req)) { res.status(403).json({ error: "Access denied." }); return; }
+    res.json({ requests: await listUsageRequests(), weekKey: weekKeyOf() });
+  }));
+  app.post("/api/admin/grant-usage", requireAuth, rateLimit(30, 60_000), ah(async (req, res) => {
+    if (!isAdmin(req)) { res.status(403).json({ error: "Access denied." }); return; }
+    const email = typeof req.body?.email === "string" ? req.body.email.trim().toLowerCase() : "";
+    const usd = Number(req.body?.usd);
+    if (!email.includes("@") || !Number.isFinite(usd) || usd <= 0 || usd > 100) { res.status(400).json({ error: "Give an email and an amount between $0 and $100." }); return; }
+    const ok = await grantExtraUsage(email, usd, weekKeyOf());
+    if (!ok) { res.status(404).json({ error: "No account with that email." }); return; }
+    void recordEvent(req.session.user!, "usage_granted", { message: `${email} +$${usd}` });
+    res.json({ ok: true });
+  }));
 }

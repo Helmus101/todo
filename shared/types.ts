@@ -138,6 +138,10 @@ export interface Profile {
   // Art.8 parental-consent requirement, not just a UI gate that leaves no record.
   ageConsentAt?: string;
   paused?: boolean;       // "pause all AI usage" — blocks generation and task runs server-side
+  /** AI spend this week (Monday–Sunday, UTC) in USD, plus any extra allowance the admin granted for THAT week. */
+  weekSpend?: { key: string; usd: number; extraUsd: number };
+  /** The student asked for more usage this week (the admin sees it and can grant it). */
+  usageRequest?: { at: string; weekKey: string; note?: string };
   autoPausedAt?: string;  // set when AI was paused automatically after 7 days with no task checked off; cleared when the student resumes
   autoResumedAt?: string; // when they last resumed after that, so the 7 days start over
   pausedAt?: string;      // ISO stamp of the last toggle, so cross-device merge keeps the most RECENT choice
@@ -455,6 +459,8 @@ export function normalizeProfile(p: any): Profile {
     sessions: arr(p?.sessions).slice(-30),
     paused: !!p?.paused,
     pausedAt: typeof p?.pausedAt === "string" ? p.pausedAt : undefined,
+    weekSpend: p?.weekSpend && typeof p.weekSpend === "object" && typeof p.weekSpend.key === "string" ? { key: p.weekSpend.key, usd: Math.max(0, Number(p.weekSpend.usd) || 0), extraUsd: Math.max(0, Number(p.weekSpend.extraUsd) || 0) } : undefined,
+    usageRequest: p?.usageRequest && typeof p.usageRequest === "object" && typeof p.usageRequest.at === "string" ? { at: p.usageRequest.at, weekKey: String(p.usageRequest.weekKey || ""), ...(typeof p.usageRequest.note === "string" ? { note: p.usageRequest.note.slice(0, 300) } : {}) } : undefined,
     autoPausedAt: typeof p?.autoPausedAt === "string" ? p.autoPausedAt : undefined,
     autoResumedAt: typeof p?.autoResumedAt === "string" ? p.autoResumedAt : undefined,
     lastSweepAt: typeof p?.lastSweepAt === "string" ? p.lastSweepAt : undefined,
@@ -908,6 +914,31 @@ export function monthCostUsd(profile?: Profile | null, tz?: string, now: Date = 
 // breakdown a person can scan, not a growing pile of one-off strings.
 export type AddUsageCategory = "sweep" | "autorun" | "chat" | "manual_refine" | "studylog" | "student_model" | "other";
 
+/** The weekly AI allowance per account, in USD (env WEEKLY_AI_CAP_USD overrides on the server). */
+export const WEEKLY_CAP_USD = 5;
+/** Monday (UTC) of the week containing `now`, as YYYY-MM-DD. */
+export function weekKeyOf(now: Date = new Date()): string {
+  const d = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+  d.setUTCDate(d.getUTCDate() - ((d.getUTCDay() + 6) % 7));
+  return d.toISOString().slice(0, 10);
+}
+/** This week's spend and what is left: the allowance plus any extra granted for this week. Pure. */
+export function weeklyUsage(profile: Pick<Profile, "weekSpend" | "usageRequest"> | undefined, cap: number = WEEKLY_CAP_USD, now: Date = new Date()) {
+  const key = weekKeyOf(now);
+  const w = profile?.weekSpend?.key === key ? profile.weekSpend : undefined;
+  const usd = w?.usd || 0, extra = w?.extraUsd || 0, limit = cap + extra;
+  return { weekKey: key, usd, extra, cap, limit, left: Math.max(0, limit - usd), over: usd >= limit, requested: profile?.usageRequest?.weekKey === key };
+}
+/** Add a cost (USD) to this week's spend. */
+export function addWeeklyCost(profile: Profile, usd: number, now: Date = new Date()): void {
+  if (!(usd > 0)) return;
+  const key = weekKeyOf(now);
+  const w = profile.weekSpend?.key === key ? profile.weekSpend : { key, usd: 0, extraUsd: 0 };
+  profile.weekSpend = { key, usd: w.usd + usd, extraUsd: w.extraUsd };
+}
+/** Estimated price of live voice per minute (see the cost estimate): ≈ $0.50 for a 20-minute session. */
+export const LIVE_VOICE_USD_PER_MIN = 0.025;
+
 export function addUsage(profile: Profile, tokens?: { in?: number; out?: number; cachedIn?: number } | null, category: AddUsageCategory = "other"): void {
   const tin = Number(tokens?.in) || 0, tout = Number(tokens?.out) || 0, cached = Number(tokens?.cachedIn) || 0;
   if (!tin && !tout) return;
@@ -916,6 +947,7 @@ export function addUsage(profile: Profile, tokens?: { in?: number; out?: number;
   const sameMonth = u.monthKey === mk;
   // Meter the TRUE cost of this call now — cache breakdown and peak multiplier can't be recovered later.
   const cost = callCostUsd(tin, tout, cached);
+  addWeeklyCost(profile, cost);
   const priorByCategory = sameMonth ? (u.monthByCategory || {}) : {};
   profile.usage = {
     in: u.in + tin, out: u.out + tout, runs: u.runs + 1, since: u.since,
@@ -2161,6 +2193,7 @@ export interface ConnectionStatus {
   visionReady?: boolean;      // GEMINI_API_KEY present — gates the Tutor whiteboard's "send to Otto" button
   googleConfigured: boolean;  // Composio configured (COMPOSIO_API_KEY) — powers Google + every integration
   cloud: boolean;             // Supabase configured → accounts + state persist
+  weekly?: { usd: number; cap: number; limit: number; extra: number; over: boolean; requested: boolean }; // this week's AI allowance
   autoPaused?: boolean;       // AI was paused automatically for inactivity: show the notice with a Resume button
   paused: boolean;            // "pause all AI usage" toggle — client skips auto-run/generate while true
   highPriorityPeople?: string[]; // used ONLY to break ranking ties (VIP's task sorts first) — no UI of its own

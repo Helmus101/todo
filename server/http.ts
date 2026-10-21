@@ -6,7 +6,7 @@ import express from "express";
 import type { RequestHandler } from "express";
 import { randomBytes, createHash } from "node:crypto";
 import type { WebTask, Profile } from "../shared/types.ts";
-import { emptyProfile, isHandled } from "../shared/types.ts";
+import { emptyProfile, isHandled, WEEKLY_CAP_USD, weeklyUsage } from "../shared/types.ts";
 import { buildTasksPayload } from "./taskDelta.ts";
 import { makeSyncScheduler } from "./syncScheduler.ts";
 import { loadState, saveState, checkRateLimit, peekSessionCsrfToken } from "./store.ts";
@@ -21,8 +21,8 @@ import * as integrations from "./integrations.ts";
 // never intentional — this app has no caller that wants an OS-assigned port.
 export const PROD = process.env.NODE_ENV === "production";
 
-// Admin dashboard access: comma-separated emails in ADMIN_EMAILS. Unset = nobody is admin.
-const ADMIN_EMAILS = new Set((process.env.ADMIN_EMAILS || "").split(",").map((e) => e.trim().toLowerCase()).filter(Boolean));
+// Admin access (usage grants): comma-separated emails in ADMIN_EMAILS; unset = only tjong.willem@gmail.com.
+const ADMIN_EMAILS = new Set((process.env.ADMIN_EMAILS || "tjong.willem@gmail.com").split(",").map((e) => e.trim().toLowerCase()).filter(Boolean));
 
 export const isAdmin = (req: express.Request): boolean => ADMIN_EMAILS.has((req.session.user || "").toLowerCase());
 
@@ -219,6 +219,11 @@ const inMemoryRateLimit = (key: string, max: number, windowMs: number): { allowe
   return { allowed: true, retryAfterMs: 0 };
 };
 
+/** Count one hit against an arbitrary key (cloud-backed so every serverless instance shares it, in-memory fallback). */
+export async function limitBy(key: string, max: number, windowMs: number): Promise<{ allowed: boolean; retryAfterMs: number }> {
+  return (await checkRateLimit(key, max, windowMs)) ?? inMemoryRateLimit(key, max, windowMs);
+}
+
 export const rateLimit = (max: number, windowMs: number): RequestHandler => async (req, res, next) => {
   // MUST key on the route's TEMPLATE (req.route.path, e.g. "/api/tasks/:id/run"), never req.path (the
   // resolved URL with the actual id/index baked in) — keying on req.path gave every distinct task/step id
@@ -309,4 +314,7 @@ export function M(req: express.Request, fr: string, en: string): string { return
 
 // "Pause all AI usage" — the ONE toggle that stops generation and task runs. Enforced server-side
 // (isPaused, used below) so it holds even if a stale client tab tries to call one of those routes anyway.
-export const isPaused = (req: express.Request): boolean => !!req.session.profile?.paused;
+export const isPaused = (req: express.Request): boolean => !!req.session.profile?.paused || overWeeklyCap(req);
+/** This week's AI allowance (default $5, WEEKLY_AI_CAP_USD overrides, plus whatever the admin granted) is used up. Every AI route refuses through isPaused. */
+export const weeklyCap = (): number => { const n = Number(process.env.WEEKLY_AI_CAP_USD); return Number.isFinite(n) && n > 0 ? n : WEEKLY_CAP_USD; };
+export const overWeeklyCap = (req: express.Request): boolean => !isAdmin(req) && weeklyUsage(req.session.profile, weeklyCap()).over;

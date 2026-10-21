@@ -2207,6 +2207,32 @@ section("AI pauses itself after a week with open tasks and nothing checked off")
   check("a Journal entry is not a task", shouldAutoPause([{ id: "j", title: "j", status: "ready", source: "studylog", createdAt: iso(30) }], {}, now) === false);
 }
 
+section("Weekly AI allowance: $5 a week, extra only by grant, admin-only grants");
+{
+  const { weeklyUsage, addWeeklyCost, weekKeyOf, WEEKLY_CAP_USD, addUsage } = await import("../shared/types.ts");
+  check("the allowance is $5 a week", WEEKLY_CAP_USD === 5);
+  check("weeks start on Monday (UTC)", weekKeyOf(new Date("2026-10-21T12:00:00Z")) === "2026-10-19" && weekKeyOf(new Date("2026-10-25T23:59:00Z")) === "2026-10-19" && weekKeyOf(new Date("2026-10-26T00:00:00Z")) === "2026-10-26");
+  const p = { about: "", preferences: [], people: [], projects: [], courses: [], sessions: [] };
+  const now = new Date("2026-10-21T12:00:00Z");
+  addWeeklyCost(p, 4.9, now);
+  check("$4.90 spent is still under the cap", weeklyUsage(p, 5, now).over === false && Math.abs(weeklyUsage(p, 5, now).left - 0.1) < 1e-9);
+  addWeeklyCost(p, 0.2, now);
+  check("over $5 → over", weeklyUsage(p, 5, now).over === true);
+  p.weekSpend.extraUsd = 5;
+  check("a $5 grant lifts the limit to $10 for this week", weeklyUsage(p, 5, now).over === false && weeklyUsage(p, 5, now).limit === 10);
+  check("next week starts again at zero with no grant", weeklyUsage(p, 5, new Date("2026-10-27T00:00:00Z")).usd === 0 && weeklyUsage(p, 5, new Date("2026-10-27T00:00:00Z")).limit === 5);
+  const q = { about: "", preferences: [], people: [], projects: [], courses: [], sessions: [] };
+  addUsage(q, { in: 1_000_000, out: 100_000, cachedIn: 0 }, "chat");
+  check("every metered AI call counts toward the week", (q.weekSpend?.usd || 0) > 0.1);
+  const http = readFileSync(new URL("../server/http.ts", import.meta.url), "utf8");
+  const prof = readFileSync(new URL("../server/routes/profile.ts", import.meta.url), "utf8");
+  const tut = readFileSync(new URL("../server/routes/tutor.ts", import.meta.url), "utf8");
+  check("every AI route honours the cap through isPaused, and the admin is exempt", /isPaused = \(req[^)]*\)[^=]*=> !!req\.session\.profile\?\.paused \|\| overWeeklyCap\(req\)/.test(http) && /overWeeklyCap = \(req[^)]*\)[^=]*=> !isAdmin\(req\) &&/.test(http));
+  check("only tjong.willem@gmail.com is admin by default", /ADMIN_EMAILS \|\| "tjong\.willem@gmail\.com"/.test(http));
+  check("granting and listing requests are admin-only, and a grant clears the request", /"\/api\/admin\/grant-usage"[\s\S]{0,200}if \(!isAdmin\(req\)\)/.test(prof) && /"\/api\/admin\/usage-requests"[\s\S]{0,200}if \(!isAdmin\(req\)\)/.test(prof));
+  check("the voice token and board routes stop at the cap with a clear message", (tut.match(/code: "weekly_cap"/g) || []).length === 2);
+}
+
 section("MathText — a mis-wrapped $...$ prose phrase falls back to plain text instead of KaTeX mangling it");
 {
   // Reported live: a board question rendered as "...05 m*underaforceof*10 N, *what's*k?" — the model had
@@ -5127,6 +5153,23 @@ section("Google Search Console verification file is served from the site root");
   const f = readFileSync("public/googleeb88d5ba4c78424d.html", "utf8");
   check("the verification file is exactly Google's one-line token", f === "google-site-verification: googleeb88d5ba4c78424d.html");
   check("vercel.json serves it directly instead of the SPA fallback", /"source": "\/googleeb88d5ba4c78424d\.html", "destination": "\/googleeb88d5ba4c78424d\.html"/.test(readFileSync("vercel.json", "utf8")));
+}
+
+section("Security + SEO audit fixes (source pins)");
+{
+  const vj = readFileSync("vercel.json", "utf8"), idx = readFileSync("server/index.ts", "utf8"), auth = readFileSync("server/routes/auth.ts", "utf8");
+  const { PAGE_META, headFor } = await import("../shared/seo.ts");
+  check("public pages each get their own title and canonical (no longer duplicates of the home page)", new Set(Object.values(PAGE_META).map((m) => m.title)).size === 3 && Object.values(PAGE_META).every((m) => m.description.length >= 60 && m.description.length <= 170));
+  const head = headFor('<title>x</title><meta name="description" content="d"><link rel="canonical" href="https://hiotto.vercel.app/"><meta property="og:url" content="https://hiotto.vercel.app/">', PAGE_META.privacy);
+  check("headFor rewrites title, description, canonical and og:url", /<title>Privacy Policy/.test(head) && /rel="canonical" href="https:\/\/hiotto\.vercel\.app\/privacy"/.test(head) && /og:url" content="https:\/\/hiotto\.vercel\.app\/privacy"/.test(head));
+  check("vercel.json serves the prerendered public pages and security.txt before the SPA fallback", /"\/research", "destination": "\/research\.html"/.test(vj) && /"\/privacy", "destination": "\/privacy\.html"/.test(vj) && /\.well-known/.test(vj) && vj.indexOf("/research.html") < vj.indexOf('"destination": "/index.html"'));
+  check("both the CDN and the Express server send Permissions-Policy and COOP", /Permissions-Policy/.test(vj) && /Cross-Origin-Opener-Policy/.test(vj) && /Permissions-Policy/.test(idx) && /Cross-Origin-Opener-Policy/.test(idx));
+  const robots = readFileSync("public/robots.txt", "utf8");
+  check("robots.txt keeps crawlers out of the API and the logged-in screens, and points at the sitemap", /Disallow: \/api\//.test(robots) && /Disallow: \/tasks/.test(robots) && /Sitemap: https:\/\/hiotto\.vercel\.app\/sitemap\.xml/.test(robots) && /Allow: \//.test(robots));
+  check("a security.txt exists with a contact", /Contact: mailto:/.test(readFileSync("public/.well-known/security.txt", "utf8")));
+  check("deleting the account needs the password again (server) and the UI asks for it", /Enter your password to delete the account/.test(auth) && /deleteAccount: \(password: string\)/.test(readFileSync("client/api.ts", "utf8")) && /type="password"[^>]*Your password, to confirm deleting/.test(readFileSync("client/pages/Settings.tsx", "utf8")));
+  check("failed logins are capped per ACCOUNT across all IPs, not just per IP", /limitBy\(`login-fail:\$\{email\}`/.test(auth));
+  check("app screens and unknown paths are noindex on client-side navigation", /robots\.content = "noindex, nofollow"/.test(readFileSync("client/App.tsx", "utf8")));
 }
 
 section("Board changes are undoable in the Tutor session (spec §12 #10, source pins)");

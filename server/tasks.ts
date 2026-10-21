@@ -817,6 +817,9 @@ export function mergeProfileStates(p1: Profile, p2: Profile): Profile {
     paused: pausedSide.paused,
     pausedAt: pausedSide.pausedAt,
     autoPausedAt: pausedSide.autoPausedAt,
+    // Same week: the larger spend and the larger granted extra win (both only grow within a week); otherwise the newer week.
+    weekSpend: (() => { const a = p1.weekSpend, b = p2.weekSpend; if (!a || !b) return a || b; if (a.key !== b.key) return a.key > b.key ? a : b; return { key: a.key, usd: Math.max(a.usd, b.usd), extraUsd: Math.max(a.extraUsd, b.extraUsd) }; })(),
+    usageRequest: (() => { const a = p1.usageRequest, b = p2.usageRequest; const w = (p1.weekSpend?.key || "") > (p2.weekSpend?.key || "") ? p1.weekSpend : p2.weekSpend; const r = !a || !b ? (a || b) : (a.at >= b.at ? a : b); return r && (!w || r.weekKey >= w.key) ? r : undefined; })(),
     autoResumedAt: [p1.autoResumedAt, p2.autoResumedAt].filter(Boolean).sort().pop(),
     // Sticky once granted on EITHER side — a stale copy that predates the claim must never un-grant it.
     // Keep the MOST RECENT sweep marker across devices/instances (a stale copy must never reset it).

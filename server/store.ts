@@ -1152,3 +1152,36 @@ export async function getAdminMetrics(): Promise<AdminMetrics | null> {
     return null;
   }
 }
+
+/** Accounts that asked for more AI usage this week, with what they have spent (for the admin's grant screen). */
+export async function listUsageRequests(): Promise<{ email: string; at: string; note?: string; usd: number; extraUsd: number }[]> {
+  if (!client) return [];
+  const out: { email: string; at: string; note?: string; usd: number; extraUsd: number }[] = [];
+  try {
+    for (let from = 0; from < 5000; from += 500) {
+      const { data, error } = await client.from(TABLE).select("email, profile").range(from, from + 499);
+      if (error) { console.warn("[store] listUsageRequests failed:", error.message); break; }
+      for (const row of (data || []) as { email?: string; profile?: any }[]) {
+        const r = row.profile?.usageRequest;
+        if (!r?.at) continue;
+        const w = row.profile?.weekSpend;
+        out.push({ email: String(row.email || ""), at: String(r.at), ...(r.note ? { note: String(r.note) } : {}), usd: Number(w?.usd) || 0, extraUsd: Number(w?.extraUsd) || 0 });
+      }
+      if (!data || data.length < 500) break;
+    }
+  } catch (e: any) { console.warn("[store] listUsageRequests failed:", String(e?.message || e)); }
+  return out.sort((a, b) => b.at.localeCompare(a.at));
+}
+
+/** Give an account extra AI allowance for the CURRENT week and clear its request. Returns false when the account doesn't exist. */
+export async function grantExtraUsage(email: string, usd: number, weekKey: string): Promise<boolean> {
+  if (!client || !email) return false;
+  const state = await loadState(email, { bypassCache: true });
+  if (!state.profile || (!state.tasks?.length && !Object.keys(state.profile).length)) return false;
+  const p = state.profile;
+  const w = p.weekSpend?.key === weekKey ? p.weekSpend : { key: weekKey, usd: 0, extraUsd: 0 };
+  p.weekSpend = { key: weekKey, usd: w.usd, extraUsd: w.extraUsd + usd };
+  p.usageRequest = undefined;
+  await saveState(email, { ...state, profile: p }, { throwOnError: true });
+  return true;
+}

@@ -185,6 +185,8 @@ export function SettingsPage({ status, tasks, onSignOut, onChanged, onTasksChang
   // Optimistic toggles/selects — flip instantly, reconcile with the server after (no round-trip lag).
   const [paused, setPausedLocal] = useState(status.paused);
   const [deletingAccount, setDeletingAccount] = useState(false);
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
+  const [deletePassword, setDeletePassword] = useState("");
   const [importingData, setImportingData] = useState(false);
   const [importProgress, setImportProgress] = useState<[number, number] | null>(null);
   const importFileRef = useRef<HTMLInputElement>(null);
@@ -306,16 +308,23 @@ export function SettingsPage({ status, tasks, onSignOut, onChanged, onTasksChang
         <div className="danger-zone">
           <div className="modal-row">
             <span className="lbl">{"Delete account"}<span className="settings-hint m-0">{"Tasks, profile, connections — can't be undone."}</span></span>
-            <button
-              className="btn xs danger"
-              disabled={deletingAccount}
-              onClick={async () => {
-                if (!window.confirm("Delete your Otto account (tasks, profile, connections)? This can't be undone.")) return;
-                setDeletingAccount(true);
-                try { await api.deleteAccount(); clearAllLocalAccountData(status.user || null); window.location.href = "/"; }
-                catch (e: any) { setDeletingAccount(false); notify(e?.message || "Couldn't delete the account — try again.", "error"); }
-              }}
-            >{deletingAccount ? "Deleting…" : "Delete everything"}</button>
+            {confirmingDelete ? (
+              <span className="delete-confirm">
+                <input type="password" autoComplete="current-password" className="input" placeholder="Your password" aria-label="Your password, to confirm deleting the account" value={deletePassword} onChange={(e) => setDeletePassword(e.target.value)} />
+                <button
+                  className="btn xs danger"
+                  disabled={deletingAccount || !deletePassword}
+                  onClick={async () => {
+                    setDeletingAccount(true);
+                    try { await api.deleteAccount(deletePassword); clearAllLocalAccountData(status.user || null); window.location.href = "/"; }
+                    catch (e: any) { setDeletingAccount(false); notify(e?.message || "Couldn't delete the account — try again.", "error"); }
+                  }}
+                >{deletingAccount ? "Deleting…" : "Delete everything"}</button>
+                <button className="btn xs ghost" disabled={deletingAccount} onClick={() => { setConfirmingDelete(false); setDeletePassword(""); }}>{"Cancel"}</button>
+              </span>
+            ) : (
+              <button className="btn xs danger" onClick={() => setConfirmingDelete(true)}>{"Delete account…"}</button>
+            )}
           </div>
         </div>
         </details>
@@ -354,6 +363,19 @@ export function SettingsPage({ status, tasks, onSignOut, onChanged, onTasksChang
           <PreferencesFields profile={profile} onChanged={(p) => { setProfile(p); onChanged(); }} />
         </div>
       </section>
+
+      {status.weekly ? (
+        <section className="settings-sec reveal">
+          <h3>{"AI allowance this week"}</h3>
+          <div className="set-list">
+            <div className="set-row">
+              <span className="set-text"><b>{`$${status.weekly.usd.toFixed(2)} of $${status.weekly.limit.toFixed(2)}`}</b><span className="settings-hint">{"Resets every Monday. Voice, board and everything else count."}</span></span>
+              {status.weekly.over && !status.weekly.requested ? <button type="button" className="btn xs primary" onClick={() => { void api.requestMoreUsage().then(() => onStatusUpdate?.()).catch((e: any) => notify(e?.message || "Couldn't send the request — try again.", "error")); }}>{"Request more"}</button> : status.weekly.requested ? <span className="settings-hint">{"Requested"}</span> : null}
+            </div>
+            <div className="concept-bar" aria-hidden="true"><span style={{ width: `${Math.min(100, Math.round((status.weekly.usd / status.weekly.limit) * 100))}%` }} /></div>
+          </div>
+        </section>
+      ) : null}
 
       <ConceptsPanel profile={profile} />
 
