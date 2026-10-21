@@ -83,7 +83,7 @@ export function registerTutorRoutes(app: express.Express): void {
         background = backgroundBlock({ profile, subject, journal: journal.entries, journalMeta: { total: journal.total, subjects: journal.subjects }, schoolRecord: schoolRecordLine(req.session.tasks, profile, subject), memory } as any);
       } catch { /* memory is a bonus: the voice works without it */ }
       // Model ids change often; the browser tries them in order until Google accepts one (a configured id always goes first).
-      const models = [...new Set([process.env.GEMINI_LIVE_MODEL, "gemini-2.5-flash-native-audio-preview-09-2025", "gemini-3.8-live", "gemini-live-2.5-flash-native-audio"].filter((m): m is string => !!m))];
+      const models = [...new Set([process.env.GEMINI_LIVE_MODEL, "gemini-live-2.5-flash-native-audio", "gemini-2.5-flash-native-audio-preview-09-2025", "gemini-3.8-live"].filter((m): m is string => !!m))];
       res.json({ token, model: models[0], models, instructions: liveInstructions({ subject, level: undefined, background, resuming: req.body?.resuming === true }) });
     } catch (e: any) {
       console.warn(`[live] token request failed: ${String(e?.message || e).slice(0, 160)}`);
