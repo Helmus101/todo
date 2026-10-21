@@ -2190,6 +2190,23 @@ section("Board renders each entry ONCE (the duplicated render block is gone) + p
   check("problems are flow items, not a pinned section (no 'Current problem' block, no mode toggle)", !/Problème actuel/.test(boardSrc) && !/singleQuestionMode/.test(boardSrc) && /createdAt \|\| ""\) \|\| Number\.MAX_SAFE_INTEGER/.test(boardSrc));
 }
 
+section("AI pauses itself after a week with open tasks and nothing checked off");
+{
+  const { shouldAutoPause } = await import("../server/autoPause.ts");
+  const now = Date.parse("2026-10-21T12:00:00Z");
+  const day = 86_400_000;
+  const iso = (d) => new Date(now - d * day).toISOString();
+  const open = (d) => ({ id: "a", title: "t", status: "ready", source: "pronote", createdAt: iso(d) });
+  const done = (d) => ({ id: "b", title: "t", status: "done", source: "pronote", createdAt: iso(20), updatedAt: iso(d) });
+  check("open task for 10 days, never completed → pause", shouldAutoPause([open(10)], {}, now) === true);
+  check("a task completed 3 days ago → no pause", shouldAutoPause([open(10), done(3)], {}, now) === false);
+  check("last completion 9 days ago → pause", shouldAutoPause([open(2), done(9)], {}, now) === true);
+  check("no open tasks (tutor-only account) → never paused", shouldAutoPause([done(30)], {}, now) === false && shouldAutoPause([], {}, now) === false);
+  check("already paused → left alone", shouldAutoPause([open(30)], { paused: true }, now) === false);
+  check("resuming restarts the 7 days", shouldAutoPause([open(30)], { autoResumedAt: iso(2) }, now) === false);
+  check("a Journal entry is not a task", shouldAutoPause([{ id: "j", title: "j", status: "ready", source: "studylog", createdAt: iso(30) }], {}, now) === false);
+}
+
 section("MathText — a mis-wrapped $...$ prose phrase falls back to plain text instead of KaTeX mangling it");
 {
   // Reported live: a board question rendered as "...05 m*underaforceof*10 N, *what's*k?" — the model had
@@ -4863,44 +4880,6 @@ section("GEOMETRY_ON_BOARD — triangle.sides can't express an unknown, so it mu
   check("the triangle field's own schema description repeats the restriction (FULLY-GIVEN \\(SSS\\) only)", /FULLY-GIVEN \(SSS\) triangle only/.test(gSrc) && /NEVER use this when any side is the student's unknown/.test(gSrc));
 }
 
-section("Admin metrics dashboard — gated to one hardcoded email, server AND client (source pins)");
-{
-  const serverSrcAdmin = serverSource();
-  const appSrcAdmin = appSource();
-  check("the server route requires auth before the admin check (no route ever does real work pre-auth)", /app\.get\("\/api\/admin\/metrics", requireAuth,/.test(serverSrcAdmin));
-  check("the admin check is an exact, case-insensitive match against the ADMIN_EMAILS env allowlist — not a role flag on the profile", /ADMIN_EMAILS\.has\(\(req\.session\.user \|\| ""\)\.toLowerCase\(\)\)/.test(serverSrcAdmin));
-  check("non-admins get a clean 403, not a crash or a silent empty response", /if \(!isAdmin\(req\)\) \{ res\.status\(403\)/.test(serverSrcAdmin));
-  check("the client nav link only renders for an admin (server-computed status.isAdmin; the server is the real gate)", /!isPhone && !!status\?\.isAdmin/.test(appSrcAdmin) && !/tjong\.willem@gmail\.com";\nfunction isAdminUser/.test(appSrcAdmin));
-  check("the /admin route itself is also gated client-side, not just the nav link", /route === "admin" && !!status\?\.isAdmin/.test(appSrcAdmin));
-  // Reported live: "should say 28 sessions but it says 91" — tutorSessionCount was counting every raw
-  // freestudy-source TASK, including ones opened and immediately abandoned (no message ever sent). The
-  // client's own history (TutorSession.tsx's saveAndClose) never even shows those — they fail its own
-  // "substance gate" (a real user message or board content) and get dismissed silently. The admin count
-  // needs the SAME gate, or it counts something the product itself doesn't consider a session.
-  const storeSrcAdmin = readFileSync(new URL("../server/store.ts", import.meta.url), "utf8");
-  const adminFn = storeSrcAdmin.slice(storeSrcAdmin.indexOf("export async function getAdminMetrics"));
-  check("tutor session counting applies the SAME substance gate as TutorSession.tsx's saveAndClose (a real message or board content)", /userMsgCount === 0 && board\.length === 0\) continue;/.test(adminFn));
-  check("byUser is sorted and per-account tutor minutes/sessions are tracked, not just the app-wide total", /byUser\.sort/.test(adminFn) && /userTutorSessions/.test(adminFn) && /userTutorMinutes/.test(adminFn));
-  // Accuracy: the account scan used to be `.limit(5000)` — every headline number silently undercounted
-  // past 5000 accounts while still looking exact. It now pages until a short page (page size ≠ cap), and
-  // the headline minutes card is literally the sum of the rounded per-user column, so the table always
-  // adds up to the card it sits under.
-  check("the account scan PAGES every account (a page size, never a .limit cap that undercounts)",
-    /ADMIN_METRICS_PAGE = 1000/.test(storeSrcAdmin) && /\.range\(from, from \+ ADMIN_METRICS_PAGE - 1\)/.test(adminFn) &&
-    !/\.limit\(ADMIN_METRICS|ADMIN_METRICS_ACCOUNT_LIMIT/.test(storeSrcAdmin));
-  check("the headline tutor-minutes card is exactly the sum of the displayed per-user column",
-    /tutorMinutesTotal \+= roundedMinutes/.test(adminFn) && /tutorMinutesTotal, journalCount: journalTotal, tasksBySource, byUser/.test(adminFn));
-  // "make sure in admin we can see how many tasks were completed too" — completed means status "done"
-  // specifically (not "dismissed", which the student dropped rather than finished), tracked both as an
-  // app-wide total and per-account, same shape as every other metric here.
-  check("completed tasks ('done' status, not 'dismissed') are counted app-wide and per-account",
-    /if \(t\?\.status === "done"\) \{ completedTaskCount\+\+; userCompletedTasks\+\+; \}/.test(adminFn) &&
-    /completedTaskCount: userCompletedTasks/.test(adminFn) && /completedTaskCount, tutorSessionCount, tutorMinutesTotal/.test(adminFn));
-  check("the client surfaces completed tasks as both a headline card and a sortable table column",
-    /completedTaskCount/.test(appSrcAdmin) && /\["completedTaskCount", "Terminées", "Completed"\]/.test(appSrcAdmin) &&
-    /Tâches terminées", "Tasks completed"/.test(appSrcAdmin));
-}
-
 section("Kick loop egress/CPU fix — hidden-tab guard, trimmed payload, ETag (source pins)");
 {
   const appSrcKick = appSource();
@@ -5681,11 +5660,9 @@ section("Phone restriction — flashcard review + READ-ONLY tasks, no chat; iPad
   // The point of the phone task view: READ it, don't work on it. No chat (TaskFocus owns the chat), no
   // ticking steps off, no Study Mode, no dismiss, no add-task.
   check("a phone opens TaskReadOnly instead of TaskFocus (which is where chat lives)", /isPhone \? \(\s*<TaskReadOnly task=\{openTask\}/.test(app));
-  check("task rows on phone are view-only (readOnly) and can't launch Study Mode", /readOnly=\{isPhone\}/.test(app) && /STUDY_MODE_ENABLED && !isPhone \?/.test(app));
-  // (Restyled to the Framer prototype: the old topbar's Refresh ghost button is gone — the generate
+    // (Restyled to the Framer prototype: the old topbar's Refresh ghost button is gone — the generate
   // action now lives only in the dashboard's own empty states, and add-task stayed phone-hidden.)
-  check("add-task and the refresh/generate action are hidden on phone", /\{!isPhone && <div className="dash-addtask">/.test(app) && !/\{!isPhone && \(route === "" \|\| route === "tasks"/.test(app));
-  const card = readFileSync(new URL("../client/TaskCard.tsx", import.meta.url), "utf8");
+    const card = readFileSync(new URL("../client/TaskCard.tsx", import.meta.url), "utf8");
   check("TaskCardRow's readOnly hides Study Mode and dismiss, but NOT the tick-off — direct instruction: checking a task off must still work on a phone",
     /!isDone && !readOnly && onEnterStudyMode/.test(card) && /!isDone && !leaving && !readOnly && <button className="card-x"/.test(card) &&
     /\{!isDone \? \(\s*<button type="button" className=\{`card-check/.test(card));

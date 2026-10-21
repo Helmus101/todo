@@ -20,6 +20,7 @@ export function registerProfileRoutes(app: express.Express): void {
       const p = (req.session.profile ||= emptyProfile());
       p.paused = req.body?.paused === true;
       p.pausedAt = new Date().toISOString();
+      if (p.paused) { p.autoPausedAt = undefined; } else { p.autoPausedAt = undefined; p.autoResumedAt = p.pausedAt; }
       void recordEvent(req.session.user!, "settings_changed", { message: p.paused ? "AI paused" : "AI resumed" });
       void recordMetric(req.session.user!, "ai_paused_toggled", p.paused ? 1 : 0);
       await commit(req);
@@ -407,13 +408,5 @@ export function registerProfileRoutes(app: express.Express): void {
       res.json(tasks.stripProfileForResponse(p));
     } catch (e: any) { console.error(e);
       res.status(500).json({ error: "Couldn't delete that — try again." }); }
-  });
-
-  app.get("/api/admin/metrics", requireAuth, async (req, res) => {
-    if (!isAdmin(req)) { res.status(403).json({ error: "Access denied." }); return; }
-    if (!cloudEnabled()) { res.status(500).json({ error: "Supabase isn't configured." }); return; }
-    const metrics = await getAdminMetrics();
-    if (!metrics) { res.status(500).json({ error: "Couldn't load metrics — try again." }); return; }
-    res.json(metrics);
   });
 }

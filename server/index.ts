@@ -12,7 +12,8 @@ import { aiReady, visionReady } from "./claude.ts";
 import { loadState, cloudEnabled, makeSessionStore } from "./store.ts";
 import * as integrations from "./integrations.ts";
 import * as pronoteSvc from "./pronote.ts";
-import { PROD, ah, isAdmin, scheduler } from "./http.ts";
+import { PROD, ah, commit, isAdmin, scheduler } from "./http.ts";
+import { shouldAutoPause } from "./autoPause.ts";
 
 /** Accounts that always see the whole app (the others get the tutor only, until they open /full). Comma-separated in FULL_APP_EMAILS. */
 const FULL_APP_EMAILS = (process.env.FULL_APP_EMAILS || "phillipe@gafsi.net").split(",").map((e) => e.trim().toLowerCase()).filter(Boolean);
@@ -225,6 +226,12 @@ registerTaskRoutes(app);
 // googleConnected now means "Gmail is connected via Composio" (the minimum to generate tasks). Cached
 // briefly so polling this hot endpoint doesn't hammer Composio.
 app.get("/api/status", ah(async (req, res) => {
+  // A week with open tasks and nothing checked off: AI pauses itself, and the next time they open the app they are asked to resume it.
+  if (req.session.user && shouldAutoPause(req.session.tasks, req.session.profile)) {
+    const p = req.session.profile!;
+    p.paused = true; p.pausedAt = new Date().toISOString(); p.autoPausedAt = p.pausedAt;
+    try { await commit(req); } catch { /* retried on the next status */ }
+  }
   // Both checks are independent reads — running them sequentially (the old code awaited one, then the
   // other) doubled this endpoint's latency for no reason. It's polled on every app open/focus/tab-switch
   // (see client/App.tsx's status refresh), so that add-up was a real, constant source of felt latency.
@@ -250,6 +257,7 @@ app.get("/api/status", ah(async (req, res) => {
     googleConfigured: integrations.integrationsReady(), // Composio is what powers Google + every integration now
     cloud: cloudEnabled(),
     paused: !!req.session.profile?.paused,
+    autoPaused: !!req.session.profile?.paused && !!req.session.profile?.autoPausedAt,
     highPriorityPeople: req.session.profile?.highPriorityPeople,
     genPerDay: req.session.profile?.genPerDay,
     timezone: req.session.profile?.timezone,

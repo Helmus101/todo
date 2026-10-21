@@ -815,6 +815,8 @@ export function mergeProfileStates(p1: Profile, p2: Profile): Profile {
     sessions: [...new Set([...(p1.sessions || []), ...(p2.sessions || [])])].slice(-30),
     paused: pausedSide.paused,
     pausedAt: pausedSide.pausedAt,
+    autoPausedAt: pausedSide.autoPausedAt,
+    autoResumedAt: [p1.autoResumedAt, p2.autoResumedAt].filter(Boolean).sort().pop(),
     // Sticky once granted on EITHER side — a stale copy that predates the claim must never un-grant it.
     // Keep the MOST RECENT sweep marker across devices/instances (a stale copy must never reset it).
     lastSweepAt: (Date.parse(p2.lastSweepAt || "") || 0) >= (Date.parse(p1.lastSweepAt || "") || 0) ? (p2.lastSweepAt ?? p1.lastSweepAt) : (p1.lastSweepAt ?? p2.lastSweepAt),

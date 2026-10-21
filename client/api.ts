@@ -544,7 +544,4 @@ export const api = {
   // by seconds — for speech, falling back fast beats retrying. The caller passes a timeout signal.
   ttsAudio: (text: string, lang: string, signal?: AbortSignal): Promise<Response> =>
     req("/api/tts", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text, lang }), signal }, 0),
-  // Admin-only (server-side gated to one hardcoded email, see server/index.ts) — a 403 for anyone else.
-  adminMetrics: (): Promise<{ userCount: number; taskCount: number; completedTaskCount: number; tutorSessionCount: number; tutorMinutesTotal: number; journalCount: number; tasksBySource: Record<string, number>; byUser: { email: string; taskCount: number; completedTaskCount: number; tutorSessionCount: number; tutorMinutes: number; journalCount: number }[] }> =>
-    req("/api/admin/metrics").then(j),
 };

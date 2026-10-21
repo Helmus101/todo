@@ -137,6 +137,8 @@ export interface Profile {
   // Art.8 parental-consent requirement, not just a UI gate that leaves no record.
   ageConsentAt?: string;
   paused?: boolean;       // "pause all AI usage" — blocks generation and task runs server-side
+  autoPausedAt?: string;  // set when AI was paused automatically after 7 days with no task checked off; cleared when the student resumes
+  autoResumedAt?: string; // when they last resumed after that, so the 7 days start over
   pausedAt?: string;      // ISO stamp of the last toggle, so cross-device merge keeps the most RECENT choice
   lastSweepAt?: string;   // ISO stamp of the last SUCCESSFUL generation sweep — durable "did we check today"
                           // marker (survives restarts; source of truth for the once-per-local-day guarantee)
@@ -452,6 +454,8 @@ export function normalizeProfile(p: any): Profile {
     sessions: arr(p?.sessions).slice(-30),
     paused: !!p?.paused,
     pausedAt: typeof p?.pausedAt === "string" ? p.pausedAt : undefined,
+    autoPausedAt: typeof p?.autoPausedAt === "string" ? p.autoPausedAt : undefined,
+    autoResumedAt: typeof p?.autoResumedAt === "string" ? p.autoResumedAt : undefined,
     lastSweepAt: typeof p?.lastSweepAt === "string" ? p.lastSweepAt : undefined,
     lastForcedAt: typeof p?.lastForcedAt === "string" ? p.lastForcedAt : undefined,
     lastSupplementarySweepAt: typeof p?.lastSupplementarySweepAt === "string" ? p.lastSupplementarySweepAt : undefined,
@@ -2155,6 +2159,7 @@ export interface ConnectionStatus {
   visionReady?: boolean;      // GEMINI_API_KEY present — gates the Tutor whiteboard's "send to Otto" button
   googleConfigured: boolean;  // Composio configured (COMPOSIO_API_KEY) — powers Google + every integration
   cloud: boolean;             // Supabase configured → accounts + state persist
+  autoPaused?: boolean;       // AI was paused automatically for inactivity: show the notice with a Resume button
   paused: boolean;            // "pause all AI usage" toggle — client skips auto-run/generate while true
   highPriorityPeople?: string[]; // used ONLY to break ranking ties (VIP's task sorts first) — no UI of its own
   genPerDay?: number;         // how many times/day Otto scans for new tasks (1–4) — drives the client sweep cadence

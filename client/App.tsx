@@ -24,7 +24,6 @@ import { SettingsPage } from "./pages/Settings.tsx";
 import { StudyLogPage } from "./pages/Journal.tsx";
 import { StandaloneStudyEntry } from "./pages/StudyEntry.tsx";
 import { MistakeLogPage } from "./pages/MistakeLog.tsx";
-import { AdminPage } from "./pages/Admin.tsx";
 import { AddTask, ConnectCard, TaskSkeleton } from "./pages/Dashboard.tsx";
 import { PrivacyBody, ResearchPageBody, TermsBody } from "./pages/Legal.tsx";
 
@@ -945,7 +944,7 @@ export function App() {
             className={`topnav-link ${route === "log" ? "active" : ""}`}
             href="/log"
           >
-            {"Journal"}
+            {isPhone ? "Flashcards" : "Journal"}
           </a>
           {!isPhone && <a
             className={`topnav-link ${route === "coursework" ? "active" : ""}`}
@@ -956,11 +955,10 @@ export function App() {
           {/* Hick's law: four primary destinations stay in view; the rest sit one tap away under "More" so the bar offers fewer
               choices at once. The "More" label itself lights up when one of its pages is open. */}
           <details className="topnav-more" key={route}>
-            <summary className={`topnav-link ${["errorlog", "settings", "admin"].includes(route) ? "active" : ""}`}>{"More"}</summary>
+            <summary className={`topnav-link ${["errorlog", "settings"].includes(route) ? "active" : ""}`}>{"More"}</summary>
             <div className="topnav-more-menu">
               {!isPhone && <a className={`topnav-link ${route === "errorlog" ? "active" : ""}`} href="/errorlog">{"Mistakes"}</a>}
               <a className={`topnav-link ${route === "settings" ? "active" : ""}`} href="/settings">{"Settings"}</a>
-              {!isPhone && !!status?.isAdmin && <a className={`topnav-link ${route === "admin" ? "active" : ""}`} href="/admin">Admin</a>}
             </div>
           </details>
         </nav>
@@ -982,6 +980,15 @@ export function App() {
         </div>
       )}
 
+      {status?.loggedIn && status.autoPaused ? (
+        <div className="autopause-banner" role="alert">
+          <div>
+            <b>{"AI is paused."}</b>
+            <span>{" You haven't checked off a task in over a week, so Otto stopped using AI. Ready to get going again?"}</span>
+          </div>
+          <button type="button" className="btn primary" onClick={() => { void api.setPaused(false).then(() => loadStatus()).catch((e: any) => notify(e?.message || "Couldn't resume — try again.", "error")); }}>{"Restart AI"}</button>
+        </div>
+      ) : null}
       {onboard && <Onboarding status={status} onStatus={loadStatus} onDone={finishOnboard} />}
       {/* First visit to a page: an interactive guide pointing at the real controls (client/PageTour.tsx). */}
       {(() => {
@@ -1019,8 +1026,6 @@ export function App() {
         <MistakeLogPage lang={status?.language} />
       ) : route === "exercises" ? (
         <ExercisesPage />
-      ) : route === "admin" && !!status?.isAdmin ? (
-        <AdminPage />
       ) : !status.googleConnected && !status.pronoteConnected && !skippedConnect ? (
         <main className="list-wrap"><ConnectCard status={status} onSkip={() => {
           setSkippedConnect(true);
@@ -1080,7 +1085,7 @@ export function App() {
           <div className="dash-grid">
             {/* Adding a task is an action, so it's off on a phone (read-only there — see
                 PHONE_ALLOWED_ROUTES above). */}
-            {!isPhone && <div className="dash-addtask"><AddTask onAdded={setTasks} /></div>}
+            <div className="dash-addtask"><AddTask onAdded={setTasks} /></div>
 
             <div className="dash-today">
               {/* Until the first server response, an empty list means "still loading", not "all clear" —
@@ -1136,7 +1141,7 @@ export function App() {
                           onTask={patchTask}
                           onConfirmed={flagJustDone}
                           onEnterStudyMode={STUDY_MODE_ENABLED && !isPhone ? () => { setStudyModeTask(t); navigate(`study/${t.id}`); } : undefined}
-                          readOnly={isPhone}
+                          readOnly={false}
                         />
                       ))}
                     </div>
@@ -1173,7 +1178,7 @@ export function App() {
                                   onTask={patchTask}
                                   onConfirmed={flagJustDone}
                                   onEnterStudyMode={STUDY_MODE_ENABLED && !isPhone ? () => { setStudyModeTask(t); navigate(`study/${t.id}`); } : undefined}
-                                  readOnly={isPhone}
+                                  readOnly={false}
                                 />
                               ))}
                             </div>
