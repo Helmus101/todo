@@ -21,8 +21,8 @@ export function Landing({ lang, onLangChange }: { lang: "fr" | "en"; onLangChang
         </nav>
       </header>
       <main className="landing-min-main">
-        <h1>{"Talk it through with Otto."}</h1>
-        <p>{"A voice tutor with a shared whiteboard. Otto asks instead of telling, explains anything when you're stuck, writes the working on paper as you go, and remembers what you studied before."}</p>
+        <h1>{"Think out loud. Get it right."}</h1>
+        <p>{"Otto never hands you the answer. He asks. You work it out, on a shared whiteboard, out loud. The mistakes you make once, you won't make twice."}</p>
         <p><a className="landing-min-cta" href="/signup">{"Start talking"}</a></p>
       </main>
       <footer className="landing-min-foot">

@@ -66,14 +66,14 @@ export function LoginPage({ status, lang, onLangChange, onDone, initialMode }: {
   // day starts here."); forgot/reset keep their own explanatory copy — the prototype doesn't design those
   // states. French adapted through L() as everywhere else.
   const titles: Record<typeof mode, string> = {
-    signup: "A clearer day starts here.",
-    login: "You're back. Let's work.",
-    forgot: "Forgot password",
-    reset: "Choose a new password",
+    signup: "Stop guessing. Start understanding.",
+    login: "Back to work.",
+    forgot: "Locked out? Fixed in a minute.",
+    reset: "Pick a new password.",
   };
   const subs: Record<typeof mode, string> = {
-    signup: "Meet your planner. Find your tutor.",
-    login: "A little clarity is waiting for you.",
+    signup: "One tutor. Zero shortcuts.",
+    login: "Pick up exactly where you left off.",
     forgot: "We'll email you a link to pick a new one.",
     reset: "This link only works once.",
   };

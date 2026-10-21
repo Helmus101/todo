@@ -31,11 +31,11 @@ export function LiveBar(p: {
   const mood = p.thinking || p.sending ? "thinking" : p.speaking ? "speaking" : live && !p.muted ? "listening" : "idle";
   const line = p.error ? p.error
     : connecting ? "Connecting…"
-    : p.thinking || p.sending ? "Thinking it through…"
+    : p.thinking || p.sending ? "Working it out…"
     : p.caption?.text ? (p.caption.who === "you" ? `“${p.caption.text.slice(-200)}”` : p.caption.text.slice(-240))
-    : live ? (p.muted ? "Muted" : "Listening…")
+    : live ? (p.muted ? "Muted" : "Go ahead. I'm listening.")
     : p.status === "unavailable" ? "Type to Otto below, or try the voice again"
-    : "Tap the mic and talk to Otto";
+    : "Tap the mic. Say it out loud.";
   const submit = () => { const t = text.trim(); if (!t) return; setText(""); setTyping(false); p.onType(t); };
   return (
     <div className="live-bar" data-state={mood}>

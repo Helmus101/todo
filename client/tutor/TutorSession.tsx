@@ -807,8 +807,8 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
           {/* The prototype's cream-circle face — two dots, no mouth. The one illustration the whole
               design system allows, reused on the landing and the session screens. */}
           <div className="tutor-face" aria-hidden><span className="tutor-face-eye" /><span className="tutor-face-eye" /></div>
-          <h2 className="tutor-landing-title">{"I'm Otto, your thinking partner."}</h2>
-          <p className="tutor-landing-sub">{"What are we sharpening today? I won't hand you answers — I'll make you find them."}</p>
+          <h2 className="tutor-landing-title">{"Your answers. Your thinking. Your win."}</h2>
+          <p className="tutor-landing-sub">{"Pick a subject. I won't give you the answer. You'll find it."}</p>
 
           {/* Always show subject selector so you can create a new session even when one is active —
               rendered as the prototype's single wide pill: subject select left, orange "Start a session"
@@ -1046,7 +1046,7 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
               <button type="button" className="tutor-dock-chat-close" onClick={() => setChatDrawer(false)} aria-label={"Collapse history"}><Minimize2 size={13} aria-hidden="true" />{"Collapse"}</button>
             </div>
             <div className="tutor-chat-history">
-              {!task.chat?.length && <p className="tutor-chat-empty">{"Nothing yet — say hi to Otto."}</p>}
+              {!task.chat?.length && <p className="tutor-chat-empty">{"Nothing yet. Say something."}</p>}
               {/* The whole conversation, including Otto's latest answer and the words being said right now. */}
               {(task.chat || []).map((msg, i) => (
                 <div key={i} className={`tutor-chat-message ${msg.role}`}>

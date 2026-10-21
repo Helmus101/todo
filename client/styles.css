@@ -4996,3 +4996,8 @@ button[aria-expanded="true"] > .sm-chev { transform: rotate(45deg); }
 .tutor-stage .sm-board-body .sm-board-entry-strategy .sm-board-entry-main { padding: 4px 10px; background: rgba(120,100,60,.08) !important; border-radius: 6px; }
 .settings-more { margin-top: var(--space-3); }
 .settings-more > summary { cursor: pointer; font-size: 14px; color: var(--ink-2); padding: 6px 0; }
+/* Bold type: short, confident headlines. */
+.landing-min-main h1, .tutor-landing-title, .login-title, .list-head { font-weight: 800 !important; letter-spacing: -0.02em !important; }
+.landing-min-main h1 { font-size: clamp(2rem, 7vw, 3rem) !important; line-height: 1.05 !important; }
+.tutor-landing-title { font-family: var(--sans) !important; line-height: 1.05; }
+.list-head { font-size: clamp(1.7rem, 4vw, 2.2rem) !important; }

@@ -258,7 +258,7 @@ export function SettingsPage({ status, tasks, onSignOut, onChanged, onTasksChang
   return (
     <main className="settings-page">
       {/* The prototype's Settings head: "Set the bar for Otto." + "Your account, your connections, your standards." */}
-      <h1 className="list-head">{"Settings"}</h1>
+      <h1 className="list-head">{"Your settings."}</h1>
       {profileError ? (
         <ErrorNote onRetry={loadProfile}>{"Some profile info couldn't load."}</ErrorNote>
       ) : null}
