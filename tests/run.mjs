@@ -444,10 +444,8 @@ section("Primer chat — thinking toggle with safe fallback, persona leads with 
   
   check("persona honours one-tap replies and retrieval-first returns", /ONE-TAP REPLIES/.test(src) && /RETRIEVAL OVER RE-EXPLAINING/.test(src));
   const tut = readFileSync(new URL("../client/tutor/TutorSession.tsx", import.meta.url), "utf8");
-  check("tutor dock offers one-tap starters + follow-ups and a recall opener from the last session", /quickReplies=\{fresh \? starters : justFinishedExercise \? nextChips : followUps\}/.test(tut) && /What do you still remember/.test(tut));
   const board = readFileSync(new URL("../client/study/artifacts/BoardArtifact.tsx", import.meta.url), "utf8");
   check("board reports every exercise attempt to the tutor (never the correct answer)", /onProblemResult\?\.\(\{ problem, given, correct:.{0,40}attempt,/.test(board) && /\[Exercise\] I answered/.test(tut));
-  check("finishing an exercise offers 'another / harder / go over the idea / something else' and the tutor asks instead of auto-creating the next problem", /justFinishedExercise \? nextChips/.test(tut) && /ASK what they want to do now/.test(claudeSource()) && /let THEM choose/.test(claudeSource()));
   check("automatic exercise results wait for the reply to settle and go out batched (never replacing the answer being read)", /resultsRef\.current\.splice\(0\)\.join/.test(tut) && /if \(sending \|\| voiceState\.speaking\) return;/.test(tut));
   check("new whiteboard ink rides along with the next message (no separate send step)", /readUnseenInk\(wantsLook\)/.test(tut) && /What I wrote\/drew on the board/.test(tut));
 }
@@ -2569,9 +2567,6 @@ section("Tutor Session — sessions never auto-start, and past boards read at a 
     !/Voir la séance/.test(tutorSrc) && !/setOpenBoardSession/.test(tutorSrc) && !/openChatSession/.test(tutorSrc));
   // Report-live: "make sure in session u cant see past chat and it isn't a dedicated chat button, just on
   // the floating island with chat there can be an expand button".
-  check("in-session chat is the floating island's own expand button — no dedicated button, no past chats",
-    /tutor-dock-chat-toggle/.test(tutorSrc) && /className="ts-dock"[\s\S]*?tutor-dock-chat-toggle/.test(tutorSrc) &&
-    !/tutor-chat-btn/.test(tutorSrc) && !/tutor-chat-past/.test(tutorSrc) && !/setChatDrawer\(true\)/.test(tutorSrc));
   const stylesSrc = readFileSync(new URL("../client/styles.css", import.meta.url), "utf8");
   check("the new history-card, island-chat and review styles actually exist (old ones are gone)",
     /\.tutor-history-desc/.test(stylesSrc) && /\.tutor-dock-chat-toggle/.test(stylesSrc) && /\.tutor-review-tab/.test(stylesSrc) &&
@@ -2969,9 +2964,7 @@ section("Tutor Session — voice is MANUAL (mic is the student's tap, never auto
   // Otto is an avatar docked over the canvas (no transcript): voice state shows on the avatar itself
   // (mood ring) and the stage takes a voice-on accent, so "am I being heard?" is answered right where the
   // student is looking.
-  check("voice state is reported up and drives the stage", /onVoiceStateChange/.test(tutorSrc) && /tutor-stage\$\{voiceState\.voiceModeOn \? " voice-on"/.test(tutorSrc));
   const tutorStyles = readFileSync(new URL("../client/styles.css", import.meta.url), "utf8");
-  check("tutor shows Otto as a dock (latest answer only), not the full chat", /variant="dock"/.test(tutorSrc) && /\.otto-bubble/.test(tutorStyles));
   check("tutor canvas: ink layer with undo/redo + eraser over the board", /TutorCanvas/.test(tutorSrc) && /\.tc-toolbar/.test(tutorStyles));
   // Barge-in: talking over Otto cancels the TTS mid-sentence, like interrupting a human tutor. Threshold
   // is 2+ words so speaker echo / a throat-clear doesn't cut him off.
@@ -6964,7 +6957,7 @@ section("Live voice (Gemini Live) — audio helpers, the voice's instructions, t
   const hook = readFileSync(new URL("../client/tutor/live/useGeminiLive.ts", import.meta.url), "utf8");
   const ts = readFileSync(new URL("../client/tutor/TutorSession.tsx", import.meta.url), "utf8");
   check("the live hook: credential and instructions from the token route, v1alpha, several model ids tried, 16 kHz mic audio, playback stops when interrupted, images go in as video frames, typed text goes in as a turn", /api\.liveToken\(/.test(hook) && /apiVersion: "v1alpha"/.test(hook) && /setupComplete/.test(hook) && /audio\/pcm;rate=16000/.test(hook) && /sc\.interrupted\) \{ player\.interrupt\(\)/.test(hook) && /sendRealtimeInput\(\{ video/.test(hook) && /sendClientContent/.test(hook));
-  check("the tutor page: the call's transcript is kept as chat, each finished exchange goes to the board writer, drawings go to the voice as pictures, typed text while live goes to the voice, and unavailable live falls back to the classic dock", /onTurn: onLiveTurn/.test(ts) && /api\.liveBoard\(/.test(ts) && /canvasRef\.current\?\.snapshot\(\)/.test(ts) && /live\.sendText\(t\)/.test(ts) && /liveStatus === "unavailable"/.test(ts) && /<AskOttoPanel/.test(ts) && /<LiveBar/.test(ts)); }
+  check("the tutor page: the call's transcript is kept as chat, each finished exchange goes to the board writer, drawings go to the voice as pictures, typed text while live goes to the voice, and when live voice cannot start the SAME bar stays (reason shown, try again, typing goes to the engine) — the old chat dock is gone", /onTurn: onLiveTurn/.test(ts) && /api\.liveBoard\(/.test(ts) && /canvasRef\.current\?\.snapshot\(\)/.test(ts) && /live\.sendText\(t\)/.test(ts) && /<LiveBar/.test(ts) && !/<AskOttoPanel/.test(ts) && /void send\(t, false\)/.test(ts)); }
 
 section("Tutor first — only the owner account and accounts that opened /full see the rest of the app (source pins)");
 { const idx = readFileSync(new URL("../server/index.ts", import.meta.url), "utf8");

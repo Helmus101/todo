@@ -507,6 +507,9 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
   });
   const liveRef = useRef(live);
   liveRef.current = live;
+  // Not on a call (no Gemini key, mic blocked, typed message): the last thing Otto wrote shows where the live caption would be.
+  const lastOttoRaw = [...(task?.chat || [])].reverse().find((m) => m.role === "assistant")?.text || "";
+  const lastOttoText = lastOttoRaw ? toSpeakableText(lastOttoRaw).slice(0, 400) : "";
   const liveStatus = live.status;
   useEffect(() => {
     setVoiceState({ listening: liveStatus === "live" && !live.speaking && !live.muted, speaking: live.speaking, voiceModeOn: liveStatus === "live", interim: "" });
@@ -1048,23 +1051,6 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
             separate "chat" entry point (report-live: it isn't a dedicated chat button, just an expand
             button on the island where the answers already show). No past-sessions section either:
             in-session shows the CURRENT transcript only. */}
-        {liveStatus === "unavailable" ? (
-        <button
-          type="button"
-          className="tutor-dock-chat-toggle"
-          data-tour="ts-chat"
-          aria-expanded={chatDrawer}
-          aria-controls="tutor-history-drawer"
-          aria-label={`${"Conversation history"}${task.chat?.length ? ` (${task.chat.length} ${"messages"})` : ""}`}
-          title={chatDrawer ? "Hide history" : "Show history"}
-          onClick={() => setChatDrawer((v) => !v)}
-        >
-          <MessageSquare size={13} aria-hidden="true" />
-          <span className="tutor-dock-chat-toggle-label">{"History"}</span>
-          {task.chat?.length ? <span className="tutor-dock-chat-toggle-count">{task.chat.length}</span> : null}
-          <ChevronDown size={13} aria-hidden="true" className="tutor-dock-chat-toggle-chev" />
-        </button>
-        ) : null}
         {chatDrawer && (
           <div className="tutor-dock-chat" id="tutor-history-drawer">
             <div className="tutor-dock-chat-head">
@@ -1084,30 +1070,14 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
             </div>
           </div>
         )}
-        {liveStatus === "unavailable" ? (
-          <>
-          {live.error ? <p className="live-fallback-note" role="status">{live.error} Using the basic voice instead.</p> : null}
-          <AskOttoPanel
-            variant="dock"
-            task={task} currentStep={undefined} input={input} setInput={setInput} sending={sending}
-            error={error} pendingMsg={pendingMsg} onSend={(o, v, _canvas, sp) => void send(o, v, sp)}
-            onOpenNote={noop} onOpenDeck={noop} onOpenQuiz={noop}
-            emptyText={openerText}
-            quickReplies={fresh ? starters : justFinishedExercise ? nextChips : followUps}
-            placeholder={"Talk or type to Otto…"}
-            onVoiceStateChange={handleVoiceState}
-            talkRequest={talkRequest}
-          />
-          </>
-        ) : (
           <LiveBar
-            status={liveStatus} speaking={live.speaking} thinking={false} muted={live.muted} caption={caption} error={live.error}
-            sending={false} blocked={live.blocked} onResume={live.resumePlayback}
+            status={liveStatus} speaking={live.speaking} thinking={false} muted={live.muted} error={live.error}
+            caption={liveStatus === "live" ? caption : lastOttoText ? { who: "otto", text: lastOttoText } : null}
+            sending={sending} blocked={live.blocked} onResume={live.resumePlayback}
             onStart={() => void live.start()} onStop={live.stop} onMute={live.setMuted}
             onType={(t) => { if (liveStatus === "live") { onLiveTurn("you", t); live.sendText(t); } else void send(t, false); }}
             onHistory={() => setChatDrawer((v) => !v)} historyCount={task.chat?.length || 0}
           />
-        )}
       </div>
       {reflectOpen && (
         <div className="tutor-reflect-overlay" role="dialog" aria-modal="true" aria-label={"Before you go"} onClick={() => setReflectOpen(false)}>

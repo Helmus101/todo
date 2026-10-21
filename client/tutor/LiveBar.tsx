@@ -32,6 +32,7 @@ export function LiveBar(p: {
     : p.thinking || p.sending ? "Thinking it through…"
     : p.caption?.text ? (p.caption.who === "you" ? `“${p.caption.text.slice(-200)}”` : p.caption.text.slice(-240))
     : live ? (p.muted ? "Muted" : "Listening…")
+    : p.status === "unavailable" ? "Type to Otto below, or try the voice again"
     : "Tap the mic and talk to Otto";
   const submit = () => { const t = text.trim(); if (!t) return; setText(""); setTyping(false); p.onType(t); };
   return (
@@ -48,9 +49,9 @@ export function LiveBar(p: {
       ) : null}
       <div className="live-controls">
         {live ? <button type="button" className="live-icon-btn" onClick={() => p.onMute(!p.muted)} aria-pressed={p.muted} aria-label={p.muted ? "Unmute" : "Mute"} title={p.muted ? "Unmute" : "Mute"}>{p.muted ? <MicOff size={18} aria-hidden="true" /> : <Mic size={18} aria-hidden="true" />}</button> : null}
-        <button type="button" className={`live-main-btn${live || connecting ? " is-on" : ""}`} onClick={live || connecting ? p.onStop : p.onStart} disabled={p.status === "unavailable"} aria-pressed={live}>
+        <button type="button" className={`live-main-btn${live || connecting ? " is-on" : ""}`} onClick={live || connecting ? p.onStop : p.onStart} aria-pressed={live}>
           {live || connecting ? <PhoneOff size={18} aria-hidden="true" /> : <Mic size={18} aria-hidden="true" />}
-          <span>{connecting ? "Cancel" : live ? "Voice on" : "Voice mode"}</span>
+          <span>{connecting ? "Cancel" : live ? "Voice on" : p.status === "unavailable" ? "Try voice again" : "Voice mode"}</span>
         </button>
         {p.blocked ? <button type="button" className="live-icon-btn live-play" onClick={p.onResume} aria-label="Play Otto's voice" title="Play Otto's voice"><Play size={18} aria-hidden="true" /></button> : null}
         <button type="button" className="live-icon-btn" onClick={() => setTyping((t) => !t)} aria-pressed={typing} aria-label="Type instead" title="Type instead"><Keyboard size={18} aria-hidden="true" /></button>
