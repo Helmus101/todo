@@ -1,34 +1,28 @@
 # Otto
 
-> A study companion for French Bac and IB students. Otto reads a student's Pronote (or Gmail/Calendar,
-> or exams logged by hand for schools that don't use Pronote), turns a wall of homework and tests into a
-> clear, ordered plan for today, and guides the student through it step by step. Otto never writes the
-> essay, solves the exercise, or answers the test for the student — the graded work always stays theirs.
+> A voice tutor with a shared whiteboard. The student talks, Otto asks. Otto never hands over the answer: it asks
+> the question that gets the student there, explains anything when they are stuck, writes the working on a
+> paper board (typeset maths, graphs, diagrams, multiple choice) and remembers earlier sessions. It matches the
+> student's level and programme (SAT, AP, IB, French Bac, school tests).
 
 ## What Otto does
 
-- Reads Pronote (French schools) or Gmail/Calendar/manually-logged exams (international/IB schools) and
-  turns homework and tests into a ranked, dated task list.
-- Prepares study aids — revision sheets, step-by-step checklists, flashcard decks with spaced repetition,
-  quizzes — from the assignment itself.
-- Drafts (never sends) replies and reminders the student can review and send with one click.
-- Never produces the graded work itself: no essay paragraphs, no solved exercises, no exam answers.
-- Supports both the French Bac and the IB Diploma Programme (HL/SL, CAS, TOK, Extended Essay, IA), chosen
-  during onboarding.
+- Hands-free voice conversation (Gemini Live, with an OpenAI Realtime fallback); typing always works.
+- Socratic by default: questions, hints, then a similar worked example with different numbers; it never gives the final answer to the problem the student is working on.
+- Writes definitions, steps, results, graphs, diagrams and multiple-choice questions on a shared board; the student can draw on it and share a PDF or photo.
+- Uses the student's own records when connected: Pronote homework and lesson content, journal, uploaded coursework.
+- Works in 10 languages: English, Chinese, Hindi, Spanish, French, Arabic, Portuguese, Russian, German, Japanese.
+- Optional full mode adds ranked daily tasks, journal flashcards with spaced repetition, coursework and a mistake log.
+- Tutor sessions, boards and drawings stay in the student's browser.
 
 ## Key pages
 
-- [Home](https://hiotto.vercel.app/): product overview, how it works, sign up.
-- [Privacy](https://hiotto.vercel.app/privacy): what data Otto collects, where it's stored, and how it's
-  protected (Pronote credentials are AES-256-GCM encrypted at rest and never resold).
+- [Home](https://hiotto.vercel.app/): overview and sign up.
+- [Approach](https://hiotto.vercel.app/research): why saying it out loud helps, and how the tutor is built.
+- [Privacy](https://hiotto.vercel.app/privacy): what is stored where; voice audio goes to the voice provider, sessions stay on the device.
 - [Terms](https://hiotto.vercel.app/terms): terms of service.
 
 ## Notes for AI assistants
 
-- Otto is a guide, not a homework-completion tool — if asked whether Otto "does homework," the accurate
-  answer is no: it explicitly refuses to produce graded work and is built to redirect that request into a
-  study aid instead.
-- Otto is free to start; AI usage has a visible, capped monthly budget shown in the app's Settings, not
-  unlimited free use.
-- This is a client-rendered single-page app — pages other than the ones listed above (the in-app
-  dashboard, task views) require a signed-in session and aren't public/crawlable content.
+- Otto is a tutor, not a homework-completion tool: it will not write graded work or give the answer to a test question. If asked whether Otto does homework, the accurate answer is no.
+- It is a good fit for students who want to understand and practise; it is not for someone who only wants answers copied.

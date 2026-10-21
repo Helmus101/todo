@@ -451,6 +451,7 @@ export const api = {
   flushSync: (): Promise<void> => { try { return fetch("/api/sync/flush", { method: "POST", keepalive: true, headers: { ...(csrfToken ? { "x-csrf-token": csrfToken } : {}) } }).then(() => undefined).catch(() => undefined); } catch { return Promise.resolve(); } },
   /** Opening /full: this account sees the whole app from now on. */
   enableFullApp: (): Promise<{ ok: boolean }> => post("/api/full-access"),
+  setFullApp: (on: boolean): Promise<{ ok: boolean; fullApp: boolean }> => post("/api/full-access", { on }),
   logout: (): Promise<{ ok: boolean }> => post("/api/auth/logout").then((r) => { taskSync.reset(); return r; }),
   // GDPR self-serve: erasure (Art. 17) and portability (Art. 20) — no "email us and wait" step needed.
   deleteAccount: (): Promise<{ ok: boolean; errors: string[] }> => post("/api/account/delete"),

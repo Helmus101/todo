@@ -801,7 +801,8 @@ export function mergeProfileStates(p1: Profile, p2: Profile): Profile {
   const pausedSide = pausedAt(p2) >= pausedAt(p1) ? p2 : p1;
   return {
     name: p2.name || p1.name,
-    fullAccess: p1.fullAccess || p2.fullAccess ? true : undefined,
+    fullAccess: ((Date.parse(p2.fullAccessAt || "") || 0) >= (Date.parse(p1.fullAccessAt || "") || 0) ? p2 : p1).fullAccess ?? p1.fullAccess ?? p2.fullAccess,
+    fullAccessAt: [p1.fullAccessAt, p2.fullAccessAt].filter(Boolean).sort().pop(),
     about: p2.about || p1.about,
     learningStyle: p2.learningStyle ?? p1.learningStyle,
     preferences: dedupeFacts([...(p1.preferences || []), ...(p2.preferences || [])]),

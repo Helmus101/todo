@@ -1,16 +1,22 @@
 # Otto
 
-An AI study assistant for students. Otto turns everything you have to do into a short, ranked list,
-prepares the reversible work (revision notes, step checklists, flashcards, email drafts), and tutors you
-Socratically: it asks questions instead of handing over answers. It never sends anything without your tap and
-never does graded work for you.
+A voice tutor with a shared whiteboard. You talk, Otto asks. It never hands you the answer: it asks the
+question that gets you there, explains anything when you are stuck, writes the working on paper as you go
+(typeset maths, graphs, diagrams, multiple choice) and remembers what you studied before. It is pitched at your
+level and programme (SAT, AP, IB, Bac, school tests), and it knows your Pronote homework, lesson content,
+journal and coursework.
 
-Otto works on its own: add tasks by hand and use the tutor, journal and study desk. Connecting apps lets it
-find the work for you:
+By default an account sees only the tutor, Settings and (optionally) a Pronote connection. **Full mode**
+(Settings → Full mode, or open `/full` once) adds the rest of the app: ranked daily tasks, journal and flashcards,
+coursework, mistake log and Google/Notion connections.
 
-- **Google** (Gmail, Calendar, Drive) and **Notion** through Composio
-- **School portals**: Pronote today; Blackbaud is in progress
-- Curriculum-aware tutoring for national programmes, IB and AP; the interface is in English and French
+- **Voice:** Gemini Live (WebSocket), falling back to OpenAI Realtime (WebRTC). Typing always works.
+- **Languages:** the app and the tutor work in 10 languages: English, 中文, हिन्दी, Español, Français, العربية,
+  Português, Русский, Deutsch, 日本語 (picker in Settings and on the landing page; interface text is
+  translated once on the server and cached in the browser; Arabic is right-to-left).
+- **Private by default:** tutor sessions, boards and drawings are kept in the browser, not on the server.
+- **Phones:** the tutor, tasks and flashcards work on a phone.
+- It never sends anything without your tap and never does graded work for you.
 
 Open source (MIT), self-hostable.
 
@@ -19,13 +25,13 @@ Open source (MIT), self-hostable.
 | Page | What it does |
 |---|---|
 | `/` Landing, `/login`, `/signup`, `/reset-password` | Public pages. Email + password accounts (Supabase Auth). |
-| `/tasks` | Today's tasks, ranked. Each task opens with its steps, prepared notes/flashcards/quizzes, links and an "Ask Otto" chat. Read-only on phones. |
-| `/tutor` | Full-screen Socratic tutor with a live board (typeset maths, diagrams, graphs, checkable exercises) and voice. |
+| `/tasks` | Full mode. Today's tasks, ranked. Each task opens with its steps, prepared notes/flashcards/quizzes, links and an "Ask Otto" chat. |
+| `/tutor` | The product. Full-screen voice tutor: hands-free talk, a paper board (typeset maths, diagrams, graphs, multiple choice), share a PDF or photo with the paperclip, past sessions and drawings kept locally. |
 | `/study/<task>` | Study Mode desk: Otto chat + board, notes, materials, timer, tools (calculator, Desmos, dictionary, citations). Desktop and iPad. |
-| `/log` | Learning journal → automatic flashcards with spaced repetition (Leitner boxes). |
+| `/log` | Full mode (flashcards only on phones). Learning journal → automatic flashcards with spaced repetition (Leitner boxes). |
 | `/errorlog` | Mistake log, grouped by subject. |
-| `/settings` | Connections, preferences, pause Otto, **AI usage (this month's cost)**, data export, account deletion. |
-| `/admin` | Usage metrics. Only for accounts listed in `ADMIN_EMAILS`. |
+| `/settings` | Language, level, Pronote (and Google/Notion in full mode), pause Otto and AI usage (full mode), the full-mode switch, data export, account deletion. |
+| `/full` | Opens full mode for the signed-in account. |
 | `/privacy`, `/terms`, `/research` | Legal and methodology pages. |
 
 **Otto does on its own (reversible):** revision notes, step checklists, research, email drafts.
@@ -39,7 +45,7 @@ client/                 React + Vite app
   App.tsx               Shell: routing, task sync, the Today dashboard
   appShared.tsx         Helpers several pages use (navigate, Logo, account cleanup)
   pages/                One file per page: Settings, Journal, MistakeLog, Flashcards, Onboarding, Login,
-                        Landing, Legal, Admin, StudyEntry, Dashboard widgets
+                        Landing, Legal, StudyEntry, Dashboard widgets
   TaskCard.tsx          Task row, task detail and task chat
   ui.tsx                Shared components (Spinner, ErrorNote, flashcards, quizzes, …)
   study/, tutor/        Study Mode desk and the full-screen tutor
@@ -63,8 +69,9 @@ supabase.sql            Schema, RLS, migrations (idempotent — safe to re-run)
 api/index.mjs           Generated server bundle for Vercel (rebuilt on every deploy; keep it committed)
 ```
 
-**AI providers:** DeepSeek for generation and task execution; Gemini for the tutor chat (DeepSeek fallback)
-and for reading whiteboard photos. Exa for web search (DuckDuckGo/Wikipedia fallback).
+**AI providers:** Gemini Live then OpenAI Realtime for the tutor's voice (the server only mints short-lived tokens);
+DeepSeek for the board writer, typed turns, translations and task execution; Gemini for reading photos.
+Exa for web search (DuckDuckGo/Wikipedia fallback).
 
 ## Run locally
 
@@ -96,16 +103,19 @@ For a throwaway local Supabase project, see the DEV-ONLY block at the bottom of 
 | `CRON_SECRET` | `/api/cron/drain` returns 503, so no background sweeps when the browser is closed |
 | `CREDENTIAL_ENCRYPTION_KEY` | Password-based school portals (Pronote) refuse to connect — credentials are never stored unencrypted. `openssl rand -hex 32` |
 | `RESEND_API_KEY` | Password-reset emails are not sent (`MAIL_FROM` sets the sender) |
-| `GEMINI_API_KEY` | Tutor uses DeepSeek only; "send whiteboard photo to Otto" is hidden |
-| `ADMIN_EMAILS` | Nobody can open `/admin` (comma-separated emails) |
+| `GEMINI_API_KEY` | Live voice (first choice) and reading photos |
+| `OPENAI_API_KEY` | Live voice fallback (OpenAI Realtime) when Gemini fails |
+| `FULL_APP_EMAILS` | Accounts that start in full mode (comma-separated; everyone else starts tutor-only) |
+| `TUTOR_DAILY_LIVE`, `TUTOR_DAILY_LIVE_BOARD` | Per-account daily caps for voice sessions (default 20) and board writes (default 400) |
 | `EXA_API_KEY` | Web search falls back to DuckDuckGo/Wikipedia |
 | `SENTRY_DSN`, `VITE_SENTRY_DSN` | Errors in background jobs are only visible in the function logs |
 
 Optional: `DEEPSEEK_MODEL`, `AI_PROVIDER`/`NVIDIA_API_KEY` (alternative provider), `BLACKBAUD_*` (Blackbaud
 is mock-only for now), `PORT`. See [`.env.example`](.env.example) for the annotated list.
 
-There is **no AI spending cap**: each account's month-to-date cost is shown in Settings, and the per-route
-rate limits are the only throttle.
+There is **no AI spending cap**: each full-mode account's month-to-date cost is shown in Settings, and the per-route
+rate limits and daily voice caps are the throttle. An account with open tasks and nothing checked off for 7 days has its
+AI paused automatically; the next time it opens the app it is asked to restart it.
 
 ## Deploy (Vercel)
 
@@ -120,7 +130,7 @@ Other Node hosts work too: `npm run build && npm start` (a `Dockerfile` is inclu
 ### Production checklist
 
 - Required variables set; `supabase.sql` run on the production database.
-- `CRON_SECRET`, `CREDENTIAL_ENCRYPTION_KEY`, `RESEND_API_KEY`, `ADMIN_EMAILS` and `SENTRY_DSN` set.
+- `CRON_SECRET`, `CREDENTIAL_ENCRYPTION_KEY`, `RESEND_API_KEY`, `GEMINI_API_KEY` and `SENTRY_DSN` set.
 - `/privacy` and `/terms` reachable (required for Google OAuth verification). Gmail/Calendar/Drive are
   sensitive scopes: until Google verifies the app it is capped at 100 users and shows an "unverified app" screen.
 

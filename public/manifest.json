@@ -1,8 +1,8 @@
 {
-  "name": "Otto — tes devoirs en un plan clair",
+  "name": "Otto — the voice tutor",
   "short_name": "Otto",
-  "description": "Otto se branche sur tes devoirs (Pronote, Gmail/Calendar, ou tes propres tâches) et les transforme en un plan clair pour aujourd'hui — il te guide pas à pas, jamais l'exercice à ta place.",
-  "lang": "fr",
+  "description": "A voice tutor with a shared whiteboard. It asks instead of telling.",
+  "lang": "en",
   "start_url": "/",
   "display": "standalone",
   "background_color": "#FFFFFF",
@@ -17,16 +17,16 @@
   "categories": ["productivity", "utilities"],
   "shortcuts": [
     {
-      "name": "Voir mes tâches",
-      "short_name": "Tâches",
-      "description": "Voir ta liste de tâches",
+      "name": "My tasks",
+      "short_name": "Tasks",
+      "description": "See your task list",
       "url": "/tasks",
       "icons": [{ "src": "/favicon.svg", "sizes": "512x512" }]
     },
     {
-      "name": "Réglages",
-      "short_name": "Réglages",
-      "description": "Gérer tes connexions et préférences",
+      "name": "Settings",
+      "short_name": "Settings",
+      "description": "Manage your connections and preferences",
       "url": "/settings",
       "icons": [{ "src": "/favicon.svg", "sizes": "512x512" }]
     }

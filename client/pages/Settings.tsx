@@ -250,6 +250,8 @@ export function SettingsPage({ status, tasks, onSignOut, onChanged, onTasksChang
     }
   };
   const [profileError, setProfileError] = useState(false);
+  const [showSources, setShowSources] = useState(true);
+  const [fullBusy, setFullBusy] = useState(false);
   const loadProfile = () => { setProfileError(false); void api.profile().then(setProfile).catch(() => setProfileError(true)); };
   useEffect(() => { setPausedLocal(status.paused); }, [status.paused]);
   useEffect(() => { loadProfile(); void api.usage().then(setUsage).catch(() => {}); }, []);
@@ -320,10 +322,15 @@ export function SettingsPage({ status, tasks, onSignOut, onChanged, onTasksChang
       </section>
 
       <section className="settings-sec reveal" style={{ ["--d" as any]: "0.07s" }}>
-        <h3>{status.fullApp ? "Sources" : "School"}</h3>
+        <button className="sec-toggle" aria-expanded={showSources} onClick={() => setShowSources((v) => !v)}>
+          <h3>{status.fullApp ? "Sources" : "School"}</h3>
+          <span className={`caret ${showSources ? "open" : ""}`} aria-hidden="true">›</span>
+        </button>
+        {showSources ? <div className="settings-reveal">
         <p className="settings-hint">{status.fullApp ? "Otto reads these sources and preps the work — " : "Connect Pronote so Otto knows what you are studying: your homework (cahier de texte) and the lesson content your teachers publish. "}<b>{"It never sends or hands anything in for you"}</b>.</p>
         <PronoteTile status={status} onStatusUpdate={onStatusUpdate} />
         {status.fullApp ? <GoogleTiles onChanged={onChanged} restricted={profile?.track !== "ib" && profile?.track !== "ap" && profile?.track !== "other"} /> : null}
+        </div> : null}
       </section>
 
       <section className="settings-sec reveal" style={{ ["--d" as any]: "0.09s" }}>
@@ -399,6 +406,20 @@ export function SettingsPage({ status, tasks, onSignOut, onChanged, onTasksChang
           </div>
         )}
       </section> : null}
+
+      <section className="settings-sec reveal">
+        <h3>{"Full mode"}</h3>
+        <div className="set-list">
+          <label className="set-row">
+            <span className="set-text"><b>{"Show the whole app"}</b><span className="settings-hint">{"Off: just the tutor. On: Today, Journal, Coursework, Mistakes and every connection."}</span></span>
+            <span className="switch"><input type="checkbox" checked={!!status.fullApp} disabled={fullBusy} onChange={(e) => {
+              const on = e.target.checked;
+              setFullBusy(true);
+              void api.setFullApp(on).then(() => { onStatusUpdate?.(); onChanged(); }).catch((err: any) => notify(err?.message || "That didn't save — give it another try.", "error")).finally(() => setFullBusy(false));
+            }} /><span className="switch-track" /></span>
+          </label>
+        </div>
+      </section>
     </main>
   );
 }

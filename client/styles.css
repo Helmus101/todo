@@ -5026,3 +5026,4 @@ button[aria-expanded="true"] > .sm-chev { transform: rotate(45deg); }
 .exam-strip-label { font-weight: 800; }
 .autopause-banner { display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; margin: 12px auto 0; max-width: 960px; width: calc(100% - 32px); padding: 14px 18px; border: 1px solid var(--ink); border-radius: 14px; background: var(--surface); font-size: .95rem; }
 .autopause-banner b { font-weight: 800; }
+html[data-i18n="loading"] body { opacity: 0; }

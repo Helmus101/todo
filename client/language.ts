@@ -16,9 +16,8 @@ export function getLanguage(): LangCode {
 }
 export function setLanguage(code: LangCode): void {
   try { localStorage.setItem(KEY, code); } catch { /* storage blocked */ }
-  applyDocument(code);
-  listeners.forEach((f) => f());
-  void translatePage();
+  // A clean reload into the new language: the whole app starts over in it (page and tutor), nothing half-translated.
+  window.location.reload();
 }
 export function useLanguage(): [LangCode, (c: LangCode) => void] {
   const [, force] = useState(0);
@@ -99,7 +98,7 @@ async function flush(code: LangCode) {
     saveTable(code);
     visit(code, document.body);
   } catch { /* stays English */ }
-  if (pending.size) void flush(code);
+  if (pending.size) void flush(code); else settleSoon();
 }
 
 export function translatePage(): Promise<void> {
@@ -111,8 +110,19 @@ export function translatePage(): Promise<void> {
   return Promise.resolve();
 }
 
+// Until the first translation has landed the page is held back (never longer than 2.5 s), so a reload into another language
+// doesn't flash English.
+function hold(on: boolean) { if (on) document.documentElement.setAttribute("data-i18n", "loading"); else document.documentElement.removeAttribute("data-i18n"); }
+function settleSoon() {
+  window.setTimeout(() => {
+    const root = document.getElementById("root");
+    if (!pending.size && root && root.textContent && root.textContent.trim().length > 20) hold(false);
+  }, 60);
+}
+
 export function startTranslator(): void {
   applyDocument(getLanguage());
+  if (getLanguage() !== "en") { hold(true); window.setTimeout(() => hold(false), 2500); }
   void translatePage();
   if (observer) return;
   observer = new MutationObserver((muts) => {
@@ -124,7 +134,7 @@ export function startTranslator(): void {
       loadTable(code);
       for (const m of muts) { if (m.type === "characterData") { if (m.target.parentElement) visit(code, m.target.parentElement); } else m.addedNodes.forEach((nd) => visit(code, nd)); }
       observer?.observe(document.body, { childList: true, subtree: true, characterData: true });
-      if (code !== "en" && pending.size) void flush(code);
+      if (code !== "en" && pending.size) void flush(code); else settleSoon();
     }, 120);
   });
   observer.observe(document.body, { childList: true, subtree: true, characterData: true });

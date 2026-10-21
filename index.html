@@ -3,14 +3,14 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
-    <title>Otto — a voice tutor that asks instead of tells</title>
+    <title>Otto — the voice tutor that never gives you the answer</title>
     <!-- Deliberately NOT Pronote-first: Pronote is one source among several (Gmail/Calendar/Drive, or exams
          the student logs by hand), and a title that named it as the whole premise made the app read as
          unusable to anyone whose school doesn't use it (see the dashboard's own "one option, not the
          premise" copy). The static <head> can't localize per visitor, so this single line has to read
          honestly for both the French Bac crowd (where Pronote is common) and the international/IB crowd
          (where it usually isn't) — hence the source-neutral title and the description that names them all. -->
-    <meta name="description" content="Otto is a voice tutor with a shared whiteboard. It asks instead of telling, explains anything when you are stuck, and writes the working on paper as you go." />
+    <meta name="description" content="Think out loud with Otto, a voice tutor with a shared whiteboard. It asks instead of telling, explains anything when you are stuck, writes the working on paper as you go, and fits your level (SAT, AP, IB, Bac). In 10 languages." />
 <meta name="theme-color" content="#FFFFFF" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
@@ -27,11 +27,14 @@
     <meta name="format-detection" content="telephone=no" />
     <link rel="canonical" href="https://hiotto.vercel.app/" />
     <meta property="og:type" content="website" />
-    <meta property="og:title" content="Otto — a voice tutor that asks instead of tells" />
-    <meta property="og:description" content="Otto is a voice tutor with a shared whiteboard. It asks instead of telling, explains anything when you are stuck, and writes the working on paper as you go." />
+    <meta property="og:title" content="Otto — the voice tutor that never gives you the answer" />
+    <meta property="og:description" content="Think out loud with Otto, a voice tutor with a shared whiteboard. It asks instead of telling, explains anything when you are stuck, writes the working on paper as you go, and fits your level (SAT, AP, IB, Bac). In 10 languages." />
     <meta property="og:url" content="https://hiotto.vercel.app/" />
-    <meta property="og:locale" content="fr_FR" />
-    <meta property="og:locale:alternate" content="en_US" />
+    <meta property="og:locale" content="en_US" />
+    <meta property="og:locale:alternate" content="es_ES" />
+    <meta property="og:locale:alternate" content="fr_FR" />
+    <meta property="og:locale:alternate" content="de_DE" />
+    <meta property="og:locale:alternate" content="pt_BR" />
     <meta property="og:site_name" content="Otto" />
     <!-- Must be an ABSOLUTE url and a real raster image — Twitter/X, LinkedIn, and iMessage link previews
          don't reliably render an SVG for a social card the way a browser tab icon does. -->
@@ -39,8 +42,8 @@
     <meta property="og:image:width" content="1200" />
     <meta property="og:image:height" content="630" />
     <meta name="twitter:card" content="summary_large_image" />
-    <meta name="twitter:title" content="Otto — a voice tutor that asks instead of tells" />
-    <meta name="twitter:description" content="Otto is a voice tutor with a shared whiteboard. It asks instead of telling, explains anything when you are stuck, and writes the working on paper as you go." />
+    <meta name="twitter:title" content="Otto — the voice tutor that never gives you the answer" />
+    <meta name="twitter:description" content="Think out loud with Otto, a voice tutor with a shared whiteboard. It asks instead of telling, explains anything when you are stuck, writes the working on paper as you go, and fits your level (SAT, AP, IB, Bac). In 10 languages." />
     <meta name="twitter:image" content="https://hiotto.vercel.app/og-image.png" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg?v=6" />
     <link rel="manifest" href="/manifest.json" />
@@ -56,9 +59,11 @@
       "@type": "SoftwareApplication",
       "name": "Otto",
       "applicationCategory": "EducationalApplication",
+      "inLanguage": ["en", "zh", "hi", "es", "fr", "ar", "pt", "ru", "de", "ja"],
+      "featureList": ["Voice tutoring with a shared whiteboard", "Socratic questioning, never hands over answers", "SAT, AP, IB and Bac practice at your level", "Typeset maths, graphs and multiple choice", "Tutor sessions kept in your browser"],
       "operatingSystem": "Web",
       "url": "https://hiotto.vercel.app/",
-      "description": "A study companion for French Bac and IB students that reads Pronote, Gmail/Calendar, or manually logged exams and turns homework into a clear, guided plan — never doing the graded work for the student.",
+      "description": "A voice-first Socratic tutor with a shared whiteboard: it asks questions instead of giving answers, explains anything when you are stuck, writes the working on a board, and knows your level, homework and past sessions. Available in 10 languages.",
       "offers": { "@type": "Offer", "price": "0", "priceCurrency": "EUR" },
       "audience": { "@type": "EducationalAudience", "educationalRole": "student" }
     }

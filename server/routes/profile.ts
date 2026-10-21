@@ -165,9 +165,10 @@ export function registerProfileRoutes(app: express.Express): void {
   // /full: opening it unlocks the whole app (Today, Journal, Coursework, Mistakes, Settings…) for this account from then on.
   app.post("/api/full-access", requireAuth, rateLimit(10, 60_000), ah(async (req, res) => {
     const p = (req.session.profile ||= emptyProfile());
-    p.fullAccess = true;
+    p.fullAccess = req.body?.on === false ? false : true;
+    p.fullAccessAt = new Date().toISOString();
     await commit(req);
-    res.json({ ok: true });
+    res.json({ ok: true, fullApp: p.fullAccess });
   }));
 
   app.post("/api/profile/preference", requireAuth, async (req, res) => {

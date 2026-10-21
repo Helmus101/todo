@@ -131,7 +131,8 @@ export interface Profile {
   // turning this off is never a new code path, just always taking the one that already exists.
   betaFeatures?: boolean;
   /** The account opened /full once: it sees the whole app (Today, Journal, Coursework…) from then on. Everyone else gets the tutor only. */
-  fullAccess?: boolean;
+  fullAccess?: boolean;   // true/false = the student's own choice in Settings; unset = the account's default
+  fullAccessAt?: string;
   // Stamped at signup once the required "I'm 15+, or a parent set this up for me" checkbox is checked
   // (server/index.ts's /api/auth/signup rejects signup without it) — a real audit trail for the RGPD
   // Art.8 parental-consent requirement, not just a UI gate that leaves no record.
@@ -500,7 +501,8 @@ export function normalizeProfile(p: any): Profile {
     primaryAccounts: p?.primaryAccounts && typeof p.primaryAccounts === "object"
       ? Object.fromEntries(Object.entries(p.primaryAccounts).filter((e): e is [string, string] => typeof e[1] === "string"))
       : undefined,
-    fullAccess: p?.fullAccess === true ? true : undefined,
+    fullAccess: typeof p?.fullAccess === "boolean" ? p.fullAccess : undefined,
+    fullAccessAt: typeof p?.fullAccessAt === "string" ? p.fullAccessAt : undefined,
     language: "en",
     languageSetAt: typeof p?.languageSetAt === "string" ? p.languageSetAt : undefined,
     preferencesUpdatedAt: typeof p?.preferencesUpdatedAt === "string" ? p.preferencesUpdatedAt : undefined,

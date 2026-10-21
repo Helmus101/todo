@@ -266,8 +266,8 @@ app.get("/api/status", ah(async (req, res) => {
     betaFeatures: !!req.session.profile?.betaFeatures,
     isAdmin: isAdmin(req),
     // THE TUTOR IS THE APP: every account lands on it and sees nothing else, except the owner account(s) and any account that opened /full once.
-    fullApp: FULL_APP_EMAILS.includes(String(req.session.user || "").toLowerCase()) || req.session.profile?.fullAccess === true,
-    home: FULL_APP_EMAILS.includes(String(req.session.user || "").toLowerCase()) ? "tasks" : "tutor",
+    fullApp: typeof req.session.profile?.fullAccess === "boolean" ? req.session.profile.fullAccess : FULL_APP_EMAILS.includes(String(req.session.user || "").toLowerCase()),
+    home: (typeof req.session.profile?.fullAccess === "boolean" ? req.session.profile.fullAccess : FULL_APP_EMAILS.includes(String(req.session.user || "").toLowerCase())) ? "tasks" : "tutor",
     // "Onboarded" = finished/skipped the basic flow, OR an account that clearly predates it (has a name, a track or
     // tasks) — those are never put through name/track questions they've long answered. Page guides still run.
     onboarded: !!req.session.profile?.onboardedAt || !!req.session.profile?.name || !!req.session.profile?.track || (req.session.tasks || []).length > 0,
