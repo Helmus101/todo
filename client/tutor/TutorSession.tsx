@@ -594,10 +594,15 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
     if (!task || endingSession) return;
     setEndingSession(true);
     try {
+      // Hang up first (the microphone must not stay open on a screen that has gone), then give the board writer a moment to finish what was
+      // just said, so the saved session has the last lines.
+      try { liveRef.current.stop(); } catch { /* not on a call */ }
+      try { await Promise.race([boardQueueRef.current, new Promise((r) => setTimeout(r, 4000))]); } catch { /* best effort */ }
+      const latest = taskRef.current || task;
       // Ending must ALWAYS end: a failure while saving the history summary (storage full, an odd board entry)
       // or while dismissing the task server-side must never leave the student stuck on a button that does
       // nothing. Every step is best-effort; the screen is left no matter what.
-      try { saveAndClose(task, sessionStart || task.createdAt || new Date().toISOString(), reflection); } catch (e) { console.warn("[tutor] couldn't save the session summary:", e); }
+      try { saveAndClose(latest, sessionStart || latest.createdAt || new Date().toISOString(), reflection); } catch (e) { console.warn("[tutor] couldn't save the session summary:", e); }
       // Dismiss the freestudy task so the next start creates a fresh one.
       try { await dismissWithRetry(task.id); } catch { /* ghost-cleanup in peekForActiveSession covers it */ }
     } finally {

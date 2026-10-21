@@ -17,7 +17,7 @@ FIRST, in "notes", list in a few words each thing in this exchange that qualifie
 (a) Was a RULE, DEFINITION, FORMULA or IDENTITY stated or confirmed, by the tutor or by the student (even if the student said it in words)? → it is written, in tidy general form.
 (b) Did the student reach a RESULT, expansion, simplification or final answer that the tutor confirmed as right ("exactly", "that's right", "spot on")? → the result line is written (the full line, e.g. the finished expansion). A result counts ONLY if the student reached it BEFORE the tutor's last question: whatever that last question asks them to work out is NOT a result yet (a worked example you would write to answer it is exactly what must not appear).
 (c) Did the tutor pose a PROBLEM or task (a question with maths in it, an expression to evaluate, rewrite, solve, simplify or expand), including in its closing question? → ALWAYS write the problem itself on the board as a task line ("given"), in LaTeX, WITHOUT its answer (for example: "Rewrite $\\log_3(2x+1) = 2$ in exponential form"). Every problem that is posed is on the board, once.
-(d) Would a PICTURE help? → drawn.
+(d) Would a PICTURE help? → DRAW it, in this same pass. Draw whenever graphing, plotting, a curve, a shape, a diagram, a process, a timeline or a cycle comes up, and for any topic that is naturally visual (a function and its inverse, an exponential or log curve, a triangle, supply and demand, a cell): graphs of functions are "graph" ops with the real expressions; anything else is a "geometry", "flow", "table" or "svg" op. At most one new figure per pass; extend an existing graph instead of redrawing it.
 Then put the ops for every item you listed in "board". If a box has nothing, say so in "notes" and write nothing for it.
 
 WRITE ONLY:
@@ -40,6 +40,11 @@ Return: {"notes":["definition: a logarithm is the opposite of an exponent","exam
 
 ${OPS}
 Return ONLY JSON: {"notes":["rule: …","result: …"],"board":[…ops…]}. Every op carries "cue":0. Inside strings write every LaTeX backslash TWICE.`;
+
+/** Someone mentioned graphing, plotting, a curve, a shape or a diagram (or the tutor offered to graph it): a figure belongs on the board. Pure. */
+export function wantsPicture(exchange: string): boolean {
+  return /\b(?:graph(?:ing|ed)?|plot(?:ting|ted)?|sketch|draw(?:ing)?|curve|parabola|diagram|picture|visuali[sz]e|number line|timeline|triangle|circle|cycle|flow ?chart)\b/i.test(exchange);
+}
 
 /** The closing question poses a concrete problem (maths in it, or an instruction like "rewrite / evaluate / solve / simplify / expand"). Pure. */
 export function posesProblem(question: string): boolean {
@@ -92,10 +97,12 @@ export async function writeBoard(input: { exchange: string; board: BoardEntry[];
   // nothing was written (the model was cautious, or the app rejected the ops); (2) the tutor posed a problem and no task line came back.
   const needExplain = !out.board.length && tutorExplained(input.exchange);
   const needProblem = posesProblem(openQuestion) && !out.board.some((e) => e.kind === "given");
-  if (needExplain || needProblem) {
+  const needPicture = canDraw && wantsPicture(input.exchange) && !out.board.some((e) => ["graph", "svg", "diagram", "geometry", "flow", "table", "numberline"].includes(String(e.kind)));
+  if (needExplain || needProblem || needPicture) {
     const why = out.dropped.length ? ` The app rejected these ops: ${out.dropped.slice(0, 3).join("; ")}.` : "";
     const asks = [
       needExplain ? "(You wrote nothing, but the tutor explained something worth keeping." + why + " Write the definition or rule and the worked example the tutor gave as board lines now, never the question it asked.)" : "",
+      needPicture ? "The exchange is about graphing or a picture: DRAW it now (a graph op with the real function, or an svg / geometry / flow op), never leave it as words." : "",
       needProblem ? `The tutor posed a problem and you did not write it: write the problem itself now as a task line (kind "given") in LaTeX, without its answer: ${openQuestion.slice(0, 300)}` : "",
     ].filter(Boolean).join(" ");
     const second = await once(`${asks} Return the same JSON shape.`);
