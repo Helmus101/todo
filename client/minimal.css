@@ -56,7 +56,9 @@ h1 svg, h2 svg, h3 svg, [class*="title"] svg, [class*="empty"] svg, .brand svg, 
 
 /* page rhythm: one column, generous whitespace, no dividers except where they separate items */
 .list-wrap, main { max-width: 640px; margin-left: auto; margin-right: auto; }
-.tutor-stage, .ts-board-body, .studylog-page { max-width: none; }
+.tutor-stage, .ts-board-body { max-width: none; }
+/* Journal sits in the same centred column as Settings and the other pages. */
+.studylog-page { max-width: 640px; width: 100%; margin-left: auto; margin-right: auto; }
 hr { border: 0; border-top: 1px solid var(--line-soft); }
 
 /* landing */

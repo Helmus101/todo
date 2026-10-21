@@ -5076,3 +5076,15 @@ html[data-i18n="loading"] body { opacity: 0; }
 .tutor-subject-suggest button.on { color: var(--ink) !important; font-weight: 700; }
 
 .landing-ask-logo { flex: none; }
+/* Journal, minimal: plain text days, one writing area, summaries folded away. */
+.studylog-days { display: flex !important; justify-content: space-between; gap: 0 !important; border-bottom: 1px solid var(--line); }
+.studylog-day-btn { flex-direction: column !important; align-items: center !important; border: 0 !important; border-radius: 0 !important; background: none !important; color: var(--ink-3) !important; padding: 8px 4px 10px !important; border-bottom: 2px solid transparent !important; margin-bottom: -1px; }
+.studylog-day-btn.active { background: none !important; color: var(--ink) !important; border-bottom-color: var(--ink) !important; }
+.studylog-day-btn.active .studylog-day-date { color: var(--ink-2); }
+.studylog-day-btn.is-today:not(.active) { border-color: transparent !important; color: var(--ink-2) !important; }
+.studylog-day-btn.active.has-entry span:first-child::after { background: var(--ink); }
+.studylog-textarea { background: transparent !important; border: 0 !important; border-bottom: 1px solid var(--line) !important; border-radius: 0 !important; padding: var(--space-3) 0 !important; min-height: 240px; }
+.studylog-summary-sec { border: 0 !important; background: none !important; padding: var(--space-3) 0 !important; border-top: 1px solid var(--line) !important; border-radius: 0 !important; }
+.studylog-more { margin-top: var(--space-4); }
+.studylog-more > summary { cursor: pointer; color: var(--ink-2); font-size: 14px; padding: 6px 0; }
+.studylog-tabs { margin: 0 0 var(--space-2) !important; }

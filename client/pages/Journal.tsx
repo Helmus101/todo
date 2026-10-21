@@ -352,7 +352,7 @@ export function StudyLogPage({ lang, tasks, status, phoneOnly }: { lang?: "fr" |
       <h1 className="list-head">{phoneOnly ? "Your flashcards" : "Journal"}</h1>
       <p className="page-sub mt-3">{phoneOnly
         ? "Review your flashcards here — the rest of Otto works better on a bigger screen."
-        : "What clicked today? Write it down once, remember it for good."}</p>
+        : "What clicked today?"}</p>
 
       {/* Same .seg/.seg-btn segmented-control pattern as Pronote's Student/Parent picker — one visual
           language for every binary switcher in the app, not a second bespoke tab style. Hidden on phone:
@@ -367,8 +367,6 @@ export function StudyLogPage({ lang, tasks, status, phoneOnly }: { lang?: "fr" |
           for review," reported live as "i never see this." The cross-task /api/reviews/due signal already
           existed but was buried in the dashboard's "This week" popover, nowhere near the Journal tab where
           these decks actually live. */}
-      {!phoneOnly && <DueReviews lang={lang} tasks={tasks} />}
-      {!phoneOnly && <MilestonesStrip lang={lang} />}
 
       {phoneOnly || tab === "flashcards" ? <FlashcardsLibraryPage lang={lang} tasks={tasks} embedded userId={status?.user || null} /> : (
       <>
@@ -455,6 +453,8 @@ export function StudyLogPage({ lang, tasks, status, phoneOnly }: { lang?: "fr" |
             </>
           )}
 
+          <details className="studylog-more">
+            <summary>{"Week and month summaries"}</summary>
           <div className="studylog-summary-sec">
             <h3>{"Week summary"}</h3>
             {summaryDeck ? (
@@ -486,6 +486,7 @@ export function StudyLogPage({ lang, tasks, status, phoneOnly }: { lang?: "fr" |
             )}
             {monthWeeks.length === 0 ? <p className="settings-hint">{"Build at least one week summary this month first."}</p> : null}
           </div>
+          </details>
         </>
       )}
 
