@@ -72,7 +72,7 @@ export async function runTutorTurnSim(check, section) {
       calls.length = 0;
       script = () => ({ board: [{ op: "topic", cue: 0, text: "Quadratics" }, { op: "step", cue: 0, text: "Solve $x^2 - 5x + 6 = 0$", kind: "given" }, { op: "step", cue: 0, text: "$(x-2)(x-3) = 0$", kind: "formula" }] });
       const r = await writeBoard({ exchange: "Student: solve x squared minus five x plus six equals zero\nTutor: What two numbers multiply to six and add to minus five?", board: [], subject: "Math" }, { in: 0, out: 0, cachedIn: 0 });
-      check("the board writer turns one exchange into board entries (topic, the problem typeset, a line)", r.board.length >= 2 && r.board.some((e) => /x\^2/.test(String(e.text))) && calls.length === 1 && /NEVER WRITE: questions, hints/.test(calls[0].messages[0].content));
+      check("the board writer turns one exchange into board entries (topic, the problem typeset, a line)", r.board.length >= 2 && r.board.some((e) => /x\^2/.test(String(e.text))) && calls.length === 1 && /NEVER WRITE: the tutor's questions, hints/.test(calls[0].messages[0].content) && /WRITE IT/.test(calls[0].messages[0].content) && /log_2 8 = 3/.test(calls[0].messages[0].content));
       script = () => ({ board: [] });
       const e = await writeBoard({ exchange: "Student: hello\nTutor: Hi! What are you working on?", board: [], subject: "Math" }, { in: 0, out: 0, cachedIn: 0 });
       check("small talk writes nothing", e.board.length === 0);

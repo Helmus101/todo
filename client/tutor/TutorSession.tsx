@@ -469,6 +469,7 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
   taskRef.current = task;
   const turnsRef = useRef<{ who: "you" | "otto"; text: string }[]>([]);
   const boardQueueRef = useRef<Promise<void>>(Promise.resolve());
+  const [boardNote, setBoardNote] = useState<string | null>(null); // shown when the board writer fails, so a missing line is never a silent mystery
   const onLiveTurn = useCallback((who: "you" | "otto", text: string) => {
     const t = taskRef.current;
     if (!t || !text.trim()) return;
@@ -487,6 +488,7 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
       try {
         const lean = (t.board || []).slice(-40).map((e) => (JSON.stringify(e).length > 6000 ? { ...e, svg: undefined } : e));
         const r = await api.liveBoard(exchangeText(turns), lean, t.sourceSubject);
+        setBoardNote(null);
         if (!r.board?.length) return;
         const cur = taskRef.current!;
         const merged = mergeBoardById(cur.board || [], r.board);
@@ -494,7 +496,7 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
         setLocalBoard(cur.id, merged, userId);
         taskRef.current = { ...cur, board: merged };
         setTask((prev) => (prev ? { ...prev, board: merged } : prev));
-      } catch { /* the board is a bonus: the conversation carries on */ }
+      } catch (e: any) { setBoardNote(e?.status === 429 ? "Today's board limit is reached — the voice still works." : "The board couldn't be updated just now."); }
     });
   }, [userId]);
   const live = useGeminiLive({
@@ -1040,7 +1042,7 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
           </div>
         )}
           <LiveBar
-            status={liveStatus} speaking={live.speaking} thinking={false} muted={live.muted} error={live.error}
+            status={liveStatus} speaking={live.speaking} thinking={false} muted={live.muted} error={live.error || boardNote}
             caption={liveStatus === "live" ? caption : lastOttoText ? { who: "otto", text: lastOttoText } : null}
             sending={sending} blocked={live.blocked} onResume={live.resumePlayback}
             onStart={() => void live.start()} onStop={live.stop} onMute={live.setMuted}
