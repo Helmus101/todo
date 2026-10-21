@@ -1,3 +1,5 @@
+import { extractPdfTextLimited } from "../study/pdfText.ts";
+import { COURSEWORK_MAX_CHARS, COURSEWORK_MAX_PAGES } from "../../shared/coursework.ts";
 import { getLanguage } from "../language.ts";
 import { useCallback, useContext, useEffect, useRef, useState } from "react";
 import { ChevronRight, ChevronDown, Maximize2, Minimize2, MessageSquare, Mic } from "lucide-react";
@@ -518,6 +520,10 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
       } catch (e: any) { setBoardNote(e?.status === 429 ? "Today's board limit is reached — the voice still works." : "The board couldn't be updated just now."); }
     }).finally(() => { setBoardPending((n) => Math.max(0, n - 1)); setBoardPromised(false); });
   }, [userId]);
+  // Sharing a worksheet, a PDF or a photo of the problem: it is read, kept with the student's coursework (so Otto knows it in later sessions
+  // too) and handed to Otto, who starts from it.
+  const [attaching, setAttaching] = useState(false);
+  const attachRef = useRef<(files: File[]) => void>(() => {});
   const live = useGeminiLive({
     subject: task?.sourceSubject,
     pastSessions: task ? sessionMemoryForPrompt(pastSessions, task.sourceSubject, Date.now(), openerLang) : undefined,
@@ -531,6 +537,51 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
   });
   const liveRef = useRef(live);
   liveRef.current = live;
+  const toDataUrl = (file: File, max = 1400): Promise<string> => new Promise((resolve, reject) => {
+    const r = new FileReader();
+    r.onerror = () => reject(r.error);
+    r.onload = () => {
+      const img = new Image();
+      img.onerror = () => reject(new Error("That image couldn't be read."));
+      img.onload = () => {
+        const k = Math.min(1, max / Math.max(img.width, img.height));
+        const c = document.createElement("canvas"); c.width = Math.round(img.width * k); c.height = Math.round(img.height * k);
+        c.getContext("2d")!.drawImage(img, 0, 0, c.width, c.height);
+        resolve(c.toDataURL("image/jpeg", 0.85));
+      };
+      img.src = String(r.result);
+    };
+    r.readAsDataURL(file);
+  });
+  attachRef.current = async (files: File[]) => {
+    const t = taskRef.current;
+    if (!t || attaching) return;
+    setAttaching(true); setBoardNote(null);
+    try {
+      for (const file of files.slice(0, 3)) {
+        if (file.size > 25 * 1024 * 1024) { setBoardNote(`${file.name} is too big (25 MB max).`); continue; }
+        const name = file.name.replace(/\.[a-z0-9]+$/i, "");
+        let note: string;
+        if (file.type.startsWith("image/")) {
+          const dataUrl = await toDataUrl(file);
+          let description = "";
+          try { description = (await api.readPhoto(dataUrl)).description.slice(0, 3000); } catch { /* the voice can still look at the picture itself */ }
+          if (liveRef.current.status === "live") liveRef.current.sendImage(dataUrl);
+          note = `(I'm sharing a photo: ${name}.${description ? ` What it shows: ${description}` : ""} Look at it, tell me in a few words what you see, and start from it: ask me what I want to do with it.)`;
+        } else {
+          const isPdf = file.type === "application/pdf" || /\.pdf$/i.test(file.name);
+          const read = isPdf ? await extractPdfTextLimited(file, COURSEWORK_MAX_PAGES, COURSEWORK_MAX_CHARS) : (() => file.text().then((raw) => ({ text: raw.slice(0, COURSEWORK_MAX_CHARS), pages: 1, totalPages: undefined as number | undefined, truncated: raw.length > COURSEWORK_MAX_CHARS })))();
+          const doc = await read;
+          if (doc.text.trim().length < 40) { setBoardNote(`${file.name} has no readable text (a scan?). Share a clear photo of it instead.`); continue; }
+          try { await api.uploadCoursework({ subject: t.sourceSubject || "Other", name, text: doc.text, pages: doc.pages, totalPages: doc.totalPages, truncated: doc.truncated }); } catch { /* it still goes to Otto for this session */ }
+          note = `(I'm sharing a document: "${name}". Its text: ${doc.text.replace(/\s+/g, " ").slice(0, 6000)}${doc.truncated ? " …(only the start was read)" : ""} Start from it: say in one sentence what it is, then ask me what I want to do with it. Do not solve its questions for me.)`;
+        }
+        if (liveRef.current.status === "live") { onLiveTurn("you", `📎 ${file.name}`); liveRef.current.sendText(note); }
+        else void sendRef.current(note, false);
+      }
+    } catch (e: any) { setBoardNote(e?.message || "That file couldn't be shared."); }
+    finally { setAttaching(false); }
+  };
   // Not on a call (no Gemini key, mic blocked, typed message): the last thing Otto wrote shows where the live caption would be.
   const lastOttoRaw = [...(task?.chat || [])].reverse().find((m) => m.role === "assistant")?.text || "";
   const lastOttoText = lastOttoRaw ? lastOttoRaw.slice(0, 400) : ""; // kept as written: maths in $…$ is typeset in the caption
@@ -1071,6 +1122,7 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
             onStart={() => void live.start()} onStop={live.stop} onMute={live.setMuted}
             onType={(t) => { if (liveStatus === "live") { onLiveTurn("you", t); live.sendText(t); } else void send(t, false); }}
             onHistory={() => setChatDrawer((v) => !v)} historyCount={task.chat?.length || 0}
+            onAttach={(f) => attachRef.current(f)} attaching={attaching}
           />
       </div>
       {reflectOpen && (

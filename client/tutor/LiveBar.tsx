@@ -1,6 +1,7 @@
 import { OttoAvatar } from "./OttoAvatar.tsx";
 import { useState } from "react";
-import { ArrowUp, History, Keyboard, Mic, MicOff, PhoneOff, Play } from "lucide-react";
+import { useRef } from "react";
+import { ArrowUp, History, Keyboard, Mic, MicOff, Paperclip, PhoneOff, Play } from "lucide-react";
 import type { LiveStatus } from "./live/useGeminiLive.ts";
 import { MathText } from "../study/artifacts/BoardArtifact.tsx";
 
@@ -23,7 +24,11 @@ export function LiveBar(p: {
   /** The browser is holding the voice back until a tap (like Socra's play button). */
   blocked?: boolean;
   onResume?: () => void;
+  /** Files the student picked (a worksheet, a PDF, a photo of the problem). */
+  onAttach?: (files: File[]) => void;
+  attaching?: boolean;
 }) {
+  const fileRef = useRef<HTMLInputElement>(null);
   const [typing, setTyping] = useState(false);
   const [text, setText] = useState("");
   const live = p.status === "live";
@@ -56,6 +61,12 @@ export function LiveBar(p: {
           <span>{connecting ? "Cancel" : live ? "Voice on" : p.status === "unavailable" ? "Try voice again" : "Voice mode"}</span>
         </button>
         {p.blocked ? <button type="button" className="live-icon-btn live-play" onClick={p.onResume} aria-label="Play Otto's voice" title="Play Otto's voice"><Play size={18} aria-hidden="true" /></button> : null}
+        {p.onAttach ? (
+          <>
+            <input ref={fileRef} type="file" multiple hidden accept="application/pdf,image/*,.txt,.md,.csv" onChange={(e) => { const f = Array.from(e.target.files || []); if (f.length) p.onAttach!(f); e.target.value = ""; }} />
+            <button type="button" className="live-icon-btn" disabled={p.attaching} onClick={() => fileRef.current?.click()} aria-label="Share a document or photo" title="Share a document or photo"><Paperclip size={18} aria-hidden="true" /></button>
+          </>
+        ) : null}
         <button type="button" className="live-icon-btn" onClick={() => setTyping((t) => !t)} aria-pressed={typing} aria-label="Type instead" title="Type instead"><Keyboard size={18} aria-hidden="true" /></button>
         <button type="button" className="live-icon-btn" onClick={p.onHistory} aria-label="Conversation" title="Conversation"><History size={18} aria-hidden="true" />{p.historyCount ? <span className="live-count">{p.historyCount}</span> : null}</button>
       </div>
