@@ -59,9 +59,11 @@ export function registerTutorRoutes(app: express.Express): void {
     try {
       const { GoogleGenAI } = await import("@google/genai");
       const ai = new GoogleGenAI({ apiKey: key });
-      const token = await ai.authTokens.create({ config: { uses: 1, expireTime: new Date(Date.now() + 35 * 60_000).toISOString(), newSessionExpireTime: new Date(Date.now() + 60_000).toISOString() } });
+      const token = await ai.authTokens.create({ config: { uses: 3, expireTime: new Date(Date.now() + 35 * 60_000).toISOString(), newSessionExpireTime: new Date(Date.now() + 60_000).toISOString() } });
       if (!token?.name) throw new Error("no token returned");
-      res.json({ token: token.name, model: process.env.GEMINI_LIVE_MODEL || "gemini-3.8-live" });
+      // Model ids change often; the browser tries them in order until Google accepts one (a configured id always goes first).
+      const models = [...new Set([process.env.GEMINI_LIVE_MODEL, "gemini-3.8-live", "gemini-live-2.5-flash-native-audio", "gemini-2.5-flash-native-audio-preview-09-2025"].filter((m): m is string => !!m))];
+      res.json({ token: token.name, model: models[0], models });
     } catch (e: any) {
       console.warn(`[live] token request failed: ${String(e?.message || e).slice(0, 160)}`);
       res.status(502).json({ error: "Live voice isn't available right now.", code: "live_unavailable" });

@@ -298,7 +298,7 @@ export const api = {
   // needs to reach the student as a real message ("nothing's configured" / "try drawing it bigger"), not
   // silently vanish, since this is the one thing they actually asked Otto to look at.
   /** A short-lived, single-use credential for the live voice (Gemini Live). 503/502 means live voice is unavailable: the classic voice takes over. */
-  liveToken: (): Promise<{ token: string; model: string }> => post("/api/tutor/live/token", {}),
+  liveToken: (): Promise<{ token: string; model: string; models?: string[] }> => post("/api/tutor/live/token", {}),
   readWhiteboard: (image: string, context?: string): Promise<{ description: string }> => post("/api/tutor/read-whiteboard", { image, context }),
   uploadCoursework: (body: { subject: string; name: string; text: string; pages: number; totalPages?: number; truncated?: boolean }): Promise<{ doc: CourseworkDoc; tasks: { id: string; title: string }[]; profile: Profile; aiSummarized: boolean }> =>
     post("/api/coursework", body).then((r: any) => ({ ...r, profile: normalizeProfile(r.profile) })),

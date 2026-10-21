@@ -58,22 +58,36 @@ export function useGeminiLive(opts: LiveOptions) {
       if (!aliveRef.current) return;
       const ai = new GoogleGenAI({ apiKey: tok.token });
       const o = optsRef.current;
-      const session = await ai.live.connect({
-        model: tok.model,
-        config: {
-          responseModalities: [Modality.AUDIO],
-          systemInstruction: liveInstructions({ subject: o.subject, level: o.level, opener: o.opener, resuming: o.resuming }),
-          inputAudioTranscription: {},
-          outputAudioTranscription: {},
-          tools: [{ functionDeclarations: [ASK_OTTO_DECLARATION as any] }],
-        } as any,
-        callbacks: {
-          onopen: () => { /* the first server message confirms */ },
-          onmessage: (msg: any) => handle(msg),
-          onerror: (e: any) => { if (aliveRef.current) { setError(String(e?.message || "The voice connection failed.")); teardown("unavailable"); } },
-          onclose: () => { if (aliveRef.current) teardown("ended"); },
-        },
-      });
+      const config = {
+        responseModalities: [Modality.AUDIO],
+        systemInstruction: liveInstructions({ subject: o.subject, level: o.level, opener: o.opener, resuming: o.resuming }),
+        inputAudioTranscription: {},
+        outputAudioTranscription: {},
+        tools: [{ functionDeclarations: [ASK_OTTO_DECLARATION as any] }],
+      } as any;
+      // Try the model ids in order: Google renames its live models often, so one that is refused (not found / not supported) just moves on.
+      let session: any = null, lastErr = "";
+      for (const model of tok.models?.length ? tok.models : [tok.model]) {
+        if (!aliveRef.current) return;
+        try {
+          session = await new Promise<any>((resolve, reject) => {
+            let opened: any = null, settled = false;
+            const done = (fn: () => void) => { if (!settled) { settled = true; clearTimeout(timer); fn(); } };
+            const timer = setTimeout(() => done(() => { try { opened?.close(); } catch { /* */ } reject(new Error("timeout")); }), 10_000);
+            ai.live.connect({
+              model, config,
+              callbacks: {
+                onopen: () => {},
+                onmessage: (msg: any) => { if (msg.setupComplete && !settled) { done(() => resolve(opened)); return; } if (settled) handle(msg); },
+                onerror: (e: any) => { if (!settled) done(() => reject(new Error(String(e?.message || "error")))); else if (aliveRef.current) { setError(String(e?.message || "The voice connection failed.")); teardown("unavailable"); } },
+                onclose: (e: any) => { if (!settled) done(() => reject(new Error(String(e?.reason || "closed")))); else if (aliveRef.current) teardown("ended"); },
+              },
+            }).then((sess: any) => { opened = sess; }, (e: any) => done(() => reject(e)));
+          });
+          break;
+        } catch (e: any) { lastErr = String(e?.message || e); session = null; }
+      }
+      if (!session) throw Object.assign(new Error(lastErr || "Live voice isn't available right now."), { status: 503 });
       if (!aliveRef.current) { try { session.close(); } catch { /* */ } return; }
       sessionRef.current = session;
       micRef.current = await startMic((b64) => { try { sessionRef.current?.sendRealtimeInput({ audio: { data: b64, mimeType: "audio/pcm;rate=16000" } }); } catch { /* socket closing */ } });
