@@ -31,4 +31,4 @@ jobs:
       # yet, allowlist it explicitly (`npm audit --audit-level=high --omit-audit-...`/a `.nsprc`-style
       # exception) rather than reintroducing `|| true` here.
       - name: Dependency audit (blocking on high/critical)
-        run: npm audit --audit-level=high
+        run: node scripts/audit-check.mjs # npm audit --omit=dev; fails on any high/critical except the allowlisted node-forge advisory (reason in the script)
