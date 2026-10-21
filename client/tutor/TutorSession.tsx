@@ -512,7 +512,7 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
   liveRef.current = live;
   // Not on a call (no Gemini key, mic blocked, typed message): the last thing Otto wrote shows where the live caption would be.
   const lastOttoRaw = [...(task?.chat || [])].reverse().find((m) => m.role === "assistant")?.text || "";
-  const lastOttoText = lastOttoRaw ? toSpeakableText(lastOttoRaw).slice(0, 400) : "";
+  const lastOttoText = lastOttoRaw ? lastOttoRaw.slice(0, 400) : ""; // kept as written: maths in $…$ is typeset in the caption
   const liveStatus = live.status;
   useEffect(() => {
     setVoiceState({ listening: liveStatus === "live" && !live.speaking && !live.muted, speaking: live.speaking, voiceModeOn: liveStatus === "live", interim: "" });

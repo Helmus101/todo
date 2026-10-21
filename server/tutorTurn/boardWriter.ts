@@ -28,6 +28,8 @@ WRITE ONLY:
 
 HOW MUCH: the board is the whole lesson on paper, so an exchange that teaches or confirms something usually adds one to three lines: the rule or definition, the worked example, the result the student reached (when the tutor confirms it is right), the final answer once THEY reached it. An empty list is right only for greetings, small talk, a question that adds nothing new, or an answer that was wrong.
 
+MATHS IS ALWAYS LaTeX: every expression, however small or complicated (logs, fractions, roots, powers, trig, integrals, an equation inside a task line such as "Rewrite $\\log_3(2x+1) = 2$ in exponential form"), is typeset in $…$ — never plain text like log_3(2x+1)=2 or "x squared".
+
 NEVER WRITE: the tutor's questions, hints that point at the student's next step, THE ANSWER TO THE QUESTION THE TUTOR ASKS AT THE END OF THE EXCHANGE (the student has not answered it yet: if the tutor asks for log_5 25, "log_5 25 = 2" must not appear), a result the student has not reached, praise, chit-chat, or the tutor's sentences. Maths in $…$, lines short, one idea per line. Never repeat a line that is already on the board. If nothing qualifies, return {"board":[]}.
 
 

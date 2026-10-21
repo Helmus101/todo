@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { ArrowUp, History, Keyboard, Mic, MicOff, PhoneOff, Play } from "lucide-react";
 import type { LiveStatus } from "./live/useGeminiLive.ts";
+import { MathText } from "../study/artifacts/BoardArtifact.tsx";
 
 /** The voice bar under the board: Otto's presence, one line of what is being said, and the few controls a call needs. Typing is a
  *  small side door, not the main way in. */
@@ -39,7 +40,7 @@ export function LiveBar(p: {
     <div className="live-bar" data-state={mood}>
       <div className="live-bar-main">
         <span className="live-orb" aria-hidden="true" style={live || connecting ? { width: 72, height: 72 } : undefined} />
-        <p className={`live-caption${p.error ? " is-error" : ""}${p.caption?.who === "you" && !p.thinking ? " is-you" : ""}`} role="status" aria-live="polite">{line}</p>
+        <p className={`live-caption${p.error ? " is-error" : ""}${p.caption?.who === "you" && !p.thinking ? " is-you" : ""}`} role="status" aria-live="polite">{!p.error && !connecting && !p.sending && p.caption?.who === "otto" && /\$/.test(p.caption.text) ? <MathText text={p.caption.text.slice(-320)} /> : line}</p>
       </div>
       {typing ? (
         <div className="live-type">
