@@ -136,7 +136,8 @@ export function registerTutorRoutes(app: express.Express): void {
     const subject = typeof req.body?.subject === "string" ? req.body.subject.trim().slice(0, 80) : "";
     const tokens = { in: 0, out: 0, cachedIn: 0 };
     try {
-      const out = await writeBoard({ exchange, board, subject }, tokens);
+      const history = typeof req.body?.history === "string" ? req.body.history.slice(-3000) : "";
+      const out = await writeBoard({ exchange, board, subject, history }, tokens);
       const profile = req.session.profile || emptyProfile();
       addUsage(profile, tokens, "chat");
       res.json({ board: out.board });

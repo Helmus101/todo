@@ -146,6 +146,18 @@ export function ResearchPageBody() {
         <p className="research-sec-body">
           {"Reading an answer teaches you almost nothing. Explaining your reasoning out loud teaches you the most. That is why Otto is a voice tutor: every reply is one short question that pulls you one level deeper — never shallower."}
         </p>
+        <p className="research-sec-body">
+          {"Saying it out loud works for three reasons the research keeps finding:"}
+        </p>
+        <p className="research-sec-body">
+          {"You learn more from explaining than from reading. Students who explained worked examples to themselves, aloud, solved later problems better than students who only read them (Chi et al., 1989)."}
+        </p>
+        <p className="research-sec-body">
+          {"What you say is remembered better. Words read aloud are remembered better than the same words read silently — the production effect (MacLeod et al., 2010)."}
+        </p>
+        <p className="research-sec-body">
+          {"Speaking shows you your own gaps. People feel they understand how things work until they have to explain it step by step, and then they find out they don't (Rozenblit & Keil, 2002). Otto uses exactly that moment to ask the next question."}
+        </p>
         </section>
 
         <section className="research-sec">

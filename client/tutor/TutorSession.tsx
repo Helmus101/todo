@@ -487,7 +487,8 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
       if (!t) return;
       try {
         const lean = (t.board || []).slice(-40).map((e) => (JSON.stringify(e).length > 6000 ? { ...e, svg: undefined } : e));
-        const r = await api.liveBoard(exchangeText(turns), lean, t.sourceSubject);
+        // A slow board call must never hold up the ones behind it: after 40 s it is given up on.
+        const r = await Promise.race([api.liveBoard(exchangeText(turns), lean, t.sourceSubject, exchangeText((t.chat || []).slice(-14, Math.max(0, (t.chat || []).length - turns.length)).map((m) => ({ who: m.role === "user" ? "you" as const : "otto" as const, text: String(m.text || "").slice(0, 400) })))), new Promise<{ board: any[] }>((_, rej) => setTimeout(() => rej(new Error("board timeout")), 40_000))]);
         setBoardNote(null);
         if (!r.board?.length) return;
         const cur = taskRef.current!;

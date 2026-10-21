@@ -73,6 +73,17 @@ export async function runTutorTurnSim(check, section) {
       script = () => ({ board: [{ op: "topic", cue: 0, text: "Quadratics" }, { op: "step", cue: 0, text: "Solve $x^2 - 5x + 6 = 0$", kind: "given" }, { op: "step", cue: 0, text: "$(x-2)(x-3) = 0$", kind: "formula" }] });
       const r = await writeBoard({ exchange: "Student: solve x squared minus five x plus six equals zero\nTutor: What two numbers multiply to six and add to minus five?", board: [], subject: "Math" }, { in: 0, out: 0, cachedIn: 0 });
       check("the board writer turns one exchange into board entries (topic, the problem typeset, a line)", r.board.length >= 2 && r.board.some((e) => /x\^2/.test(String(e.text))) && calls.length === 1 && /NEVER WRITE: the tutor's questions, hints/.test(calls[0].messages[0].content) && /WRITE IT/.test(calls[0].messages[0].content) && /log_2 8 = 3/.test(calls[0].messages[0].content));
+      { const { tutorExplained } = await import("../server/tutorTurn/boardWriter.ts");
+        const logEx = "Student: I don't get logarithms\nTutor: To start from scratch, think of a logarithm as the opposite of an exponent. For example, since 2 to the power of 3 is 8, the logarithm base 2 of 8 is 3. What do you think the logarithm base 3 of 9 would be?";
+        check("an exchange where the tutor explained something with an example is recognised; small talk and a bare question are not", tutorExplained(logEx) && !tutorExplained("Student: hi\nTutor: Hi! What are you working on today?") && !tutorExplained("Student: x is 3\nTutor: Why does that work?"));
+        calls.length = 0;
+        script = (b, i) => (i === 0 ? { board: [] } : { board: [{ op: "step", cue: 0, text: "A logarithm is the opposite of an exponent: $\\log_b x = y \\iff b^y = x$", kind: "definition" }, { op: "step", cue: 0, text: "$2^3 = 8 \\implies \\log_2 8 = 3$", kind: "formula" }] });
+        const lg = await writeBoard({ exchange: logEx, board: [], subject: "Math" }, { in: 0, out: 0, cachedIn: 0 });
+        check("when the tutor explained something and the first pass wrote nothing, the writer is asked once more and the explanation lands on the board", calls.length === 2 && lg.board.length === 2 && /nothing, but the tutor explained/.test(calls[1].messages.at(-1).content));
+        calls.length = 0;
+        script = () => ({ board: [] });
+        const sm = await writeBoard({ exchange: "Student: hello\nTutor: Hi! What are you working on today?", board: [], subject: "Math" }, { in: 0, out: 0, cachedIn: 0 });
+        check("small talk costs only one call and writes nothing", calls.length === 1 && sm.board.length === 0); }
       script = () => ({ board: [] });
       const e = await writeBoard({ exchange: "Student: hello\nTutor: Hi! What are you working on?", board: [], subject: "Math" }, { in: 0, out: 0, cachedIn: 0 });
       check("small talk writes nothing", e.board.length === 0);
