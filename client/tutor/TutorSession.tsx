@@ -910,6 +910,12 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
               <Mic size={18} aria-hidden="true" />{startingSession ? "Starting…" : chosenSubject ? `Start talking · ${chosenSubject}` : "Pick a subject to start"}
             </button>
           </div>
+          {device.status !== "unsupported" ? (
+            <div className="tutor-start-device">
+              <DeviceButton status={device.status} onConnect={device.connect} onDisconnect={device.disconnect} en={"en" === "en"} />
+              <span className="settings-hint">{device.status === "connected" ? "Otto device connected: press its button to start or stop the tutor." : "Have the Otto device? Click the USB icon to connect it."}</span>
+            </div>
+          ) : null}
           {error ? <p className="tutor-error" role="alert">{error}</p> : null}
 
 

@@ -244,3 +244,8 @@ h1 { font-family: var(--display); font-weight: 400; letter-spacing: -0.025em; }
   .blog-list li { padding-left: 0; }
   .blog-list li::before { position: static; display: block; margin-bottom: var(--space-2); }
 }
+
+/* Start screen: the Otto device pill sits under the start button, with a one-line hint. */
+.tutor-start-device { display: flex; align-items: center; justify-content: center; gap: 8px; margin-top: var(--space-4); }
+.tutor-start-device .tutor-device-pill { margin: 0; }
+.tutor-start-device .settings-hint { margin: 0; }
