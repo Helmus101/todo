@@ -5686,7 +5686,7 @@ section("Phone restriction — flashcard review + READ-ONLY tasks, no chat; iPad
 
   const app = appSource();
   check("App.tsx imports the shared useIsPhone hook", /import \{ useIsPhone \} from "\.\/useIsPhone\.ts"/.test(app));
-  check("tasks + flashcards + settings are reachable on phone; anything else redirects to the task list", /PHONE_ALLOWED_ROUTES\s*=\s*\["", "tasks", "log", "settings", "tutor", "exercises"\]/.test(app) && /r\.startsWith\("task\/"\)/.test(app) && /!phoneRouteAllowed\(route\)\) navigate\("tasks"\)/.test(app));
+  check("tasks + flashcards + settings are reachable on phone; anything else redirects to the task list", /PHONE_ALLOWED_ROUTES\s*=\s*\["", "tasks", "log", "settings", "tutor", "exercises", "full"\]/.test(app) && /r\.startsWith\("task\/"\)/.test(app) && /!phoneRouteAllowed\(route\)\) navigate\("tasks"\)/.test(app));
   check("Tutor/Study/Error log/Admin stay hidden on phone, but Tasks does NOT", /\{!isPhone && <a[\s\S]{0,200}href="\/errorlog"/.test(app) && !/\{!isPhone && <a[\s\S]{0,200}href="\/tasks"/.test(app));
   // The point of the phone task view: READ it, don't work on it. No chat (TaskFocus owns the chat), no
   // ticking steps off, no Study Mode, no dismiss, no add-task.
@@ -6965,6 +6965,16 @@ section("Live voice (Gemini Live) — audio helpers, the voice's instructions, t
   const ts = readFileSync(new URL("../client/tutor/TutorSession.tsx", import.meta.url), "utf8");
   check("the live hook: credential and instructions from the token route, v1alpha, several model ids tried, 16 kHz mic audio, playback stops when interrupted, images go in as video frames, typed text goes in as a turn", /api\.liveToken\(/.test(hook) && /apiVersion: "v1alpha"/.test(hook) && /setupComplete/.test(hook) && /audio\/pcm;rate=16000/.test(hook) && /sc\.interrupted\) \{ player\.interrupt\(\)/.test(hook) && /sendRealtimeInput\(\{ video/.test(hook) && /sendClientContent/.test(hook));
   check("the tutor page: the call's transcript is kept as chat, each finished exchange goes to the board writer, drawings go to the voice as pictures, typed text while live goes to the voice, and unavailable live falls back to the classic dock", /onTurn: onLiveTurn/.test(ts) && /api\.liveBoard\(/.test(ts) && /canvasRef\.current\?\.snapshot\(\)/.test(ts) && /live\.sendText\(t\)/.test(ts) && /liveStatus === "unavailable"/.test(ts) && /<AskOttoPanel/.test(ts) && /<LiveBar/.test(ts)); }
+
+section("Tutor first — only the owner account and accounts that opened /full see the rest of the app (source pins)");
+{ const idx = readFileSync(new URL("../server/index.ts", import.meta.url), "utf8");
+  const prof = readFileSync(new URL("../server/routes/profile.ts", import.meta.url), "utf8");
+  const app = readFileSync(new URL("../client/App.tsx", import.meta.url), "utf8");
+  const types = readFileSync(new URL("../shared/types.ts", import.meta.url), "utf8");
+  const tasksSrc = readFileSync(new URL("../server/tasks.ts", import.meta.url), "utf8");
+  check("the owner account is phillipe@gafsi.net by default (FULL_APP_EMAILS overrides); status says fullApp and where to land (tutor for everyone else)", /FULL_APP_EMAILS = \(process\.env\.FULL_APP_EMAILS \|\| "phillipe@gafsi\.net"\)/.test(idx) && /fullApp: FULL_APP_EMAILS\.includes\(String\(req\.session\.user \|\| ""\)\.toLowerCase\(\)\) \|\| req\.session\.profile\?\.fullAccess === true/.test(idx) && /home: FULL_APP_EMAILS\.includes\([^)]*\)[^?]*\? "tasks" : "tutor"/.test(idx));
+  check("opening /full records fullAccess on the account (login required, rate-limited), and the flag survives profile normalising and merging across devices", /"\/api\/full-access", requireAuth, rateLimit\(10, 60_000\)/.test(prof) && /p\.fullAccess = true/.test(prof) && /fullAccess: p\?\.fullAccess === true \? true : undefined/.test(types) && /fullAccess: p1\.fullAccess \|\| p2\.fullAccess \? true : undefined/.test(tasksSrc));
+  check("the client: non-full accounts are sent to the tutor from every other page, /full unlocks then lands on Today, the nav shows only 'Sign out' until then, and a signed-out /full visit returns to /full after login", /if \(!fullApp\) \{ \}|const ok = route === "tutor" \|\| route\.startsWith\("tutor\/session\/"\) \|\| route === "full"/.test(app) && /if \(!ok\) navigate\("tutor"\)/.test(app) && /api\.enableFullApp\(\)/.test(app) && /\{!fullApp \? \(/.test(app) && /navigate\(status\.home === "tasks" \? "tasks" : "tutor"\)/.test(app) && /onDone=\{async \(\) => \{ signedOutRef\.current = false; await loadStatus\(\); navigate\(route\); \}\}/.test(app)); }
 
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

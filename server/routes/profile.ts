@@ -161,6 +161,14 @@ export function registerProfileRoutes(app: express.Express): void {
       res.status(500).json({ error: "Couldn't save — try again." }); }
   });
 
+  // /full: opening it unlocks the whole app (Today, Journal, Coursework, Mistakes, Settings…) for this account from then on.
+  app.post("/api/full-access", requireAuth, rateLimit(10, 60_000), ah(async (req, res) => {
+    const p = (req.session.profile ||= emptyProfile());
+    p.fullAccess = true;
+    await commit(req);
+    res.json({ ok: true });
+  }));
+
   app.post("/api/profile/preference", requireAuth, async (req, res) => {
     try {
       const p = (req.session.profile ||= emptyProfile());

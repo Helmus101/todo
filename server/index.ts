@@ -13,6 +13,9 @@ import { loadState, cloudEnabled, makeSessionStore } from "./store.ts";
 import * as integrations from "./integrations.ts";
 import * as pronoteSvc from "./pronote.ts";
 import { PROD, ah, isAdmin, scheduler } from "./http.ts";
+
+/** Accounts that always see the whole app (the others get the tutor only, until they open /full). Comma-separated in FULL_APP_EMAILS. */
+const FULL_APP_EMAILS = (process.env.FULL_APP_EMAILS || "phillipe@gafsi.net").split(",").map((e) => e.trim().toLowerCase()).filter(Boolean);
 import { registerAuthRoutes } from "./routes/auth.ts";
 import { registerIntegrationRoutes } from "./routes/integrations.ts";
 import { registerTaskRoutes } from "./routes/tasks.ts";
@@ -254,6 +257,9 @@ app.get("/api/status", ah(async (req, res) => {
     customTheme: req.session.profile?.customTheme,
     betaFeatures: !!req.session.profile?.betaFeatures,
     isAdmin: isAdmin(req),
+    // THE TUTOR IS THE APP: every account lands on it and sees nothing else, except the owner account(s) and any account that opened /full once.
+    fullApp: FULL_APP_EMAILS.includes(String(req.session.user || "").toLowerCase()) || req.session.profile?.fullAccess === true,
+    home: FULL_APP_EMAILS.includes(String(req.session.user || "").toLowerCase()) ? "tasks" : "tutor",
     // "Onboarded" = finished/skipped the basic flow, OR an account that clearly predates it (has a name, a track or
     // tasks) — those are never put through name/track questions they've long answered. Page guides still run.
     onboarded: !!req.session.profile?.onboardedAt || !!req.session.profile?.name || !!req.session.profile?.track || (req.session.tasks || []).length > 0,

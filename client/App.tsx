@@ -221,7 +221,7 @@ export function App() {
   // Dense workspaces remain restricted, but tutor is intentionally designed as a single-column, touch-first
   // surface and must be reachable from a phone without being redirected back to Today.
   const isPhone = useIsPhone();
-  const PHONE_ALLOWED_ROUTES = ["", "tasks", "log", "settings", "tutor", "exercises"];
+  const PHONE_ALLOWED_ROUTES = ["", "tasks", "log", "settings", "tutor", "exercises", "full"];
   const phoneRouteAllowed = (r: string) => PHONE_ALLOWED_ROUTES.includes(r) || r.startsWith("task/") || r.startsWith("tutor/session/");
   useEffect(() => {
     if (isPhone && status?.loggedIn && !phoneRouteAllowed(route)) navigate("tasks");
@@ -691,7 +691,21 @@ export function App() {
   };
 
   // Signed in, the dashboard lives at /tasks. Redirect the bare "/" there (landing only shows signed-OUT).
-  useEffect(() => { if (status?.loggedIn && route === "") navigate("tasks"); }, [status?.loggedIn, route]);
+  useEffect(() => { if (status?.loggedIn && route === "") navigate(status.home === "tasks" ? "tasks" : "tutor"); }, [status?.loggedIn, status?.home, route]);
+  // THE TUTOR IS THE APP: an account that isn't the owner and hasn't opened /full only ever sees the tutor (and /full, the legal pages).
+  const fullApp = !!status?.fullApp;
+  useEffect(() => {
+    if (!status?.loggedIn || fullApp) return;
+    const ok = route === "tutor" || route.startsWith("tutor/session/") || route === "full" || route === "privacy" || route === "terms" || route === "research";
+    if (!ok) navigate("tutor");
+  }, [status?.loggedIn, fullApp, route]);
+  // /full: unlock everything for this account, then show Today.
+  useEffect(() => {
+    if (route !== "full" || !status?.loggedIn) return;
+    let cancelled = false;
+    (async () => { try { if (!fullApp) await api.enableFullApp(); await loadStatus(); if (!cancelled) navigate("tasks"); } catch { if (!cancelled) navigate("tutor"); } })();
+    return () => { cancelled = true; };
+  }, [route, status?.loggedIn]);
 
   // Auto-capture the browser's timezone once it differs from what's stored — so all "local day" math on the
   // server (sweep cadence, daily-minimum) is correct without ever asking the user. Fires only on a real change.
@@ -787,7 +801,7 @@ export function App() {
               // state regardless, so this mainly protects the NEXT reload (closing and reopening the tab)
               // from starting on stale data again.
               if (isNew) { clearAllLocalAccountData(null); await onNewAccount(); startOnboard(); }
-              await loadStatus(); navigate("tasks");
+              await loadStatus(); navigate("");
             }} initialMode={route === "signup" ? "signup" : route === "reset-password" ? "reset" : "login"} />
           : route === "" || route === "/"
           ? <Landing lang={preLoginLang} onLangChange={setLandingLang} />
@@ -895,7 +909,10 @@ export function App() {
           own breadcrumb row ("All sessions / Mathematics … End session") below this header, and the stage
           subtracts --topnav-h from the viewport so it still fits exactly. */}
       <header className="topnav">
-        <a className="topnav-brand" href="/tasks">otto</a>
+        <a className="topnav-brand" href={fullApp && status?.home === "tasks" ? "/tasks" : "/tutor"}>otto</a>
+        {!fullApp ? (
+          <nav className="topnav-links"><button type="button" className="topnav-link" onClick={() => void signOut()}>{"Sign out"}</button></nav>
+        ) : (
         <nav className="topnav-links">
           <a
             className={`topnav-link ${route === "" || route === "tasks" || route.startsWith("task/") ? "active" : ""}`}
@@ -932,6 +949,7 @@ export function App() {
             </div>
           </details>
         </nav>
+        )}
       </header>
 
       {/* Main content area */}
@@ -957,7 +975,9 @@ export function App() {
         return <PageTour key={id} id={id} steps={TOURS[id]} ready={!onboard} />;
       })()}
 
-      {route === "settings" ? (
+      {route === "full" ? (
+        <p className="muted" style={{ padding: "48px 24px", textAlign: "center" }} role="status">{"Opening everything…"}</p>
+      ) : route === "settings" ? (
         <SettingsPage status={status} tasks={tasks} onSignOut={signOut} onChanged={loadStatus} onTasksChanged={setTasks} onStatusUpdate={loadStatus} onReplayOnboarding={replayOnboarding} />
       ) : route === "log" ? (
         <StudyLogPage lang={status?.language} tasks={tasks} status={status} phoneOnly={isPhone} />

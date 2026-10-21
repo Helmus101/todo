@@ -130,6 +130,8 @@ export interface Profile {
   // falls back to the exact same safe default it already uses today when its own live call fails, so
   // turning this off is never a new code path, just always taking the one that already exists.
   betaFeatures?: boolean;
+  /** The account opened /full once: it sees the whole app (Today, Journal, Coursework…) from then on. Everyone else gets the tutor only. */
+  fullAccess?: boolean;
   // Stamped at signup once the required "I'm 15+, or a parent set this up for me" checkbox is checked
   // (server/index.ts's /api/auth/signup rejects signup without it) — a real audit trail for the RGPD
   // Art.8 parental-consent requirement, not just a UI gate that leaves no record.
@@ -494,6 +496,7 @@ export function normalizeProfile(p: any): Profile {
     primaryAccounts: p?.primaryAccounts && typeof p.primaryAccounts === "object"
       ? Object.fromEntries(Object.entries(p.primaryAccounts).filter((e): e is [string, string] => typeof e[1] === "string"))
       : undefined,
+    fullAccess: p?.fullAccess === true ? true : undefined,
     language: "en",
     languageSetAt: typeof p?.languageSetAt === "string" ? p.languageSetAt : undefined,
     preferencesUpdatedAt: typeof p?.preferencesUpdatedAt === "string" ? p.preferencesUpdatedAt : undefined,
@@ -2157,6 +2160,8 @@ export interface ConnectionStatus {
   customTheme?: ThemeTokens;  // AI-personalized theme override, if the student opted in (see validateThemeTokens)
   onboarded?: boolean;  // the basic onboarding has been finished/skipped (or the account clearly predates it)
   toursSeen?: string[]; // page guides already shown on this account (Profile.toursSeen)
+  fullApp?: boolean;          // this account sees every page (the owner account, or it opened /full); everyone else gets the tutor only
+  home?: "tutor" | "tasks";   // where a signed-in visit lands
   betaFeatures?: boolean;     // opt-in gate for bandit personalization / focus camera / AI theme — see Profile's own doc comment
   isAdmin?: boolean;          // this account is listed in the server's ADMIN_EMAILS
   language?: "fr" | "en";     // the account's UI + AI-content language (Settings toggle) — defaults "fr"
