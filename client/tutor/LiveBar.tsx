@@ -1,3 +1,4 @@
+import { OttoAvatar } from "./OttoAvatar.tsx";
 import { useState } from "react";
 import { ArrowUp, History, Keyboard, Mic, MicOff, PhoneOff, Play } from "lucide-react";
 import type { LiveStatus } from "./live/useGeminiLive.ts";
@@ -39,7 +40,7 @@ export function LiveBar(p: {
   return (
     <div className="live-bar" data-state={mood}>
       <div className="live-bar-main">
-        <span className="live-orb" aria-hidden="true" style={live || connecting ? { width: 72, height: 72 } : undefined} />
+        <span className="live-orb" aria-hidden="true"><OttoAvatar mood={mood} size={live || connecting ? 72 : 56} /></span>
         <p className={`live-caption${p.error ? " is-error" : ""}${p.caption?.who === "you" && !p.thinking ? " is-you" : ""}`} role="status" aria-live="polite">{!p.error && !connecting && !p.sending && p.caption?.who === "otto" && /\$/.test(p.caption.text) ? <MathText text={p.caption.text.slice(-320)} /> : line}</p>
       </div>
       {typing ? (

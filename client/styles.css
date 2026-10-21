@@ -4914,9 +4914,7 @@ button[aria-expanded="true"] > .sm-chev { transform: rotate(45deg); }
 /* (!important: a global `button { background: transparent !important }` reset would otherwise make these invisible) */
 .live-main-btn { display: inline-flex; align-items: center; gap: 8px; height: 44px; min-width: 160px; padding: 0 20px; border-radius: 999px; border: 0; background: var(--accent) !important; color: #fff !important; font: inherit; font-weight: 600; cursor: pointer; justify-content: center; }
 .live-main-btn.is-on { background: var(--bg-2) !important; color: var(--ink) !important; box-shadow: 0 0 0 1px var(--line) inset; }
-.live-orb { position: relative; flex: none; width: 56px; height: 56px; border-radius: 50%; background-color: #e0a23a; background-image: radial-gradient(circle at 35% 30%, #fde7b0, #e0a23a 55%, #b45309) !important; box-shadow: 0 0 40px rgba(180,83,9,.25) !important; }
-.live-bar[data-state="listening"] .live-orb::after, .live-bar[data-state="speaking"] .live-orb::after { content: ""; position: absolute; inset: 0; border-radius: 50%; border: 2px solid #b45309; animation: otto-ripple 1.6s ease-out infinite; }
-.live-bar[data-state="thinking"] .live-orb { animation: live-breathe 1.4s ease-in-out infinite; }
+.live-orb { position: relative; flex: none; display: inline-flex; align-items: center; justify-content: center; min-width: 56px; min-height: 56px; }
 .live-bar[data-state="idle"] .live-orb { opacity: .85; }
 @keyframes live-breathe { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.1); } }
 @media (prefers-reduced-motion: reduce) { .live-orb, .live-orb::after { animation: none !important; } }
@@ -4968,3 +4966,16 @@ button[aria-expanded="true"] > .sm-chev { transform: rotate(45deg); }
 .sm-choice-opt.on { border-color: var(--accent); background-color: var(--accent-soft, #f4f1ec) !important; }
 .sm-choice-letter { flex: none; width: 26px; height: 26px; border-radius: 50%; display: grid; place-items: center; font-size: 13px; font-weight: 600; border: 1px solid var(--line); }
 .sm-choice-opt.on .sm-choice-letter { background-color: var(--accent) !important; color: #fff !important; border-color: var(--accent); }
+/* Otto's face in the voice bar: the global avatar rules hide decorative avatars, this one is the tutor's presence. */
+.live-orb .otto-avatar { display: inline-grid !important; }
+.live-orb .tutor-face { display: inline-flex !important; background: #f3efe6 !important; border: 1px solid #d9d2c3 !important; }
+.live-orb .tutor-face-eye { background: #2b2a27 !important; }
+.live-bar[data-state="listening"] .otto-avatar::after { content: ""; position: absolute; inset: -4px; border-radius: 50%; border: 2px solid #2b2a27; opacity: .5; animation: otto-ripple 1.6s ease-out infinite; }
+/* Board layout: a definition is a quiet card, a formula or result stands on its own line, calculations stay tight. */
+.sm-board-body .sm-board-entry { padding-top: var(--space-2); padding-bottom: var(--space-2); }
+.sm-board-body .sm-board-entry-definition .sm-board-entry-main { padding: var(--space-2) var(--space-3); border-left: 3px solid #cfc7b4; background: rgba(120,100,60,.06) !important; border-radius: 0 6px 6px 0; }
+.sm-board-body .sm-board-entry-definition .sm-board-line, .sm-board-body .sm-board-entry-formula .sm-board-line, .sm-board-body .sm-board-entry-strategy .sm-board-line { font-weight: 500; }
+.sm-board-body .sm-board-entry-formula .sm-board-entry-main, .sm-board-body .sm-board-entry-result .sm-board-entry-main { padding-left: var(--space-3); }
+.sm-board-body .sm-board-entry-result .sm-board-line { font-weight: 600; }
+.sm-board-body .sm-board-line .katex { font-size: 1.1em; }
+.sm-board-body .sm-board-entry-focus { margin-top: var(--space-5); }

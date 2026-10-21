@@ -469,6 +469,10 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
   taskRef.current = task;
   const turnsRef = useRef<{ who: "you" | "otto"; text: string }[]>([]);
   const boardQueueRef = useRef<Promise<void>>(Promise.resolve());
+  // "Otto is writing…" shows on the board from the moment the tutor promises something on it until the board writer has landed it.
+  const [boardPending, setBoardPending] = useState(0);
+  const [boardPromised, setBoardPromised] = useState(false);
+  useEffect(() => { if (!boardPromised) return; const t = setTimeout(() => setBoardPromised(false), 25_000); return () => clearTimeout(t); }, [boardPromised]);
   const [boardNote, setBoardNote] = useState<string | null>(null); // shown when the board writer fails, so a missing line is never a silent mystery
   const onLiveTurn = useCallback((who: "you" | "otto", text: string) => {
     const t = taskRef.current;
@@ -482,6 +486,7 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
   const onLiveTurnComplete = useCallback(() => {
     const turns = turnsRef.current.splice(0);
     if (!turns.length) return;
+    setBoardPending((n) => n + 1);
     boardQueueRef.current = boardQueueRef.current.then(async () => {
       const t = taskRef.current;
       if (!t) return;
@@ -498,7 +503,7 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
         taskRef.current = { ...cur, board: merged };
         setTask((prev) => (prev ? { ...prev, board: merged } : prev));
       } catch (e: any) { setBoardNote(e?.status === 429 ? "Today's board limit is reached — the voice still works." : "The board couldn't be updated just now."); }
-    });
+    }).finally(() => { setBoardPending((n) => Math.max(0, n - 1)); setBoardPromised(false); });
   }, [userId]);
   const live = useGeminiLive({
     subject: task?.sourceSubject,
@@ -506,7 +511,10 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
     resuming: (task?.chat?.length || 0) > 0,
     onTurn: onLiveTurn,
     onTurnComplete: onLiveTurnComplete,
-    onPartial: (you, otto) => setCaption(otto ? { who: "otto", text: otto } : you ? { who: "you", text: you } : null),
+    onPartial: (you, otto) => {
+      setCaption(otto ? { who: "otto", text: otto } : you ? { who: "you", text: you } : null);
+      if (otto && /\b(on|onto|to) the board\b|\blet me (draw|write|sketch|show)\b|\bI'?ll (draw|write|sketch)\b/i.test(otto)) setBoardPromised(true);
+    },
   });
   const liveRef = useRef(live);
   liveRef.current = live;
@@ -993,7 +1001,7 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
       })()}
       <section className="ts-canvas" aria-label={"Board"}>
         <div className="tutor-board-body ts-board-body" ref={setSurfaceEl} style={{ display: desmosOpen ? "none" : undefined }}>
-          <BoardArtifact paper onChoice={onChoice} task={task} onUndo={undoCount > 0 ? undoBoard : undefined} writing={sending} onProblemResult={onProblemResult} onCheckProblem={(p, given) => api.checkProblem(task.id, p, given)} onWidgetResult={onWidgetResult} sheetSignal={sheetSignal} onGapCheck={onGapCheck} />
+          <BoardArtifact paper onChoice={onChoice} task={task} onUndo={undoCount > 0 ? undoBoard : undefined} writing={sending || boardPending > 0 || boardPromised} onProblemResult={onProblemResult} onCheckProblem={(p, given) => api.checkProblem(task.id, p, given)} onWidgetResult={onWidgetResult} sheetSignal={sheetSignal} onGapCheck={onGapCheck} />
         </div>
         {/* Desmos stays mounted once opened (an iframe that's removed reloads blank, losing the student's graph). */}
         {desmosOpen || desmosEverOpenedRef.current ? (

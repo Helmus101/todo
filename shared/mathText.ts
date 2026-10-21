@@ -14,7 +14,7 @@ const isMathToken = (t: string): boolean => {
   // a subscripted variable ("F_{net}", "W_{net}", "v_0") is maths: its subscript letters ("net", "down") read
   // as an ordinary word below, so the token counted as prose and broke the line into fragments — reported live,
   // "F_{net} = 12 − 2 − 3(9.8)sin(20^\circ )" printed as "F_{net} $= 12 - 2 -$ 3(9.8)sin(20^circ )".
-  if (/^[A-Za-z]{1,4}(?:_\{?[A-Za-z0-9]{1,6}\}?){1,3}$/.test(bare)) return true;
+  if (/^[A-Za-z]{1,4}(?:_\{?[A-Za-z0-9]{1,6}\}?){1,3}$/.test(bare) || /^[A-Za-z]{1,4}_\{[A-Za-z0-9]{1,6},[A-Za-z0-9]{1,8}\}?$/.test(bare)) return true;
   // A LaTeX command ANYWHERE in the token makes its letters commands, not words ("20^\circ", "3\tfrac12"):
   // strip the command names before the prose scan, or "circ" reads as an ordinary word and the token drops
   // out of the maths run (which also let stripBackslashesOutsideMath turn "\circ" into "circ").
@@ -64,7 +64,7 @@ const BRACED = (() => { let g = "\\{[^{}]*\\}"; for (let i = 0; i < 3; i++) g = 
 // match, because a head must be followed by the command immediately, and wrapRawLatex's own guard below still
 // refuses a run with no operator or digit in it.
 const MATH_HEAD = `[A-Za-z]{1,4}(?:_\\{?[A-Za-z0-9]{1,6}\\}?)\\s*[=+\\-*/^]?\\s*(?:[A-Za-z]{1,4}(?:_\\{?[A-Za-z0-9]{1,6}\\}?)?\\s*[=+\\-*/^]?\\s*)*`;
-const RAW_LATEX_RUN = new RegExp(`(?:${MATH_HEAD})?\\\\[a-zA-Z]+(?:\\s*${BRACED}|\\s*\\\\[a-zA-Z]+|\\s*[A-Za-z](?![A-Za-z])|[\\d+\\-*/().=^_,:πθμ√∞°\\s])+`, "g");
+const RAW_LATEX_RUN = new RegExp(`(?:${MATH_HEAD})?\\\\[a-zA-Z]+(?:\\s*${BRACED}|\\s*\\\\[a-zA-Z]+|\\s*[A-Za-z]{1,3}\\^\\{?[\\dA-Za-z]+\\}?|\\s*[A-Za-z](?![A-Za-z])|[\\d+\\-*/().=^_,:πθμ√∞°\\s])+`, "g");
 
 /** A bare LaTeX run the model wrote WITHOUT $…$ (reported live on the board: "x = \tfracπ3, \tfrac5π3"
  *  printed as raw commands, or as jammed plain text). Wrap such a run in $…$ so KaTeX typesets it instead.
@@ -124,6 +124,8 @@ export function autoMathLine(line: string): string {
   }
   // Bare LaTeX first: without this the line trips the early return below and the commands are printed
   // literally (or read as prose) instead of typesetting.
+  // E_(k,after) → E_{k,after}: a parenthesised subscript is how models type it in plain text.
+  line = line.replace(/(?<![A-Za-z])([A-Za-z])_\(([^()$]{1,12})\)/g, "$1_{$2}");
   line = typesetLogPhrases(line);
   line = wrapRawLatex(line);
   if (/\$|\\\(|\\\[|\\[a-zA-Z]+\{/.test(line)) return stripBackslashesOutsideMath(line);

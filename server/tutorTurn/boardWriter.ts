@@ -32,6 +32,8 @@ HOW MUCH: the board is the whole lesson on paper, so an exchange that teaches or
 
 MATHS IS ALWAYS LaTeX: every expression, however small or complicated (logs, fractions, roots, powers, trig, integrals, an equation inside a task line such as "Rewrite $\\log_3(2x+1) = 2$ in exponential form"), is typeset in $…$ — never plain text like log_3(2x+1)=2 or "x squared".
 
+LAYOUT: write it like a clean page of notes. A heading (topic) when the subject changes. Prose lines stay short (under about 14 words) and carry ONE idea. An equation goes on its own line, with the label before it in the previous line or a short lead-in ("Kinetic energy:" then the equation on the next line), never buried in the middle of a sentence. A calculation is one step per line, each line the previous result simplified. Subscripts are written $E_{k,\\text{after}}$, never E_(k,after). Use kind "definition" for a definition, "formula" for a rule or equation, "given" for the numbers in the problem, "result" for what was found. Do not write two lines that say the same thing in different words.
+
 NEVER WRITE: the tutor's questions, hints that point at the student's next step, THE ANSWER TO THE QUESTION THE TUTOR ASKS AT THE END OF THE EXCHANGE (the student has not answered it yet: if the tutor asks for log_5 25, "log_5 25 = 2" must not appear), a result the student has not reached, praise, chit-chat, or the tutor's sentences. Maths in $…$, lines short, one idea per line. Never repeat a line that is already on the board. If nothing qualifies, return {"board":[]}.
 
 
