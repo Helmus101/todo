@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { ArrowUp, History, Keyboard, Mic, MicOff, PhoneOff } from "lucide-react";
+import { ArrowUp, History, Keyboard, Mic, MicOff, PhoneOff, Play } from "lucide-react";
 import type { LiveStatus } from "./live/useGeminiLive.ts";
 
 /** The voice bar under the board: Otto's presence, one line of what is being said, and the few controls a call needs. Typing is a
@@ -18,6 +18,9 @@ export function LiveBar(p: {
   onType: (text: string) => void;
   onHistory: () => void;
   historyCount: number;
+  /** The browser is holding the voice back until a tap (like Socra's play button). */
+  blocked?: boolean;
+  onResume?: () => void;
 }) {
   const [typing, setTyping] = useState(false);
   const [text, setText] = useState("");
@@ -49,6 +52,7 @@ export function LiveBar(p: {
           {live || connecting ? <PhoneOff size={18} aria-hidden="true" /> : <Mic size={18} aria-hidden="true" />}
           <span>{connecting ? "Cancel" : live ? "Voice on" : "Voice mode"}</span>
         </button>
+        {p.blocked ? <button type="button" className="live-icon-btn live-play" onClick={p.onResume} aria-label="Play Otto's voice" title="Play Otto's voice"><Play size={18} aria-hidden="true" /></button> : null}
         <button type="button" className="live-icon-btn" onClick={() => setTyping((t) => !t)} aria-pressed={typing} aria-label="Type instead" title="Type instead"><Keyboard size={18} aria-hidden="true" /></button>
         <button type="button" className="live-icon-btn" onClick={p.onHistory} aria-label="Conversation" title="Conversation"><History size={18} aria-hidden="true" />{p.historyCount ? <span className="live-count">{p.historyCount}</span> : null}</button>
       </div>

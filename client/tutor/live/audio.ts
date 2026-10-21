@@ -43,6 +43,7 @@ export class Player {
   private next = 0;
   private live = new Set<AudioBufferSourceNode>();
   constructor(private onSpeaking: (s: boolean) => void) {}
+  get state(): AudioContextState | "none" { return this.ctx ? this.ctx.state : "none"; }
   /** Call from a click so the browser allows sound. */
   unlock() { if (!this.ctx) this.ctx = new AudioContext(); if (this.ctx.state === "suspended") void this.ctx.resume(); }
   push(b64: string) {

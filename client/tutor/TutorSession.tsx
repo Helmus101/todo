@@ -1041,6 +1041,8 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
           </div>
         )}
         {liveStatus === "unavailable" ? (
+          <>
+          {live.error ? <p className="live-fallback-note" role="status">{live.error} Using the basic voice instead.</p> : null}
           <AskOttoPanel
             variant="dock"
             task={task} currentStep={undefined} input={input} setInput={setInput} sending={sending}
@@ -1052,10 +1054,11 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
             onVoiceStateChange={handleVoiceState}
             talkRequest={talkRequest}
           />
+          </>
         ) : (
           <LiveBar
             status={liveStatus} speaking={live.speaking} thinking={live.thinking} muted={live.muted} caption={caption} error={live.error}
-            sending={sending}
+            sending={sending} blocked={live.blocked} onResume={live.resumePlayback}
             onStart={() => void live.start()} onStop={live.stop} onMute={live.setMuted}
             onType={(t) => { void (async () => { const out = await send(t, true); if (out && liveStatus === "live") live.say(toSpeakableText(out.reply)); })(); }}
             onHistory={() => setChatDrawer((v) => !v)} historyCount={task.chat?.length || 0}

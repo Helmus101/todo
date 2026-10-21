@@ -27,6 +27,7 @@ export function useGeminiLive(opts: LiveOptions) {
   const [speaking, setSpeaking] = useState(false);
   const [muted, setMutedState] = useState(false);
   const [thinking, setThinking] = useState(false);
+  const [blocked, setBlocked] = useState(false); // the browser is holding the sound back until the student taps (Safari, or no earlier click on the page)
   const sessionRef = useRef<any>(null);
   const micRef = useRef<Mic | null>(null);
   const playerRef = useRef<Player | null>(null);
@@ -40,7 +41,7 @@ export function useGeminiLive(opts: LiveOptions) {
     sessionRef.current = null;
     micRef.current?.stop(); micRef.current = null;
     playerRef.current?.close(); playerRef.current = null;
-    setSpeaking(false); setThinking(false); setMutedState(false);
+    setSpeaking(false); setThinking(false); setMutedState(false); setBlocked(false);
     setStatus(next);
   }, []);
 
@@ -92,6 +93,7 @@ export function useGeminiLive(opts: LiveOptions) {
       sessionRef.current = session;
       micRef.current = await startMic((b64) => { try { sessionRef.current?.sendRealtimeInput({ audio: { data: b64, mimeType: "audio/pcm;rate=16000" } }); } catch { /* socket closing */ } });
       setStatus("live");
+      window.setTimeout(() => { if (aliveRef.current && player.state !== "running") setBlocked(true); }, 800);
       // The model speaks first: nudge it with a plain text turn so it greets from the opening line.
       session.sendClientContent({ turns: [{ role: "user", parts: [{ text: "(The student has just joined. Begin now.)" }] }], turnComplete: true });
     } catch (e: any) {
@@ -105,7 +107,7 @@ export function useGeminiLive(opts: LiveOptions) {
       const sc = msg.serverContent;
       if (sc) {
         if (sc.interrupted) { player.interrupt(); }
-        for (const p of sc.modelTurn?.parts || []) if (p.inlineData?.data) player.push(p.inlineData.data);
+        for (const p of sc.modelTurn?.parts || []) if (p.inlineData?.data) { player.push(p.inlineData.data); if (player.state === "suspended") setBlocked(true); }
         if (sc.inputTranscription?.text) { heardRef.current += sc.inputTranscription.text; optsRef.current.onCaption?.("you", heardRef.current, false); }
         if (sc.outputTranscription?.text) { saidRef.current += sc.outputTranscription.text; optsRef.current.onCaption?.("otto", saidRef.current, false); }
         if (sc.turnComplete) {
@@ -141,8 +143,10 @@ export function useGeminiLive(opts: LiveOptions) {
     if (!aliveRef.current || !text.trim()) return;
     try { sessionRef.current?.sendClientContent({ turns: [{ role: "user", parts: [{ text: sayThis(text) }] }], turnComplete: true }); } catch { /* closing */ }
   }, []);
+  /** The play button: one tap lets the browser play Otto's voice. */
+  const resumePlayback = useCallback(() => { playerRef.current?.unlock(); setBlocked(false); }, []);
   const level = useCallback(() => micRef.current?.level() ?? 0, []);
 
   useEffect(() => () => { if (aliveRef.current) teardown("ended"); }, [teardown]);
-  return { status, error, speaking, muted, thinking, start, stop, setMuted, say, level };
+  return { status, error, speaking, muted, thinking, blocked, start, stop, setMuted, say, level, resumePlayback };
 }

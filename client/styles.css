@@ -4940,3 +4940,4 @@ button[aria-expanded="true"] > .sm-chev { transform: rotate(45deg); }
 @keyframes otto-write-in { from { opacity: 0; transform: translateY(6px); filter: blur(2px); } to { opacity: 1; transform: none; filter: none; } }
 .tutor-stage .sm-board-reveal { animation: otto-write-in .5s ease-out both; }
 @media (prefers-reduced-motion: reduce) { .tutor-stage .sm-board-reveal { animation: none; } }
+.live-fallback-note { margin: 0 0 6px; text-align: center; font-size: 13px; color: var(--ink-2); }
