@@ -105,8 +105,6 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
   // The stage hides the transcript on purpose, but it is always one tap away: this drawer.
   const [chatDrawer, setChatDrawer] = useState(false);
   // End-of-session reflection (IB "reflective"): before a real session closes, one optional question.
-  const [reflectOpen, setReflectOpen] = useState(false);
-  const [reflectText, setReflectText] = useState("");
   const chatEndRef = useRef<HTMLDivElement>(null);
   useEffect(() => { if (chatDrawer) chatEndRef.current?.scrollIntoView({ block: "end" }); }, [chatDrawer, task?.chat?.length]);
   // The landing screen asks WHAT to study before starting — the subject is stamped onto the session
@@ -484,6 +482,7 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
   taskRef.current = task;
   const turnsRef = useRef<{ who: "you" | "otto"; text: string }[]>([]);
   const boardQueueRef = useRef<Promise<void>>(Promise.resolve());
+  const endedTaskRef = useRef<WebTask | null>(null);
   // "Otto is writing…" shows on the board from the moment the tutor promises something on it until the board writer has landed it.
   const [boardPending, setBoardPending] = useState(0);
   const [boardPromised, setBoardPromised] = useState(false);
@@ -502,8 +501,10 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
     const turns = turnsRef.current.splice(0);
     if (!turns.length) return;
     setBoardPending((n) => n + 1);
+    const forId = taskRef.current?.id; // lines belong to the session they were said in, even if it has ended or another has started
+    const sessionTask = () => (taskRef.current?.id === forId ? taskRef.current : endedTaskRef.current?.id === forId ? endedTaskRef.current : null);
     boardQueueRef.current = boardQueueRef.current.then(async () => {
-      const t = taskRef.current;
+      const t = sessionTask();
       if (!t) return;
       try {
         const lean = (t.board || []).slice(-40).map((e) => (JSON.stringify(e).length > 6000 ? { ...e, svg: undefined } : e));
@@ -511,12 +512,13 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
         const r = await Promise.race([api.liveBoard(exchangeText(turns), lean, t.sourceSubject, exchangeText((t.chat || []).slice(-14, Math.max(0, (t.chat || []).length - turns.length)).map((m) => ({ who: m.role === "user" ? "you" as const : "otto" as const, text: String(m.text || "").slice(0, 400) }))), getLanguage()), new Promise<{ board: any[] }>((_, rej) => setTimeout(() => rej(new Error("board timeout")), 40_000))]);
         setBoardNote(null);
         if (!r.board?.length) return;
-        const cur = taskRef.current!;
+        const cur = sessionTask();
+        if (!cur) return;
         const merged = mergeBoardById(cur.board || [], r.board);
         if ((cur.board || []).length) { boardHistoryRef.current = [...boardHistoryRef.current, { taskId: cur.id, board: cur.board || [] }].slice(-20); setUndoCount(boardHistoryRef.current.length); }
         setLocalBoard(cur.id, merged, userId);
-        taskRef.current = { ...cur, board: merged };
-        setTask((prev) => (prev ? { ...prev, board: merged } : prev));
+        if (taskRef.current?.id === cur.id) taskRef.current = { ...cur, board: merged };
+        setTask((prev) => (prev && prev.id === cur.id ? { ...prev, board: merged } : prev));
       } catch (e: any) { setBoardNote(e?.status === 429 ? "Today's board limit is reached — the voice still works." : "The board couldn't be updated just now."); }
     }).finally(() => { setBoardPending((n) => Math.max(0, n - 1)); setBoardPromised(false); });
   }, [userId]);
@@ -670,28 +672,25 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
   const endSession = useCallback(async (reflection?: string) => {
     if (!task || endingSession) return;
     setEndingSession(true);
+    endedTaskRef.current = taskRef.current || task; // the board writer may still land a line after the screen has gone
     try {
-      // Hang up first (the microphone must not stay open on a screen that has gone), then give the board writer a moment to finish what was
-      // just said, so the saved session has the last lines.
+      // One tap ends it. Hang up first (the microphone must not stay open on a screen that has gone), give the board writer a moment
+      // to finish what was just said, save the session on this device, and leave. Every step is best-effort: ending must ALWAYS end.
       try { liveRef.current.stop(); } catch { /* not on a call */ }
-      try { await Promise.race([boardQueueRef.current, new Promise((r) => setTimeout(r, 4000))]); } catch { /* best effort */ }
-      const latest = taskRef.current || task;
-      // Ending must ALWAYS end: a failure while saving the history summary (storage full, an odd board entry)
-      // or while dismissing the task server-side must never leave the student stuck on a button that does
-      // nothing. Every step is best-effort; the screen is left no matter what.
+      try { await Promise.race([boardQueueRef.current, new Promise((r) => setTimeout(r, 2500))]); } catch { /* best effort */ }
+      const latest = taskRef.current || endedTaskRef.current || task;
       try { saveAndClose(latest, sessionStart || latest.createdAt || new Date().toISOString(), reflection); } catch (e) { console.warn("[tutor] couldn't save the session summary:", e); }
-      // Dismiss the freestudy task so the next start creates a fresh one.
-      try { await dismissWithRetry(task.id); } catch { /* ghost-cleanup in peekForActiveSession covers it */ }
     } finally {
       setTask(null);
       setSessionStart(null);
       exitFullscreen(); // ending a session leaves full screen too
-      // The ended session must not come back as a "Reprendre" offer on the landing below.
       setPendingActiveSession(null);
       setShowHistory(true);
       setDesmosOpen(false);
       desmosEverOpenedRef.current = false;
       setEndingSession(false);
+      // Closing the session on the server happens after the student is already gone (it marks the session ended on this device first).
+      void dismissWithRetry(task.id).catch(() => { /* ghost-cleanup in peekForActiveSession covers it */ });
     }
   }, [task, sessionStart, endingSession, saveAndClose]);
 
@@ -885,9 +884,6 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
             <button className="btn primary tutor-start-btn" onClick={() => void startNewSession(true)} disabled={startingSession || !chosenSubject}>
               <Mic size={18} aria-hidden="true" />{startingSession ? "Starting…" : chosenSubject ? `Start talking · ${chosenSubject}` : "Pick a subject to start"}
             </button>
-            <button type="button" className="tutor-start-type" onClick={() => void startNewSession(false)} disabled={startingSession || !chosenSubject}>
-              {"or type instead"}
-            </button>
           </div>
           {error ? <p className="tutor-error" role="alert">{error}</p> : null}
 
@@ -1041,7 +1037,7 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
               <button type="button" className="tutor-fs-btn" onClick={() => (fs ? exitFullscreen() : enterFullscreen())} aria-pressed={fs} aria-label={fs ? "Exit full screen" : "Full screen"} title={fs ? "Exit full screen" : "Full screen"}>
                 {fs ? <Minimize2 size={14} aria-hidden="true" /> : <Maximize2 size={14} aria-hidden="true" />}
               </button>
-              <button className="btn ghost tutor-end-btn" disabled={endingSession} onClick={() => { const real = (task.chat || []).filter((m) => m.role === "user").length >= 3; if (real) setReflectOpen(true); else void endSession(); }}>
+              <button className="btn ghost tutor-end-btn" disabled={endingSession} onClick={() => void endSession()}>
                 {endingSession ? "Ending…" : "End"}
               </button>
             </header>
@@ -1119,32 +1115,6 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
             onAttach={(f) => attachRef.current(f)} attaching={attaching}
           />
       </div>
-      {reflectOpen && (
-        <div className="tutor-reflect-overlay" role="dialog" aria-modal="true" aria-label={"Before you go"} onClick={() => setReflectOpen(false)}>
-          <div className="tutor-reflect" onClick={(e) => e.stopPropagation()}>
-            <h3>{"Before you go"}</h3>
-            {(() => {
-              const en = "en" === "en";
-              const r = buildSessionRecap(task.board || [], task.problems || [], task.objectives || [], en);
-              if (!r.showed.length && !r.developing.length && !r.strategies.length && !r.reviewQuestion) return null;
-              return (
-                <div className="tutor-recap">
-                  {r.showed.length > 0 && <section><h4>{"You showed"}</h4><ul>{r.showed.map((x, i) => <li key={i}><MathText text={x} /></li>)}</ul></section>}
-                  {r.developing.length > 0 && <section><h4>{"Still developing"}</h4><ul>{r.developing.map((x, i) => <li key={i}><MathText text={x} /></li>)}</ul></section>}
-                  {r.strategies.length > 0 && <section><h4>{"Your strategies"}</h4><ul>{r.strategies.map((x, i) => <li key={i}><MathText text={x} /></li>)}</ul></section>}
-                  {r.reviewQuestion && <p className="tutor-recap-review"><MathText text={r.reviewQuestion} /></p>}
-                </div>
-              );
-            })()}
-            <p>{"What's one thing that clicked today, and what would you do differently next time?"}</p>
-            <textarea className="tutor-reflect-input" rows={4} autoFocus value={reflectText} onChange={(e) => setReflectText(e.target.value)} placeholder={"A few words… (optional)"} aria-label={"A few words… (optional)"} />
-            <div className="tutor-reflect-actions">
-              <button type="button" className="btn ghost" onClick={() => { setReflectOpen(false); void endSession(""); }}>{"Skip"}</button>
-              <button type="button" className="btn primary" onClick={() => { setReflectOpen(false); void endSession(reflectText); }}>{"Save & end"}</button>
-            </div>
-          </div>
-        </div>
-      )}
     </main>
   );
 }

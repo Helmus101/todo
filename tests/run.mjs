@@ -2233,6 +2233,21 @@ section("Weekly AI allowance: $5 a week, extra only by grant, admin-only grants"
   check("the voice token and board routes stop at the cap with a clear message", (tut.match(/code: "weekly_cap"/g) || []).length === 2);
 }
 
+section("The voice tutor is Socratic: the rule is in the prompt, nothing contradicts it, and the board never gives the answer away");
+{
+  const { liveInstructions } = await import("../shared/liveTutor.ts");
+  const p = liveInstructions({ subject: "Math", level: "Grade 11, AP programme", background: "BACKGROUND\nthey like diagrams", language: "English" });
+  check("the one rule that is never broken is stated first: no final answer, no next step, no 'it's B', also when they beg", /THE ONE RULE YOU NEVER BREAK/.test(p) && /not "it's B"/.test(p) && /just tell me/.test(p) && p.indexOf("THE ONE RULE") < p.indexOf("HOW YOU TEACH"));
+  check("a student who is truly stuck gets a SIMILAR worked problem with different numbers, then it is handed back", /SIMILAR problem solved with different numbers/.test(p));
+  check("it says something is correct only after the student said it", /only say that something is correct AFTER they have said it/.test(p));
+  check("every reply ends on one short question", /ends with exactly ONE short question/.test(p));
+  check("multiple choice: the options are never read out (the board shows them) and the right one is never said first", !/read every option/i.test(p) && /never read the options out/.test(p) && /Do NOT read the whole problem or the options out loud/.test(p) && /Don't say which option is right before they answer/.test(p));
+  check("explaining never solves their exact problem", /You still never solve the exact problem they are working on for them/.test(p));
+  check("no instruction tells the tutor to hand over the answer", !/\b(?:give|tell|state) (?:them|the student) the (?:final )?answer\b/i.test(p) && !/\bshow (?:them )?the (?:full )?solution\b/i.test(p));
+  const bw = readFileSync(new URL("../server/tutorTurn/boardWriter.ts", import.meta.url), "utf8");
+  check("the board writer never writes the answer to the tutor's open question and never marks the right option", /THE ANSWER TO THE QUESTION THE TUTOR ASKS AT THE END OF THE EXCHANGE/.test(bw) && /never marking the right one/.test(bw));
+}
+
 section("MathText — a mis-wrapped $...$ prose phrase falls back to plain text instead of KaTeX mangling it");
 {
   // Reported live: a board question rendered as "...05 m*underaforceof*10 N, *what's*k?" — the model had
@@ -6982,7 +6997,8 @@ section("Voice-first start — voice turns on only from the student's own click 
 { const ts = readFileSync(new URL("../client/tutor/TutorSession.tsx", import.meta.url), "utf8");
   const ao = readFileSync(new URL("../client/study/AskOttoPanel.tsx", import.meta.url), "utf8");
   const hk = readFileSync(new URL("../client/voice/useVoiceModePref.ts", import.meta.url), "utf8");
-  check("the primary start button is 'Start talking' and bumps talkRequest inside the click path; 'Type instead' is the quiet alternative", /startNewSession\(true\)/.test(ts) && /startNewSession\(false\)/.test(ts) && /Start talking/.test(ts) && /or type instead/.test(ts) && /if \(talk\) setTalkRequest/.test(ts));
+  check("the primary start button is 'Start talking' and bumps talkRequest inside the click path; there is no 'or type instead' on the start screen", /startNewSession\(true\)/.test(ts) && !/startNewSession\(false\)/.test(ts) && /Start talking/.test(ts) && !/or type instead/.test(ts) && /if \(talk\) setTalkRequest/.test(ts));
+  check("ending is one tap: no reflection dialog, the screen leaves before the server dismiss, late board lines are tied to their own session", !/reflectOpen/.test(ts) && /onClick=\{\(\) => void endSession\(\)\}/.test(ts) && /void dismissWithRetry\(task\.id\)\.catch/.test(ts) && /endedTaskRef/.test(ts) && /setTimeout\(r, 2500\)/.test(ts));
   check("the only extra way voice turns on is talkRequest (never on load: starts false, Enter in the topic box does not start voice)", /useState\(false\)/.test(hk) && /talkRequest === talkSeenRef\.current\) return/.test(ao) && /enableVoiceMode\(\)/.test(ao) && (ao.match(/enableVoiceMode\(\)/g) || []).length === 1 && /key === "Enter" && topic\.trim\(\)\) void startNewSession\(\)/.test(ts) && !/setTalkRequest\(\(n\) => n \+ 1\)[^;]*useEffect/.test(ts)); }
 
 section("Live voice (Gemini Live) — audio helpers, the voice's instructions, the token and board routes, the hook (unit tests + source pins)");
