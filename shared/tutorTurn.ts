@@ -7,7 +7,7 @@ export const STEP_KINDS = ["given", "formula", "definition", "result", "summary"
 export const MARK_STYLES = ["circle", "underline", "box", "arrow", "cross", "tick"] as const;
 export const MARK_TONES = ["error", "hint", "good", "focus"] as const;
 export const SCENES = ["graph", "geometry", "incline", "trig", "flow", "table", "source", "widget", "svg", "numberline", "balance"] as const;
-export const BOARD_OPS = ["topic", "step", "mark", "draw"] as const;
+export const BOARD_OPS = ["topic", "step", "mark", "draw", "choice"] as const;
 
 export type MarkStyle = (typeof MARK_STYLES)[number];
 export type Scene = (typeof SCENES)[number];
@@ -32,6 +32,8 @@ export interface BoardOp {
   part?: string;
   scene?: Scene;
   spec?: Record<string, unknown>;
+  /** choice: the answers of a multiple-choice question (2–6; the right one is never marked). */
+  options?: string[];
 }
 
 export interface TurnOutput {
@@ -76,6 +78,11 @@ function normalizeOp(o: any, nSpeech: number): BoardOp | null {
   const scene = optPick(SCENES, o.scene);
   if (scene) out.scene = scene;
   if (o.spec && typeof o.spec === "object" && !Array.isArray(o.spec)) out.spec = o.spec;
+  if (op === "choice") {
+    const opts = (Array.isArray(o.options) ? o.options : Array.isArray(o.choices) ? o.choices : []).map((x: unknown) => str(x, 200)).filter(Boolean).slice(0, 6);
+    if (opts.length < 2 || !out.text) return null;
+    out.options = opts;
+  }
   return out;
 }
 

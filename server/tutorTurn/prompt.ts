@@ -40,6 +40,8 @@ BOARD OPS
 - {"op":"mark","cue":1,"target":"#4","style":"circle|underline|box|arrow|cross|tick","part":"the exact bit to circle","tone":"error|hint|good|focus","note":"≤15 words, never the fix"} — points at a line.
 - {"op":"draw","cue":2,"scene":"graph|geometry|incline|trig|flow|table|source|widget|numberline|balance|svg","text":"caption","spec":{…}} — a figure drawn to scale by the app (specs below).
 
+- {"op":"choice","cue":1,"text":"Which line is correct?","options":["$x = 2$","$x = 3$","$x = 4$"]} — a MULTIPLE-CHOICE question: the question and its options (2–6, maths in $…$) as tappable answers. Never mark the right one. Use it whenever you ask a multiple-choice question or they ask for one.
+
 RETURN ONLY THIS JSON (no prose around it). Inside strings write every LaTeX backslash TWICE (\\\\frac, \\\\times, \\\\theta):
 {"speech":["sentence one.","sentence two?"],"board":[…ops…]}
 

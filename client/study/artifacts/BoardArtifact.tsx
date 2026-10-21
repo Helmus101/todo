@@ -47,6 +47,8 @@ interface BoardArtifactProps {
   /** Tutor only — an exercise whose key is SEALED (it carries a `keyToken`, never the answer) is graded by the server; what comes back is only what the
    *  student has earned (the explanation and the correct option appear after a right answer). Exercises from an older stored board still grade locally. */
   onCheckProblem?: (problem: TaskProblem, given: string) => Promise<ServerGrade>;
+  /** Tutor: the student tapped an option of a multiple-choice entry (its answer goes to the tutor as what they said). */
+  onChoice?: (entry: BoardEntry, index: number, optionText: string) => void;
   /** Tutor: the board is paper, not a form. No answer boxes, Check buttons or hint buttons: the student answers Otto out loud or in the chat and the server checks it there. */
   paper?: boolean;
 }
@@ -369,6 +371,24 @@ export function conceptMissMessage(problem: Pick<TaskProblem, "rubric">, given: 
   return null;
 }
 
+/** A multiple-choice question on the board: tap an option (or just say the letter). The right one is never shown here: the tutor judges the answer. */
+function ChoiceBlock({ entry, onChoose }: { entry: BoardEntry; onChoose?: (index: number, text: string) => void }) {
+  const [picked, setPicked] = useState<number | null>(null);
+  return (
+    <div className="sm-board-choice">
+      <div className="sm-board-entry-text"><MathText text={stripStrayMarkdown(entry.text)} /></div>
+      <div className="sm-choice-opts" role="group" aria-label="Choose an answer">
+        {(entry.options || []).map((o, i) => (
+          <button key={i} type="button" className={`sm-choice-opt${picked === i ? " on" : ""}`} aria-pressed={picked === i} onClick={() => { setPicked(i); onChoose?.(i, o); }}>
+            <span className="sm-choice-letter" aria-hidden="true">{"ABCDEF"[i]}</span>
+            <span className="sm-choice-text"><MathText text={stripStrayMarkdown(o)} /></span>
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function ProblemBlock({ paper, problem, sectionNumber, state, hintShown, isCorrect, systemError, info, onShowHint, onPick, onTextAnswer, onSubmit, en, fresh }: ProblemBlockProps) {
   const [expanded, setExpanded] = useState(false);
   const problemIsMCQ = Array.isArray(problem.options) && problem.options.length >= 2;
@@ -594,7 +614,7 @@ export function keyIdeaEntries<T extends Pick<BoardEntry, "id" | "kind" | "text"
   return out.slice(-5);
 }
 
-export function BoardArtifact({ task, onUndo, writing, onProblemResult, onWidgetResult, sheetSignal, onGapCheck, onCheckProblem, paper }: BoardArtifactProps) {
+export function BoardArtifact({ task, onUndo, writing, onProblemResult, onWidgetResult, sheetSignal, onGapCheck, onCheckProblem, paper, onChoice }: BoardArtifactProps) {
   const L = useLang();
   const endRef = useRef<HTMLDivElement>(null);
   const entries = (task.board || []).filter((e) => !e.archived);
@@ -933,6 +953,8 @@ export function BoardArtifact({ task, onUndo, writing, onProblemResult, onWidget
                   {/* sanitised again on render (defence in depth): stored entries can come back from the cloud/local cache */}
                   <div className="sm-svgfig" role="img" aria-label={latexToPlain(e.text)} dangerouslySetInnerHTML={{ __html: sanitizeSvg(e.svg) }} />
                 </>
+              ) : e.kind === "choice" && e.options?.length ? (
+                <ChoiceBlock entry={e} onChoose={onChoice ? (i, t) => onChoice(e, i, t) : undefined} />
               ) : e.kind === "table" && e.table ? (
                 <>
                   <div className="sm-board-entry-text sm-board-diagram-caption"><MathText text={stripStrayMarkdown(e.text)} /></div>

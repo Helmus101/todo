@@ -91,6 +91,12 @@ export async function runTutorTurnSim(check, section) {
       const bad = await writeBoard({ exchange: "Student: hi", board: [], subject: "Math" }, { in: 0, out: 0, cachedIn: 0 });
       check("an unusable reply writes nothing instead of failing", bad.board.length === 0); }
 
+    section("Multiple choice on the board");
+    { const t = normalizeTurn({ speech: ["Pick one."], board: [{ op: "choice", cue: 0, text: "What is the first step in $3(x+2)-5=10$?", options: ["Add 5 to both sides", "Divide by 3", "Expand the bracket", ""] }, { op: "choice", cue: 0, text: "bad", options: ["only one"] }] });
+      check("a choice op keeps its question and its (non-empty) options; one with fewer than two options is dropped", t.board.length === 1 && t.board[0].op === "choice" && t.board[0].options.length === 3);
+      const r = applyOps(t.board, { board: [], problems: [], theirWords: [] });
+      check("a choice becomes a board entry with tappable options and never records which one is right; the same question is not added twice", r.board.length === 1 && r.board[0].kind === "choice" && r.board[0].options.length === 3 && !("correct" in r.board[0]) && !("expectedAnswer" in r.board[0]) && applyOps(t.board, { board: r.board, problems: [], theirWords: [] }).board.length === 0); }
+
     section("Tutor turn — never a dead end");
     calls.length = 0;
     script = (b, i) => (i === 0 ? "not json at all" : { speech: ["Back on track — what did you get?"], board: [] });

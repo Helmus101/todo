@@ -6982,5 +6982,12 @@ section("Tutor-only mode — Settings shows only Pronote, no 'how Otto teaches y
   check("onboarding is hidden (ONBOARDING_ENABLED = false: no flow on signup or later) but the code stays", /const ONBOARDING_ENABLED = false;/.test(app) && /if \(!ONBOARDING_ENABLED\) return;/.test(app));
   check("the tutor's memory carries the Pronote cahier de texte (homework) and the lesson content (contenu des cours)", /PRONOTE CAHIER DE TEXTE/.test(rec) && /PRONOTE CONTENU DES COURS/.test(rec)); }
 
+section("Multiple choice — the voice offers it, the board shows tappable options, a tap is the student's answer (source pins)");
+{ const ba = readFileSync(new URL("../client/study/artifacts/BoardArtifact.tsx", import.meta.url), "utf8");
+  const ts = readFileSync(new URL("../client/tutor/TutorSession.tsx", import.meta.url), "utf8");
+  const lt = readFileSync(new URL("../shared/liveTutor.ts", import.meta.url), "utf8");
+  const bw = readFileSync(new URL("../server/tutorTurn/boardWriter.ts", import.meta.url), "utf8");
+  check("a 'choice' entry renders as lettered buttons, the tap goes to the tutor as what the student said (voice or typed), the voice and the board writer both know how to do multiple choice", /function ChoiceBlock/.test(ba) && /e\.kind === "choice" && e\.options\?\.length/.test(ba) && /const onChoice = useCallback/.test(ts) && /My answer: \$\{"ABCDEF"\[index\]\}/.test(ts) && /MULTIPLE-CHOICE/.test(lt) && /NEVER say you cannot do multiple choice/.test(lt) && /"choice" op/.test(bw)); }
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

@@ -120,6 +120,15 @@ export function applyOps(ops: BoardOp[], c: ApplyContext): Applied {
         add(r.entry, o.cue);
         break;
       }
+      case "choice": {
+        // A multiple-choice question (the tutor asked it out loud with its options): shown on the board as tappable answers. The right one is never marked.
+        const q = latexifyBoardLine(repairLatex(typesetPlainMath(String(o.text || ""))), "note");
+        const options = (o.options || []).map((x) => latexifyBoardLine(repairLatex(typesetPlainMath(String(x))), "note")).filter(Boolean);
+        if (!q || options.length < 2) { drop("a choice needs a question and two options"); break; }
+        if (all().some((e) => e.kind === "choice" && similarity(String(e.text || ""), q) > 0.8)) { drop("that question is already on the board"); break; }
+        add({ id: randomUUID(), kind: "choice", text: q, options, owner: "otto", at: now() } as BoardEntry, o.cue);
+        break;
+      }
       case "mark": {
         const hit = resolveBoardTarget(String(o.target || ""), c.board);
         if (!hit?.id) { drop(`no line ${o.target ?? ""}`); break; }

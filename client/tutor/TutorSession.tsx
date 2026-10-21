@@ -517,6 +517,11 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
   useEffect(() => {
     setVoiceState({ listening: liveStatus === "live" && !live.speaking && !live.muted, speaking: live.speaking, voiceModeOn: liveStatus === "live", interim: "" });
   }, [liveStatus, live.speaking, live.muted]);
+  // Tapping an option of a multiple-choice question is answering out loud: it goes to the voice (or the typed engine) as what the student said.
+  const onChoice = useCallback((_e: unknown, index: number, optionText: string) => {
+    const msg = `My answer: ${"ABCDEF"[index]}. ${toSpeakableText(optionText)}`;
+    if (liveRef.current.status === "live") { onLiveTurn("you", msg); liveRef.current.sendText(msg); } else void sendRef.current(msg, false);
+  }, [onLiveTurn]);
   // What the student draws goes to the voice as a picture (it sees the page and answers when they speak).
   const inkTimerRef = useRef<number | undefined>(undefined);
   const onInk = useCallback(() => {
@@ -987,7 +992,7 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
       })()}
       <section className="ts-canvas" aria-label={"Board"}>
         <div className="tutor-board-body ts-board-body" ref={setSurfaceEl} style={{ display: desmosOpen ? "none" : undefined }}>
-          <BoardArtifact paper task={task} onUndo={undoCount > 0 ? undoBoard : undefined} writing={sending} onProblemResult={onProblemResult} onCheckProblem={(p, given) => api.checkProblem(task.id, p, given)} onWidgetResult={onWidgetResult} sheetSignal={sheetSignal} onGapCheck={onGapCheck} />
+          <BoardArtifact paper onChoice={onChoice} task={task} onUndo={undoCount > 0 ? undoBoard : undefined} writing={sending} onProblemResult={onProblemResult} onCheckProblem={(p, given) => api.checkProblem(task.id, p, given)} onWidgetResult={onWidgetResult} sheetSignal={sheetSignal} onGapCheck={onGapCheck} />
         </div>
         {/* Desmos stays mounted once opened (an iframe that's removed reloads blank, losing the student's graph). */}
         {desmosOpen || desmosEverOpenedRef.current ? (

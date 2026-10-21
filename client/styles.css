@@ -4959,3 +4959,12 @@ button[aria-expanded="true"] > .sm-chev { transform: rotate(45deg); }
 .tutor-start-actions .tutor-start-btn:disabled { opacity: .4; cursor: default; }
 .tutor-start-type { background: none !important; border: 0; font: inherit; font-size: 14px; color: var(--ink-2) !important; text-decoration: underline; text-underline-offset: 3px; cursor: pointer; padding: 4px 8px; }
 .tutor-start-type:disabled { opacity: .4; cursor: default; }
+
+/* Multiple choice on the board: tappable answers (!important: a global button reset makes plain buttons transparent). */
+.sm-board-choice { margin: 6px 0 10px; }
+.sm-choice-opts { display: grid; gap: 8px; margin-top: 10px; max-width: 560px; }
+.sm-choice-opt { display: flex; align-items: center; gap: 12px; text-align: left; font: inherit; padding: 10px 14px; border: 1px solid var(--line); border-radius: 12px; background-color: var(--surface) !important; color: var(--ink) !important; cursor: pointer; transition: border-color .12s, background-color .12s; }
+.sm-choice-opt:hover { border-color: var(--ink-3); }
+.sm-choice-opt.on { border-color: var(--accent); background-color: var(--accent-soft, #f4f1ec) !important; }
+.sm-choice-letter { flex: none; width: 26px; height: 26px; border-radius: 50%; display: grid; place-items: center; font-size: 13px; font-weight: 600; border: 1px solid var(--line); }
+.sm-choice-opt.on .sm-choice-letter { background-color: var(--accent) !important; color: #fff !important; border-color: var(--accent); }
