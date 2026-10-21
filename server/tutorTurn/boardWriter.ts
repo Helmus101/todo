@@ -17,6 +17,7 @@ FIRST, in "notes", list in a few words each thing in this exchange that qualifie
 (a) Was a RULE, DEFINITION, FORMULA or IDENTITY stated or confirmed, by the tutor or by the student (even if the student said it in words)? → it is written, in tidy general form.
 (b) Did the student reach a RESULT, expansion, simplification or final answer that the tutor confirmed as right ("exactly", "that's right", "spot on")? → the result line is written (the full line, e.g. the finished expansion). A result counts ONLY if the student reached it BEFORE the tutor's last question: whatever that last question asks them to work out is NOT a result yet (a worked example you would write to answer it is exactly what must not appear).
 (c) Did the tutor pose a PROBLEM or task (a question with maths in it, an expression to evaluate, rewrite, solve, simplify or expand), including in its closing question? → ALWAYS write the problem itself on the board as a task line ("given"), in LaTeX, WITHOUT its answer (for example: "Rewrite $\\log_3(2x+1) = 2$ in exponential form"). Every problem that is posed is on the board, once.
+(f) Did the tutor read a short PASSAGE aloud for a question (reading practice)? → put it on the board once as a "draw" op with scene "source" (verbatim text from the tutor's words only), before the choice op.
 (e) Did the tutor ask a MULTIPLE-CHOICE question (options A, B, C…) or offer choices to pick from? → write ONE "choice" op with the question and EVERY option (LaTeX for maths), never marking the right one.
 (d) Would a PICTURE help? → DRAW it, in this same pass. Draw whenever graphing, plotting, a curve, a shape, a diagram, a process, a timeline or a cycle comes up, and for any topic that is naturally visual (a function and its inverse, an exponential or log curve, a triangle, supply and demand, a cell): graphs of functions are "graph" ops with the real expressions; anything else is a "geometry", "flow", "table" or "svg" op. At most one new figure per pass; extend an existing graph instead of redrawing it.
 Then put the ops for every item you listed in "board". If a box has nothing, say so in "notes" and write nothing for it.
@@ -81,7 +82,7 @@ export async function writeBoard(input: { exchange: string; board: BoardEntry[];
   const { finished, openQuestion } = splitOpenQuestion(input.exchange.slice(0, 4000));
   const user = `${input.subject ? `Subject: ${input.subject}\n` : ""}${input.history ? `EARLIER IN THIS SESSION (context only: it tells you what a short answer like "two, right?" refers to; do NOT rewrite what is already on the board):\n${input.history.slice(-2500)}\n\n` : ""}LATEST EXCHANGE (what has been said and settled):\n${finished}${openQuestion ? `\n\nTHE TUTOR THEN ASKED THE STUDENT (still unanswered: never write its answer or its working; if it poses a problem or task, WRITE that problem now as a task line in LaTeX, without its answer):\n${openQuestion}` : ""}`;
   const studentWords = input.exchange.split("\n").filter((l) => /^Student:/i.test(l)).map((l) => l.replace(/^Student:\s*/i, ""));
-  const once = async (extra?: string) => {
+  const once = async (extra?: string, already: BoardEntry[] = []) => {
     const messages: any[] = [{ role: "system", content: system }, { role: "user", content: user }];
     if (extra) messages.push({ role: "user", content: extra });
     const res = await createTutorChat({ max_tokens: 2500, temperature: 0.1, response_format: { type: "json_object" }, messages }, true);
@@ -90,7 +91,7 @@ export async function writeBoard(input: { exchange: string; board: BoardEntry[];
     const parsed: any = extractJsonObject(raw) ?? salvageTurn(raw);
     const turn = normalizeTurn({ speech: ["."], board: Array.isArray(parsed?.board) ? parsed.board : [] });
     if (!turn || !turn.board.length) return { board: [] as BoardEntry[], dropped: [] as string[] };
-    const applied = applyOps(turn.board.map((o) => ({ ...o, cue: 0 })), { board: input.board, problems: [], theirWords: studentWords });
+    const applied = applyOps(turn.board.map((o) => ({ ...o, cue: 0 })), { board: [...input.board, ...already], problems: [], theirWords: studentWords });
     return { board: applied.board, dropped: applied.dropped };
   };
   let out = await once();
@@ -106,8 +107,8 @@ export async function writeBoard(input: { exchange: string; board: BoardEntry[];
       needPicture ? "The exchange is about graphing or a picture: DRAW it now (a graph op with the real function, or an svg / geometry / flow op), never leave it as words." : "",
       needProblem ? `The tutor posed a problem and you did not write it: write the problem itself now as a task line (kind "given") in LaTeX, without its answer: ${openQuestion.slice(0, 300)}` : "",
     ].filter(Boolean).join(" ");
-    const second = await once(`${asks} Return the same JSON shape.`);
-    if (second.board.length) out = { board: [...out.board, ...second.board], dropped: out.dropped };
+    const second = await once(`${asks} Return the same JSON shape.`, out.board);
+    if (second.board.length) { const all = [...out.board, ...second.board]; out = { board: [...all.filter((e) => e.kind === "focus"), ...all.filter((e) => e.kind !== "focus")], dropped: out.dropped }; }
     else console.warn(`[live] board writer still wrote nothing (${(second.dropped.length ? second.dropped : out.dropped).slice(0, 2).join("; ") || "no ops"})`);
   }
   return out;

@@ -111,7 +111,7 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
   // The student's own subjects (set in onboarding) come first; the shared common list follows.
   const [mySubjects, setMySubjects] = useState<string[]>([]);
   useEffect(() => { void api.profile().then((p) => setMySubjects(p.subjects || [])).catch(() => { /* the common list is enough */ }); }, []);
-  const subjectOptions = [...new Set<string>([...mySubjects, ...COMMON_SUBJECTS])];
+  const subjectOptions = [...new Set<string>([...mySubjects, ...COMMON_SUBJECTS, "SAT prep"])];
   const [selectedSubject, setSelectedSubject] = useState("");
   // Only used when the subject is "Other": the student names it here. Every other subject starts with one tap, no extra question.
   const OTHER = "__other__";
@@ -613,6 +613,7 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
     } finally {
       setTask(null);
       setSessionStart(null);
+      exitFullscreen(); // ending a session leaves full screen too
       // The ended session must not come back as a "Reprendre" offer on the landing below.
       setPendingActiveSession(null);
       setShowHistory(true);

@@ -76,7 +76,10 @@ export function registerTutorRoutes(app: express.Express): void {
         const journal = selectJournal(req.session.tasks || [], { subject, query: subject, known: profile.subjects });
         background = backgroundBlock({ profile, subject, journal: journal.entries, journalMeta: { total: journal.total, subjects: journal.subjects }, schoolRecord: schoolRecordLine(req.session.tasks, profile, subject), memory } as any);
       } catch { /* memory is a bonus: the voice works without it */ }
-      const instructions = liveInstructions({ subject, level: undefined, background, resuming: req.body?.resuming === true });
+      // Their level, from Settings: the year or grade, plus the programme (IB / AP / Bac), so every question is pitched at it.
+      const trackName = ({ ib: "IB", ap: "AP", bac: "French Bac", other: "" } as Record<string, string>)[String(profile.track || "")] || "";
+      const level = [profile.yearLevel, trackName && `${trackName} programme`].filter(Boolean).join(", ");
+      const instructions = liveInstructions({ subject, level: level || undefined, background, resuming: req.body?.resuming === true });
 
       // The browser tries these in order: Gemini Live first (when GEMINI_API_KEY is set), then OpenAI Realtime (a "mini" model, over WebRTC)
       // as the fallback. LIVE_PROVIDER=gemini or =openai pins one. A provider whose credential can't be minted is simply left out.
