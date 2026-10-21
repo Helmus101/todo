@@ -11,6 +11,7 @@ import { backgroundBlock } from "../tutor.ts";
 import { selectJournal } from "../journal.ts";
 import { writeBoard } from "../tutorTurn/boardWriter.ts";
 import { normalizeStudentModel, emptyStudentModel, recordConceptEvidence } from "../studentModel.ts";
+import * as pronoteSvc from "../pronote.ts";
 import { liveInstructions } from "../../shared/liveTutor.ts";
 import { isLangCode, languageName } from "../../shared/languages.ts";
 import { createTutorChat, usageOf } from "../claude.ts";
@@ -105,7 +106,15 @@ export function registerTutorRoutes(app: express.Express): void {
       let background = "";
       try {
         const journal = selectJournal(req.session.tasks || [], { subject, query: subject, known: profile.subjects });
-        background = backgroundBlock({ profile, subject, journal: journal.entries, journalMeta: { total: journal.total, subjects: journal.subjects }, schoolRecord: schoolRecordLine(req.session.tasks, profile, subject), memory } as any);
+        // Pronote right now: the cahier de texte and the lesson content (best effort, never longer than 4 s so the call still starts quickly).
+        let live: { homework: any[] } | undefined;
+        try {
+          if ((await pronoteSvc.pronoteConnected(req.session.user!)).connected) {
+            const pc = await Promise.race([pronoteSvc.pronoteContext(req.session.user!, profile), new Promise<undefined>((r) => setTimeout(() => r(undefined), 4000))]);
+            if (pc) live = { homework: pc.homework };
+          }
+        } catch { /* the stored record below is enough */ }
+        background = backgroundBlock({ profile, subject, journal: journal.entries, journalMeta: { total: journal.total, subjects: journal.subjects }, schoolRecord: schoolRecordLine(req.session.tasks, profile, subject, live), memory } as any);
       } catch { /* memory is a bonus: the voice works without it */ }
       // Their level, from Settings: the year or grade, plus the programme (IB / AP / Bac), so every question is pitched at it.
       const trackName = ({ ib: "IB", ap: "AP", bac: "French Bac", other: "" } as Record<string, string>)[String(profile.track || "")] || "";

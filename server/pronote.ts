@@ -643,3 +643,19 @@ export function applyPronoteLessons(profile: Profile, fetched: PronoteLessonItem
 export async function syncPronoteLessons(profile: Profile, email: string): Promise<void> {
   try { applyPronoteLessons(profile, await pronoteLessons(email)); } catch { /* best-effort */ }
 }
+
+
+/** What Pronote currently gives Otto: the cahier de texte (open homework and tests, with the teachers' instructions and attached files) and the
+ *  contenu des cours (lesson content and resources). Cached ten minutes per account so a session start never hammers the school server. */
+const contextCache = new Map<string, { at: number; value: { homework: PronoteHomeworkItem[]; lessons: PronoteLessonItem[] } }>();
+export async function pronoteContext(email: string, profile?: Profile, opts: { fresh?: boolean } = {}): Promise<{ homework: PronoteHomeworkItem[]; lessons: PronoteLessonItem[] }> {
+  const held = contextCache.get(email);
+  if (held && !opts.fresh && Date.now() - held.at < 10 * 60_000) return held.value;
+  const [hw, ls] = await Promise.allSettled([pronoteHomework(email, 21), pronoteLessons(email)]);
+  const homework = hw.status === "fulfilled" ? hw.value : [];
+  const lessons = ls.status === "fulfilled" ? ls.value : [];
+  if (profile && lessons.length) applyPronoteLessons(profile, lessons);
+  const value = { homework, lessons: lessons.length ? lessons : (profile?.pronoteLessons || []) };
+  if (hw.status === "fulfilled" || ls.status === "fulfilled") contextCache.set(email, { at: Date.now(), value });
+  return value;
+}

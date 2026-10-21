@@ -5087,3 +5087,9 @@ html[data-i18n="loading"] body { opacity: 0; }
 .studylog-more { margin-top: var(--space-4); }
 .studylog-more > summary { cursor: pointer; color: var(--ink-2); font-size: 14px; padding: 6px 0; }
 .studylog-tabs { margin: 0 0 var(--space-2) !important; }
+.pronote-context { margin-top: var(--space-3); padding-top: var(--space-3); border-top: 1px solid var(--line); }
+.pronote-context-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 6px; }
+.pronote-context summary { cursor: pointer; padding: 6px 0; color: var(--ink-2); font-size: 14px; }
+.pronote-item { padding: 8px 0; border-bottom: 1px solid var(--line-soft, var(--line)); font-size: 14px; }
+.pronote-item p { margin: 4px 0 0; color: var(--ink-2); }
+.pronote-item small { color: var(--ink-3); }

@@ -8,7 +8,7 @@ import { isHandled } from "../shared/types.ts";
 const clip = (s: string, n: number) => String(s || "").replace(/\s+/g, " ").trim().slice(0, n);
 const same = (a?: string, b?: string) => !!a && !!b && a.toLowerCase().includes(b.toLowerCase()) || !!a && !!b && b.toLowerCase().includes(a.toLowerCase());
 
-export function schoolRecordLine(list: WebTask[] | undefined, profile: Profile | undefined, subject?: string): string {
+export function schoolRecordLine(list: WebTask[] | undefined, profile: Profile | undefined, subject?: string, live?: { homework?: { subject: string; description: string; deadline: string; attachments?: { name: string }[] }[] }): string {
   const tasks = list || [];
   const out: string[] = [];
 
@@ -17,7 +17,13 @@ export function schoolRecordLine(list: WebTask[] | undefined, profile: Profile |
     .filter((t) => t.source === "pronote" && !isHandled(t.status))
     .sort((a, b) => String(a.sourceDue || a.when || "9999").localeCompare(String(b.sourceDue || b.when || "9999")));
   const pronPick = [...pron.filter((t) => subject && same(t.sourceSubject, subject)), ...pron.filter((t) => !(subject && same(t.sourceSubject, subject)))].slice(0, 12);
-  if (pronPick.length) {
+  if (live?.homework?.length) {
+    // Fetched from Pronote just now: the teachers' own instructions, nearest deadline first, this subject first.
+    const hw = [...live.homework].sort((a, b) => String(a.deadline).localeCompare(String(b.deadline)));
+    const pick = [...hw.filter((h) => subject && same(h.subject, subject)), ...hw.filter((h) => !(subject && same(h.subject, subject)))].slice(0, 12);
+    out.push("PRONOTE CAHIER DE TEXTE (homework and tests set by their teachers, live from Pronote, nearest first):\n" + pick.map((h) =>
+      `- [${clip(h.subject, 30)}] due ${clip(String(h.deadline).slice(0, 10), 12)}${h.description ? ` — ${clip(h.description, 400)}` : ""}${h.attachments?.length ? ` — files: ${h.attachments.map((f) => clip(f.name, 50)).join(", ")}` : ""}`).join("\n"));
+  } else if (pronPick.length) {
     out.push("PRONOTE CAHIER DE TEXTE (open homework and tests from their school, nearest first):\n" + pronPick.map((t) =>
       `- ${t.sourceSubject ? `[${clip(t.sourceSubject, 30)}] ` : ""}${clip(t.title, 90)}${t.sourceDue || t.when ? ` — due ${clip(String(t.sourceDue || t.when), 30)}` : ""}${t.sourceDetail ? ` — ${clip(t.sourceDetail, 140)}` : ""}`).join("\n"));
   }

@@ -110,6 +110,19 @@ export function registerIntegrationRoutes(app: express.Express): void {
     res.json({ ok: true });
   });
 
+  // What Pronote currently gives Otto (cahier de texte + contenu des cours), so the student can see exactly what the tutor knows.
+  app.get("/api/pronote/context", requireAuth, rateLimit(10, 60_000), ah(async (req, res) => {
+    if (!(await pronoteSvc.pronoteConnected(req.session.user!)).connected) { res.json({ connected: false, homework: [], lessons: [] }); return; }
+    const profile = req.session.profile || emptyProfile();
+    const c = await pronoteSvc.pronoteContext(req.session.user!, profile, { fresh: req.query.fresh === "1" });
+    if (c.lessons.length) { req.session.profile = profile; void commit(req); }
+    res.json({
+      connected: true,
+      homework: c.homework.slice(0, 30).map((h) => ({ id: h.id, subject: h.subject, deadline: h.deadline, text: h.description.slice(0, 500), files: (h.attachments || []).map((f) => f.name) })),
+      lessons: c.lessons.slice(0, 30).map((l) => ({ id: l.id, subject: l.subject, date: l.date, title: l.title, category: l.category, text: l.text.slice(0, 500), files: (l.files || []).map((f) => f.name) })),
+    });
+  }));
+
   app.post("/api/integrations/pronote/disconnect", requireAuth, async (req, res) => {
     try {
       await pronoteSvc.disconnectPronote(req.session.user!);
