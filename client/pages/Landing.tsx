@@ -1,4 +1,3 @@
-import { POSTS, postPath } from "../../shared/blog.ts";
 import { LanguagePicker } from "../LanguagePicker.tsx";
 
 
@@ -43,11 +42,6 @@ export function Landing({ lang, onLangChange }: { lang: "fr" | "en"; onLangChang
                 onClick={(e) => { e.currentTarget.href = t.url(encodeURIComponent(ASK_PROMPT(window.location.origin))); }}>{t.name}</a>
             ))}
           </div>
-        </section>
-        <section className="landing-blog" aria-label="From the blog">
-          <h2>{"Study methods that work"}</h2>
-          <ul>{POSTS.slice(0, 3).map((p) => <li key={p.slug}><a href={postPath(p)}>{p.title}</a></li>)}</ul>
-          <p><a href="/blog">{"All guides"}</a></p>
         </section>
       </main>
       <footer className="landing-min-foot">
