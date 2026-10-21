@@ -80,7 +80,7 @@ export function tutorExplained(exchange: string): boolean {
 }
 
 export async function writeBoard(input: { exchange: string; board: BoardEntry[]; subject?: string; history?: string; language?: string }, tokens: { in: number; out: number; cachedIn: number }): Promise<{ board: BoardEntry[]; dropped: string[]; concepts: any[] }> {
-  const canDraw = !input.subject || /math|physic|chem|bio|econ|scien|geom|stat|calc|algebra|trig|histor|geograph/i.test(input.subject) || input.board.some((b) => ["graph", "svg", "diagram"].includes(String(b.kind)));
+  const canDraw = true; // Unlimited visual artifact capabilities across all subjects
   const system = BOARD_WRITER_PROMPT + (input.language ? `\n\nLANGUAGE: the student works in ${input.language}. Write every board line, heading, option and label in ${input.language} (maths stays LaTeX). Op names and kinds stay as specified.` : "") + (canDraw ? DRAW_REFERENCE : "") + `\n\nTHE BOARD (margin numbers #n are what you point at)${boardSurfaceBlock(input.board, []) || ": empty."}`;
   // The tutor's closing question is still UNANSWERED: it is shown to the writer separately, so the working for it is never mistaken for something the student reached.
   const { finished, openQuestion } = splitOpenQuestion(input.exchange.slice(0, 4000));

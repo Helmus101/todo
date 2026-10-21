@@ -28,16 +28,20 @@ export function useArduino(onButton: (b: DeviceButton) => void) {
     w.write(new TextEncoder().encode(encodeDeviceMsg(m))).catch(() => { void close(); });
   }, [close]);
 
-  /** Must be called from a click (the browser asks which port). */
-  const connect = useCallback(async () => {
-    if (!serial || status === "connecting" || status === "connected") return;
+  const statusRef = useRef<DeviceStatus>(status);
+  statusRef.current = status;
+
+  /** Opens a port and starts reading button presses. Shared by the click (picker) and the automatic reconnect. */
+  const attach = useCallback(async (port: any) => {
+    if (statusRef.current === "connecting" || statusRef.current === "connected") return;
     setStatus("connecting");
+    statusRef.current = "connecting";
     try {
-      const port = await serial.requestPort();
       await port.open({ baudRate: DEVICE_BAUD });
       portRef.current = port;
       writerRef.current = port.writable.getWriter();
       setStatus("connected");
+      statusRef.current = "connected";
       // The Mega resets when the port opens; give the bootloader time before the first state goes out.
       await new Promise((r) => setTimeout(r, 2000));
       const reader = port.readable.getReader();
@@ -58,9 +62,32 @@ export function useArduino(onButton: (b: DeviceButton) => void) {
         void close();
       })();
     } catch {
-      await close(); // cancelled the picker, port busy, no permission
+      await close(); // port busy (Serial Monitor open?), unplugged mid-open, no permission
     }
-  }, [serial, status, close]);
+  }, [close]);
+
+  /** Must be called from a click (the browser asks which port). Only needed ONCE per browser: after that the
+   *  device reconnects by itself (see the effect below). */
+  const connect = useCallback(async () => {
+    if (!serial || status === "connecting" || status === "connected") return;
+    try { await attach(await serial.requestPort()); } catch { /* cancelled the picker */ }
+  }, [serial, status, attach]);
+
+  // Automatic reconnect: a port the student already allowed is listed by getPorts() without any prompt, so the
+  // device attaches on page load and again whenever the cable is plugged back in.
+  useEffect(() => {
+    if (!serial) return;
+    let cancelled = false;
+    const auto = async () => {
+      try {
+        const ports: any[] = await serial.getPorts();
+        if (!cancelled && ports.length && statusRef.current === "disconnected") await attach(ports[0]);
+      } catch { /* not allowed yet: the pill asks once */ }
+    };
+    void auto();
+    serial.addEventListener?.("connect", auto);
+    return () => { cancelled = true; serial.removeEventListener?.("connect", auto); };
+  }, [serial, attach]);
 
   useEffect(() => () => { void close(); }, [close]);
   return { status, connect, disconnect: close, send };

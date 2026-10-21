@@ -4,12 +4,12 @@
 
 export const DEVICE_BAUD = 115200;
 export type DeviceButton = "help" | "next" | "mic";
-export type DeviceState = "idle" | "listening" | "thinking" | "speaking" | "offline";
+export type DeviceState = "idle" | "ready" | "listening" | "thinking" | "speaking" | "offline";
 export type DeviceIn = { btn: DeviceButton } | { hello: string };
 export type DeviceOut = { state: DeviceState } | { lcd: string } | { beep: "ok" | "no" };
 
 const BUTTONS: DeviceButton[] = ["help", "next", "mic"];
-const STATES: DeviceState[] = ["idle", "listening", "thinking", "speaking", "offline"];
+const STATES: DeviceState[] = ["idle", "ready", "listening", "thinking", "speaking", "offline"];
 
 /** One line from the device → a message, or null for anything that isn't ours (boot noise, partial lines). */
 export function parseDeviceLine(line: string): DeviceIn | null {
@@ -48,11 +48,12 @@ export class LineBuffer {
 }
 
 /** What the lights should say, from what the tutor page knows. Thinking wins over speaking wins over listening. */
-export function deviceStateOf(s: { sending: boolean; speaking: boolean; listening: boolean }): DeviceState {
-  return s.sending ? "thinking" : s.speaking ? "speaking" : s.listening ? "listening" : "idle";
+export function deviceStateOf(s: { sending: boolean; speaking: boolean; listening: boolean; active?: boolean }): DeviceState {
+  // "ready" = the tutor is on (a call is open) and nothing is happening this instant: the light stays lit.
+  return s.sending ? "thinking" : s.speaking ? "speaking" : s.listening ? "listening" : s.active ? "ready" : "idle";
 }
 
-/** What a button asks Otto, in the session language. "mic" is not a message: it toggles voice. */
+/** What a button asks Otto, in the session language. "mic" is not a message: it starts and stops the tutor (see TutorSession). */
 export function buttonMessage(b: DeviceButton, en: boolean): string | null {
   if (b === "help") return "I'm stuck — can you give me a hint?";
   if (b === "next") return "Okay, what should we do next?";

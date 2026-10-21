@@ -44,7 +44,7 @@ export function BlogPostBody({ post }: { post: Post }): ReactNode {
       <Blocks blocks={post.blocks} />
       <aside className="blog-cta">
         <p><b>{"Try it out loud."}</b>{" Otto is a voice tutor with a shared whiteboard: it asks instead of telling, and explains when you are stuck."}</p>
-        <a className="btn primary" href="/">{"Start talking"}</a>
+        <a className="btn primary" href="/signup">{"Start talking"}</a>
       </aside>
       <h2>{"More guides"}</h2>
       <ul className="blog-more">{more.map((p) => <li key={p.slug}><a href={postPath(p)}>{p.title}</a></li>)}</ul>

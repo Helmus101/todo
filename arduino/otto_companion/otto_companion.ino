@@ -8,6 +8,10 @@
 // The device never sees answers or what the student said.
 
 // #define USE_LCD
+
+// One light only? Keep this line: a single LED on D9 (with a 220 ohm resistor to GND) is lit while the tutor is on and
+// pulses while Otto is thinking. Comment it out for the three-light version (D8 green, D9 amber, D10 blue).
+#define SINGLE_LED
 #ifdef USE_LCD
 #include <Wire.h>
 #include <LiquidCrystal_I2C.h>
@@ -25,7 +29,7 @@ unsigned long changedAt[3] = {0, 0, 0};
 char line[160];
 uint8_t len = 0;
 unsigned long lastPulse = 0;
-bool thinkingOn = false, thinking = false;
+bool thinkingOn = false, thinking = false, tutorOn = false;
 
 void setLeds(bool listen, bool think, bool speak) {
   digitalWrite(LED_LISTEN, listen);
@@ -62,10 +66,20 @@ void handleLine(const char* json) {
   char v[24];
   if (field(json, "state", v, sizeof(v))) {
     thinking = !strcmp(v, "thinking");
-    if (!strcmp(v, "listening")) setLeds(true, false, false);
+    // A short tone once, when the tutor comes on (not on every change of state while it is on).
+    bool active = strcmp(v, "idle") && strcmp(v, "offline");
+    if (active && !tutorOn) beep(true);
+    tutorOn = active;
+#ifdef SINGLE_LED
+    // Tutor on (ready / listening / speaking) = D9 solid; thinking = D9 pulses (see loop); idle / offline = dark.
+    bool on = !strcmp(v, "ready") || !strcmp(v, "listening") || !strcmp(v, "speaking");
+    setLeds(false, on, false);
+#else
+    if (!strcmp(v, "listening") || !strcmp(v, "ready")) setLeds(true, false, false);
     else if (thinking) setLeds(false, true, false);
     else if (!strcmp(v, "speaking")) setLeds(false, false, true);
     else setLeds(false, false, false); // idle / offline
+#endif
   } else if (field(json, "lcd", v, 17)) {
     showText(v);
   } else if (field(json, "beep", v, sizeof(v))) {

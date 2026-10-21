@@ -6,7 +6,7 @@ A USB device with three buttons and three lights that sits next to the laptop wh
 |---|---|---|
 | Button HELP | D2 → GND | asks Otto for a hint (same as typing "I'm stuck") |
 | Button NEXT | D3 → GND | "what should we do next?" |
-| Button MIC | D4 → GND | reserved (does nothing yet: voice mode is only ever switched on screen) |
+| Button MIC | D4 → GND | **starts and stops the tutor**: first press opens a session and the voice call (you talk, Otto talks back), the next press ends the call |
 | Green LED + 220 Ω | D8 → GND | Otto is listening |
 | Amber LED + 220 Ω | D9 → GND | Otto is thinking (pulses) |
 | Blue LED + 220 Ω | D10 → GND | Otto is speaking |
@@ -26,4 +26,6 @@ One JSON line each way at 115200 baud. Device → app: `{"btn":"help|next|mic"}`
 ## Notes
 - The Mega resets when the browser opens the port; the app waits 2 s before sending.
 - Pulling the cable just disconnects the pill; the tutor keeps working.
-- The MIC button is reserved: voice mode is never switched by anything except the student's own click on screen.
+- Pressing MIC with no session open starts one in the last subject you used (pick a subject on screen once). It needs the Tutor page open in Chrome/Edge, one click anywhere on the page since it loaded (browsers only play sound after that), and the microphone already allowed for the site.
+- After the first connection the device reconnects by itself (on page load and when the cable is plugged back in); the USB pill is only needed once.
+- One light only? `#define SINGLE_LED` (on by default) makes a single LED on D9 stay lit while the tutor is on and pulse while Otto thinks. Comment the line out for the three-light version.

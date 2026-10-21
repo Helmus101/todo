@@ -607,17 +607,20 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
       if (img) liveRef.current.sendImage(img);
     }, 1500);
   }, []);
+  // The device's big button starts and stops the tutor (session + voice call); the body is set further down, once
+  // startNewSession and the call exist.
+  const micPressRef = useRef<() => void>(() => {});
   const device = useArduino(useCallback((b) => {
     const en = "en" === "en";
-    if (b === "mic") return; // voice mode stays the student's own click on screen — the device never switches it
+    if (b === "mic") { micPressRef.current(); return; }
     const m = buttonMessage(b, en);
     if (m && !sendingRef.current) void sendRef.current(m);
   }, [L]));
   const deviceSend = device.send;
   const deviceStatus = device.status;
   useEffect(() => {
-    if (deviceStatus === "connected") deviceSend({ state: deviceStateOf({ sending, speaking: voiceState.speaking, listening: voiceState.listening }) });
-  }, [deviceStatus, deviceSend, sending, voiceState.speaking, voiceState.listening]);
+    if (deviceStatus === "connected") deviceSend({ state: deviceStateOf({ sending: sending || startingSession || liveStatus === "connecting", speaking: voiceState.speaking, listening: voiceState.listening, active: liveStatus === "live" }) });
+  }, [deviceStatus, deviceSend, sending, startingSession, liveStatus, voiceState.speaking, voiceState.listening]);
   const onProblemResult = useCallback((r: { problem: TaskProblem; given: string; correct: boolean; attempt: number; systemError?: boolean; partial?: boolean; reveal?: { correct?: number; why?: string } }) => {
     if (r.correct) {
       solvedRef.current.add(r.problem.id);
@@ -720,13 +723,14 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
   // "Start talking" is the student's own tap: once the session exists the call starts by itself (voice is the main way in; typing is a side door).
   const autoStartedRef = useRef(0);
   useEffect(() => {
-    if (!talkRequest || !task || talkRequest === autoStartedRef.current || liveStatus !== "idle") return;
+    if (!talkRequest || !task || talkRequest === autoStartedRef.current || (liveStatus !== "idle" && liveStatus !== "ended")) return;
     autoStartedRef.current = talkRequest;
     void live.start();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [talkRequest, task?.id, liveStatus]);
   const startNewSession = useCallback(async (talk = false) => {
     if (!chosenSubject || startingSession) return;
+    try { localStorage.setItem("otto-last-subject", chosenSubject); } catch { /* best-effort */ }
     if (talk) setTalkRequest((n) => n + 1); // "Start talking" is the student's own tap: voice mode turns on once the panel mounts
     enterFullscreen(); // tutor mode is full screen (this click is the user gesture the browser requires)
     setError(null);
@@ -780,6 +784,26 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
       setStartingSession(false);
     }
   }, [chosenSubject, startingSession, pendingActiveSession, sessionStart, saveAndClose, userId, L]);
+  // The device's button: press = tutor on (session if there isn't one, then the voice call); press again = call off.
+  // Needs the page to have had one click since it loaded (the browser only lets sound play after that) and the
+  // mic already allowed for this site; if the sound is blocked the usual play button appears on screen.
+  const [deviceStartFor, setDeviceStartFor] = useState("");
+  micPressRef.current = () => {
+    if (liveStatus === "live" || liveStatus === "connecting") { live.stop(); return; }
+    if (task) { setTalkRequest((n) => n + 1); return; }
+    if (startingSession) return;
+    if (chosenSubject) { void startNewSession(true); return; }
+    let last = "";
+    try { last = localStorage.getItem("otto-last-subject") || ""; } catch { /* no storage */ }
+    if (!last) { deviceSend({ beep: "no" }); setError("Pick a subject once on screen, then the device button can start the tutor."); return; }
+    setSelectedSubject(last);
+    setDeviceStartFor(last);
+  };
+  useEffect(() => {
+    if (!deviceStartFor || chosenSubject !== deviceStartFor || startingSession) return;
+    setDeviceStartFor("");
+    void startNewSession(true);
+  }, [deviceStartFor, chosenSubject, startingSession, startNewSession]);
 
 
   // FULL-PAGE review of a past session (/tutor/session/<id>/board|chat) — one whole page with exactly two

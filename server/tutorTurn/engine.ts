@@ -40,7 +40,7 @@ export async function runTutorTurn(input: TutorTurnInput): Promise<TutorTurnResu
   const spokenRepair: SpokenRepair | null = input.spoken ? repairSpokenMath(message, spokenContextFrom([context.subject || "", ...board.map((b) => b.text || "")])) : null;
   // Real working in the message: a second reader recomputes it before the tutor answers (so it neither praises a slip nor asks them to redo a step).
   const checked = carriesWorking(message) ? await checkWork(message, board.map((b) => b.text || "").filter(Boolean), result.tokens) : null;
-  const canDraw = !context.subject || /math|physic|chem|bio|econ|scien|geom|stat|calc|algebra|trig/i.test(context.subject) || board.some((b) => ["graph", "svg", "diagram"].includes(String(b.kind)));
+  const canDraw = true; // Unlimited visual artifact drawing capabilities across all subjects
   const system = TURN_PROMPT
     + (canDraw ? DRAW_REFERENCE : "")
     + (input.voiceMode ? VOICE_NOTE : "")

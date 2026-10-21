@@ -236,10 +236,10 @@ h1 { font-family: var(--display); font-weight: 400; letter-spacing: -0.025em; }
 .blog-list li:hover h2 a, .blog-list h2 a:focus-visible { background-size: 100% 2px; }
 .blog-list p { color: var(--ink-2); margin: 0 0 var(--space-2); }
 .blog-meta { text-transform: uppercase; letter-spacing: .08em; font-size: 12px !important; }
-.blog-cta { margin: var(--space-7) 0; padding: var(--space-6); background: var(--ink); color: var(--bg); border-radius: var(--radius-lg); }
-.blog-cta * { color: inherit; }
-.blog-cta .btn.primary { background: var(--bg); color: var(--ink); border-color: var(--bg); }
-.blog-cta .btn.primary:hover { background: var(--bg-2); border-color: var(--bg-2); }
+.blog-cta { margin: var(--space-7) 0; padding: var(--space-6); background: var(--bg-2); border: 1px solid var(--line); border-top: 3px solid var(--ink); border-radius: var(--radius-lg); }
+.blog-cta p { margin: 0 0 var(--space-4); color: var(--ink); font-size: clamp(1.05rem, 2vw, 1.2rem); line-height: 1.5; }
+.blog-cta .btn.primary { display: inline-flex; background: var(--ink) !important; color: var(--bg) !important; border-color: var(--ink) !important; padding: 12px 22px; font-size: 16px; }
+.blog-cta .btn.primary:hover { background: #33322E !important; }
 @media (max-width: 640px) {
   .blog-list li { padding-left: 0; }
   .blog-list li::before { position: static; display: block; margin-bottom: var(--space-2); }
