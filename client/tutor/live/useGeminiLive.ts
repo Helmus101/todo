@@ -167,7 +167,10 @@ export function useGeminiLive(opts: LiveOptions) {
       if (!session) throw Object.assign(new Error(modelErrs.join("; ") || "no model accepted the call"), { status: 503 });
       if (!aliveRef.current) { try { session.close(); } catch { /* */ } return; }
       sessionRef.current = session;
-      micRef.current = await startMic((b64) => { try { sessionRef.current?.sendRealtimeInput({ audio: { data: b64, mimeType: "audio/pcm;rate=16000" } }); } catch { /* socket closing */ } });
+      const mic = await startMic((b64) => { try { sessionRef.current?.sendRealtimeInput({ audio: { data: b64, mimeType: "audio/pcm;rate=16000" } }); } catch { /* socket closing */ } });
+      // The call may have been ended while the microphone was still starting: then the microphone must not stay open.
+      if (!aliveRef.current) { mic.stop(); try { session.close(); } catch { /* */ } return; }
+      micRef.current = mic;
       setStatus("live");
       window.setTimeout(() => { if (aliveRef.current && player.state !== "running") setBlocked(true); }, 800);
       // The model speaks first: nudge it so it greets from what it knows.

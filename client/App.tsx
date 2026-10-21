@@ -696,6 +696,8 @@ export function App() {
   useEffect(() => { if (status?.loggedIn && route === "") navigate(status.home === "tasks" ? "tasks" : "tutor"); }, [status?.loggedIn, status?.home, route]);
   // THE TUTOR IS THE APP: an account that isn't the owner and hasn't opened /full only ever sees the tutor (and /full, the legal pages).
   const fullApp = !!status?.fullApp;
+  const [fullError, setFullError] = useState<string | null>(null);
+  const [fullTry, setFullTry] = useState(0);
   useEffect(() => {
     if (!status?.loggedIn || fullApp) return;
     const ok = route === "tutor" || route.startsWith("tutor/session/") || route === "settings" || route === "full" || route === "privacy" || route === "terms" || route === "research";
@@ -705,9 +707,16 @@ export function App() {
   useEffect(() => {
     if (route !== "full" || !status?.loggedIn) return;
     let cancelled = false;
-    (async () => { try { if (!fullApp) await api.enableFullApp(); await loadStatus(); if (!cancelled) navigate("tasks"); } catch { if (!cancelled) navigate("tutor"); } })();
+    setFullError(null);
+    (async () => {
+      try {
+        if (!fullApp) await api.enableFullApp();
+        await loadStatus();
+        if (!cancelled) navigate("tasks");
+      } catch (e: any) { if (!cancelled) setFullError(String(e?.message || "Couldn't open everything.")); }
+    })();
     return () => { cancelled = true; };
-  }, [route, status?.loggedIn]);
+  }, [route, status?.loggedIn, fullTry]);
 
   // Auto-capture the browser's timezone once it differs from what's stored — so all "local day" math on the
   // server (sweep cadence, daily-minimum) is correct without ever asking the user. Fires only on a real change.
@@ -982,7 +991,15 @@ export function App() {
       })()}
 
       {route === "full" ? (
-        <p className="muted" style={{ padding: "48px 24px", textAlign: "center" }} role="status">{"Opening everything…"}</p>
+        fullError ? (
+          <div style={{ padding: "48px 24px", textAlign: "center" }} role="alert">
+            <p>{`Couldn't open everything: ${fullError}`}</p>
+            <p style={{ display: "flex", gap: 12, justifyContent: "center" }}>
+              <button type="button" className="btn primary" onClick={() => setFullTry((n) => n + 1)}>{"Try again"}</button>
+              <button type="button" className="btn ghost" onClick={() => navigate("tutor")}>{"Back to the tutor"}</button>
+            </p>
+          </div>
+        ) : <p className="muted" style={{ padding: "48px 24px", textAlign: "center" }} role="status">{"Opening everything…"}</p>
       ) : route === "settings" ? (
         <SettingsPage status={status} tasks={tasks} onSignOut={signOut} onChanged={loadStatus} onTasksChanged={setTasks} onStatusUpdate={loadStatus} onReplayOnboarding={replayOnboarding} />
       ) : route === "log" ? (
