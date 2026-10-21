@@ -7,6 +7,10 @@ export type DeviceStatus = "unsupported" | "disconnected" | "connecting" | "conn
 export function useArduino(onButton: (b: DeviceButton) => void) {
   const serial = typeof navigator !== "undefined" ? (navigator as any).serial : undefined;
   const [status, setStatus] = useState<DeviceStatus>(serial ? "disconnected" : "unsupported");
+  // Why the last attempt to open the port failed (shown next to the connect button), "" when fine.
+  const [error, setError] = useState("");
+  // The last thing heard from the device ("mic" etc. + when), so the page can show that a press arrived.
+  const [heard, setHeard] = useState<{ what: string; at: number } | null>(null);
   const portRef = useRef<any>(null);
   const writerRef = useRef<WritableStreamDefaultWriter<Uint8Array> | null>(null);
   const readerRef = useRef<ReadableStreamDefaultReader<Uint8Array> | null>(null);
@@ -36,6 +40,7 @@ export function useArduino(onButton: (b: DeviceButton) => void) {
     if (statusRef.current === "connecting" || statusRef.current === "connected") return;
     setStatus("connecting");
     statusRef.current = "connecting";
+    setError("");
     try {
       await port.open({ baudRate: DEVICE_BAUD });
       portRef.current = port;
@@ -55,14 +60,18 @@ export function useArduino(onButton: (b: DeviceButton) => void) {
             if (done) break;
             for (const line of buf.push(dec.decode(value))) {
               const m = parseDeviceLine(line);
-              if (m && "btn" in m && Date.now() - lastBtnRef.current > 250) { lastBtnRef.current = Date.now(); cbRef.current(m.btn); }
+              if (m && "hello" in m) setHeard({ what: "hello", at: Date.now() });
+              if (m && "btn" in m && Date.now() - lastBtnRef.current > 250) { lastBtnRef.current = Date.now(); setHeard({ what: m.btn, at: Date.now() }); cbRef.current(m.btn); }
             }
           }
         } catch { /* cable pulled */ }
         void close();
       })();
-    } catch {
-      await close(); // port busy (Serial Monitor open?), unplugged mid-open, no permission
+    } catch (e: any) {
+      // port busy (the Arduino IDE or another tab has it open), unplugged mid-open, no permission
+      const msg = String(e?.message || e || "");
+      setError(/busy|in use|already|failed to open/i.test(msg) ? "The port is busy: quit the Arduino IDE (or close its Serial Monitor), unplug and replug the cable, then try again." : `Couldn't open the device: ${msg.slice(0, 120)}`);
+      await close();
     }
   }, [close]);
 
@@ -90,5 +99,5 @@ export function useArduino(onButton: (b: DeviceButton) => void) {
   }, [serial, attach]);
 
   useEffect(() => () => { void close(); }, [close]);
-  return { status, connect, disconnect: close, send };
+  return { status, connect, disconnect: close, send, error, heard };
 }

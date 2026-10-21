@@ -795,7 +795,8 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
     if (chosenSubject) { void startNewSession(true); return; }
     let last = "";
     try { last = localStorage.getItem("otto-last-subject") || ""; } catch { /* no storage */ }
-    if (!last) { deviceSend({ beep: "no" }); setError("Pick a subject once on screen, then the device button can start the tutor."); return; }
+    // Nothing picked and nothing remembered: start in the student's first subject (or Math) rather than do nothing.
+    if (!last) last = (mine.length ? mine : ["Math"])[0];
     setSelectedSubject(last);
     setDeviceStartFor(last);
   };
@@ -913,7 +914,7 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
           {device.status !== "unsupported" ? (
             <div className="tutor-start-device">
               <DeviceButton labelled status={device.status} onConnect={device.connect} onDisconnect={device.disconnect} en={"en" === "en"} />
-              <span className="settings-hint">{device.status === "connected" ? "Press the device button to start or stop the tutor." : "Plug it in over USB, then click to pick it (once)."}</span>
+              <span className="settings-hint">{device.status === "connected" ? "Press the device button to start or stop the tutor." : device.error || "Plug it in over USB, then click to pick it (once)."}{device.status === "connected" && device.heard ? ` Last heard from the device: ${device.heard.what === "hello" ? "it started" : `"${device.heard.what}" button`}.` : ""}</span>
             </div>
           ) : null}
           {error ? <p className="tutor-error" role="alert">{error}</p> : null}
