@@ -121,45 +121,45 @@ export function ResearchPageBody() {
         <p className="micro-label accent">{"Research"}</p>
         <h1 className="research-title">{"Made for learning, not shortcuts."}</h1>
         <p className="research-intro">
-          {"Most AI tutors promise to teach. Under pressure, they hand over the answer. Otto is built on four methods that make handing over the answer harder than helping you learn."}
+          {"Most AI tutors promise to teach. Under pressure, they hand over the answer. Otto is a voice tutor built on four methods that make handing over the answer harder than helping you learn."}
         </p>
 
         <section className="research-sec">
           <p className="research-sec-kicker" aria-hidden>01</p>
           <h2 className="research-sec-title">{"Socratic questioning"}</h2>
         <p className="research-sec-body">
-          {"Otto never states the conclusion — you do. It finds exactly where you're stuck, gives one hint at a time, then asks you to say it back in your own words. And if it ever drifts toward just handing over the answer, a built-in guardrail stops it and redirects."}
+          {"Otto never states the conclusion of your problem — you do. It finds exactly where you're stuck, gives one hint at a time, then asks you to say it back in your own words. When you genuinely need an idea explained, it explains it plainly, then hands the thinking straight back to you."}
         </p>
         </section>
 
         <section className="research-sec">
           <p className="research-sec-kicker" aria-hidden>02</p>
-          <h2 className="research-sec-title">{"Spaced repetition"}</h2>
+          <h2 className="research-sec-title">{"Check on a fresh example"}</h2>
         <p className="research-sec-body">
-          {"Every card comes back right before you'd forget it — not sooner, not later. The ones you miss return quickly; the ones you know drift further away."}
+          {"A right answer isn't proof you understand. Before moving on, Otto gives you a new case. A mistake is treated as a clue: it finds the belief behind it, tests it with a small example, and asks you to revise your own idea."}
         </p>
         </section>
 
         <section className="research-sec">
           <p className="research-sec-kicker" aria-hidden>03</p>
-          <h2 className="research-sec-title">{"The engagement hierarchy"}</h2>
+          <h2 className="research-sec-title">{"Talking it through"}</h2>
         <p className="research-sec-body">
-          {"Reading an answer teaches you almost nothing. Explaining your reasoning out loud teaches you the most. Every Otto reply is written to pull you one level deeper — never shallower."}
+          {"Reading an answer teaches you almost nothing. Explaining your reasoning out loud teaches you the most. That is why Otto is a voice tutor: every reply is one short question that pulls you one level deeper — never shallower."}
         </p>
         </section>
 
         <section className="research-sec">
           <p className="research-sec-kicker" aria-hidden>04</p>
-          <h2 className="research-sec-title">{"The Eisenhower matrix"}</h2>
+          <h2 className="research-sec-title">{"A shared board and a memory"}</h2>
         <p className="research-sec-body">
-          {"Your day isn't a pile sorted by deadline. Every task is scored for urgency and importance — and re-scored as deadlines approach — so the right thing stays on top."}
+          {"Otto writes the problem, your correct steps and the pictures on a shared whiteboard, so the working stays in front of you while you talk. It remembers your past sessions, tasks and workbooks, so each session starts where you left off."}
         </p>
         </section>
 
         <section className="research-sec research-sec-closing">
           <h2 className="research-sec-title">{"What this doesn't mean"}</h2>
           <p className="research-sec-body">
-            {"Otto can still be wrong — a language model is a language model. So whenever a guardrail fires, Otto says so right on the exchange, instead of claiming to be infallible."}
+            {"Otto can still be wrong — a language model is a language model. If something it says doesn't add up, say so out loud and it will go back over it with you."}
           </p>
         </section>
 

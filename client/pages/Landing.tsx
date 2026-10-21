@@ -15,6 +15,7 @@ export function Landing({ lang, onLangChange }: { lang: "fr" | "en"; onLangChang
       <header className="landing-min-nav">
         <span className="landing-min-brand">otto</span>
         <nav>
+          <a href="/research">{"Approach"}</a>
           <a href="/login">{"Log in"}</a>
         </nav>
       </header>
@@ -26,6 +27,7 @@ export function Landing({ lang, onLangChange }: { lang: "fr" | "en"; onLangChang
       <footer className="landing-min-foot">
         <a href="/privacy">{"Privacy"}</a>
         <a href="/terms">{"Terms"}</a>
+        <a href="/research">{"Research"}</a>
       </footer>
     </div>
   );
