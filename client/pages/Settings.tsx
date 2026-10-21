@@ -1,4 +1,5 @@
 import { LanguagePicker } from "../LanguagePicker.tsx";
+import { PronoteContext } from "./PronoteContext.tsx";
 import { useEffect, useState, useCallback, useRef } from "react";
 import type { WebTask, ConnectionStatus, Profile } from "../../shared/types.ts";
 import { api, type IntegrationItem, type ConnectedAccount } from "../api.ts";
@@ -254,6 +255,8 @@ export function SettingsPage({ status, tasks, onSignOut, onChanged, onTasksChang
   const [profileError, setProfileError] = useState(false);
   const [showSources, setShowSources] = useState(true);
   const [fullBusy, setFullBusy] = useState(false);
+  // The switch moves the instant it's tapped (optimistic); the slim bar shows the save + refresh in flight; a failure puts it back.
+  const [fullOptimistic, setFullOptimistic] = useState<boolean | null>(null);
   const loadProfile = () => { setProfileError(false); void api.profile().then(setProfile).catch(() => setProfileError(true)); };
   useEffect(() => { setPausedLocal(status.paused); }, [status.paused]);
   useEffect(() => { loadProfile(); void api.usage().then(setUsage).catch(() => {}); }, []);
@@ -338,6 +341,7 @@ export function SettingsPage({ status, tasks, onSignOut, onChanged, onTasksChang
         {showSources ? <div className="settings-reveal">
         <p className="settings-hint">{status.fullApp ? "Otto reads these sources and preps the work — " : "Connect Pronote so Otto knows what you are studying: your homework (cahier de texte) and the lesson content your teachers publish. "}<b>{"It never sends or hands anything in for you"}</b>.</p>
         <PronoteTile status={status} onStatusUpdate={onStatusUpdate} />
+        {status.pronoteConnected ? <PronoteContext /> : null}
         {status.fullApp ? <GoogleTiles onChanged={onChanged} restricted={profile?.track !== "ib" && profile?.track !== "ap" && profile?.track !== "other"} /> : null}
         </div> : null}
       </section>
@@ -401,22 +405,22 @@ export function SettingsPage({ status, tasks, onSignOut, onChanged, onTasksChang
         </section>
       )}
 
-      {status.fullApp ? <section className="settings-sec reveal" style={{ ["--d" as any]: "0.13s" }}>
+      <section className="settings-sec reveal" style={{ ["--d" as any]: "0.13s" }}>
         <button className="sec-toggle" aria-expanded={showKnows} onClick={() => setShowKnows((v) => !v)}>
           <h3>{"What Otto knows about you"}</h3>
           <span className={`caret ${showKnows ? "open" : ""}`} aria-hidden="true">›</span>
         </button>
-        {showKnows && <div className="settings-reveal"><p className="settings-hint">{"Otto fills this in over time. You can edit anything."}</p><ProfileEditor /></div>}
-      </section> : null}
+        {showKnows && <div className="settings-reveal"><p className="settings-hint">{"Otto fills this in over time, and the tutor adds to it when a session ends. The tutor reads it to teach you better. You can edit anything."}</p><ProfileEditor /></div>}
+      </section>
 
-      {status.fullApp ? <section className="settings-sec reveal" style={{ ["--d" as any]: "0.18s" }}>
+      <section className="settings-sec reveal" style={{ ["--d" as any]: "0.18s" }}>
         <button className="sec-toggle" aria-expanded={showStudentModel} onClick={() => setShowStudentModel((v) => !v)}>
           <h3>{"How Otto sees you"}</h3>
           <span className={`caret ${showStudentModel ? "open" : ""}`} aria-hidden="true">›</span>
         </button>
         {showStudentModel && (
           <div className="settings-reveal">
-            <p className="settings-hint">{"Updated at most once a day from your tutor sessions and activity. Never shared, never used to grade you."}</p>
+            <p className="settings-hint">{"Updated at most once a day, and after your tutor sessions. The tutor uses it as background. Never shared, never used to grade you."}</p>
             {profile?.studentModel?.summary ? (
               <>
                 <p className="student-model-text">{profile.studentModel.summary}</p>
@@ -429,19 +433,26 @@ export function SettingsPage({ status, tasks, onSignOut, onChanged, onTasksChang
             ) : <p className="settings-hint">{"Not enough activity yet."}</p>}
           </div>
         )}
-      </section> : null}
+      </section>
 
       <section className="settings-sec reveal">
         <h3>{"Full mode"}</h3>
         <div className="set-list">
           <label className="set-row">
             <span className="set-text"><b>{"Show the whole app"}</b><span className="settings-hint">{"Off: just the tutor. On: Today, Journal, Coursework, Mistakes and every connection."}</span></span>
-            <span className="switch"><input type="checkbox" checked={!!status.fullApp} disabled={fullBusy} onChange={(e) => {
+            <span className="switch"><input type="checkbox" checked={fullOptimistic ?? !!status.fullApp} disabled={fullBusy} aria-busy={fullBusy} onChange={(e) => {
               const on = e.target.checked;
+              setFullOptimistic(on);
               setFullBusy(true);
-              void api.setFullApp(on).then(() => { onStatusUpdate?.(); onChanged(); }).catch((err: any) => notify(err?.message || "That didn't save — give it another try.", "error")).finally(() => setFullBusy(false));
+              void api.setFullApp(on)
+                .then(() => { onStatusUpdate?.(); onChanged(); })
+                .catch((err: any) => { setFullOptimistic(null); notify(err?.message || "That didn't save — give it another try.", "error"); })
+                .finally(() => { setFullBusy(false); setFullOptimistic(null); });
             }} /><span className="switch-track" /></span>
           </label>
+          {fullBusy ? (
+            <div className="otto-progress" role="progressbar" aria-label={fullOptimistic ? "Switching to the whole app" : "Switching to the tutor only"} aria-busy="true"><span /></div>
+          ) : null}
         </div>
       </section>
     </main>

@@ -75,3 +75,16 @@ export function buildRecap(i: { log: TutorTurnRecord[]; board: BoardEntry[]; obj
       : ("Next: redo the last step on your own."),
   };
 }
+
+/** One short line for the profile's session notes (what Otto "knows about you"), built from the code-made recap only:
+ *  objective labels, misconception labels, the next step. Never the student's own words. null when nothing happened. */
+export function sessionMemoryNote(subject: string | undefined, recap: Pick<Recap, "learned" | "gaps" | "mistakes" | "next">): string | null {
+  const bits: string[] = [];
+  if (recap.learned.length) bits.push(`finished: ${recap.learned.slice(0, 3).join("; ")}`);
+  if (recap.gaps.length) bits.push(`still to do: ${recap.gaps.slice(0, 2).join("; ")}`);
+  const mis = recap.mistakes.map((m) => m.replace(/^Misconception worked on:\s*/i, "")).filter(Boolean);
+  if (mis.length) bits.push(`kept tripping on: ${mis.slice(0, 2).join("; ")}`);
+  if (!bits.length) return null;
+  const note = `${subject ? `${subject.slice(0, 40)} — ` : ""}${bits.join(" | ")}`;
+  return note.length > 280 ? note.slice(0, 279).trimEnd() + "…" : note;
+}

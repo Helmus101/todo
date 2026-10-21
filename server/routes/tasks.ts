@@ -15,14 +15,14 @@ import { studentProblemStatement } from "../tutorAdapt.ts";
 import { recordConceptEvidence, normalizeStudentModel, emptyStudentModel } from "../studentModel.ts";
 import { detectSubject, computedGapKey, solvedGapKey } from "../tutor.ts";
 import { runTutorTurn } from "../tutorTurn/engine.ts";
-import { logAssistance, settleRetest, buildRecap, dueRetests } from "../tutorTurn/ledger.ts";
+import { logAssistance, settleRetest, buildRecap, dueRetests, sessionMemoryNote } from "../tutorTurn/ledger.ts";
 import { selectJournal } from "../journal.ts";
 import type { TutorOpenerMemory } from "../claude.ts";
 import type { WebTask, Profile, BoardEntry, TaskObjective, TaskProblem } from "../../shared/types.ts";
 import { emptyProfile, isHandled, tzOf, addUsage, nextLeitnerReview, practiceAnswerMatches, deadlineEpoch, bumpActivityHour, learnedProductiveHourForSubject } from "../../shared/types.ts";
 import { computeWorkload } from "../workload.ts";
 import { schoolRecordLine } from "../schoolRecord.ts";
-import { aiReady, classifyProviderError, refineManualTask, chatAboutTask, expandStep, runSubstep, studyHelp, evaluateCheckpoint, needsAdaptiveReplan, computeTaskOutcome, interactiveSceneDocument, INTERACTIVE_SCENE_CSP } from "../claude.ts";
+import { applyRememberFact, synthesizeStudentModel, aiReady, classifyProviderError, refineManualTask, chatAboutTask, expandStep, runSubstep, studyHelp, evaluateCheckpoint, needsAdaptiveReplan, computeTaskOutcome, interactiveSceneDocument, INTERACTIVE_SCENE_CSP } from "../claude.ts";
 import { loadState, saveState, cloudEnabled, getJob, getLatestJob, eventsForTask, recordEvent, countActiveJobs, activeJobTaskIds, loadBanditState, saveBanditState, recordSessionOutcome, recordMetric, getStudyMetricsSummary } from "../store.ts";
 import { contextKey as banditContextKey, chooseArm, updatePosterior, computeLatencyReward, leadingArm, POMODORO_ARMS, FLASHCARD_ARMS, AUDIO_ARMS, DENSITY_ARMS, ORDERING_ARMS, CHAT_STYLE_ARMS, GRANULARITY_ARMS } from "../bandit.ts";
 import { predictNextEngagement, predictWeakSubjects, aggregateSubjectSignals, subjectFrequency, orderingBoost, weakSubjectBoost, twoMinuteRuleBoost, stallNudgeLine } from "../patterns.ts";
@@ -747,6 +747,21 @@ export function registerTaskRoutes(app: express.Express): void {
     const recap = buildRecap({ log: t.tutorState?.log || [], board, objectives, lang: "en" });
     const due = dueRetests(profile.assistance, new Date()).map((a) => a.skill).slice(0, 5);
     res.json({ recap, retestsDue: due });
+    // AFTER the answer (the student has already left): the tutor adds to what Otto knows about them. Only labels from the
+    // code-built recap go into the profile (objectives, misconceptions) — never the conversation, which stays on the device.
+    try {
+      const note = sessionMemoryNote(t.sourceSubject, recap);
+      if (note) {
+        applyRememberFact(profile, "session", note);
+        profile.lastTutorActivityAt = new Date().toISOString();
+        // "How Otto sees you" is refreshed at most once a day, in every mode (tutor-only accounts have no daily sweep to do it).
+        if (jobs.shouldRefreshStudentModel(profile)) {
+          const synth = await synthesizeStudentModel(profile, req.session.tasks || []);
+          if (synth) { profile.studentModel = { summary: synth.summary, updatedAt: new Date().toISOString(), basedOnActivityAt: profile.lastTutorActivityAt }; addUsage(profile, synth.tokens, "student_model"); }
+        }
+        await commit(req);
+      }
+    } catch (e: any) { console.warn("[tutor/close] memory update failed:", String(e?.message || e)); }
   });
 
   app.post("/api/tasks/:id/chat", requireAuth, rateLimit(10, 60_000), dailyTurnCap(), oneTurnAtATime, async (req, res) => {

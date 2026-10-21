@@ -1,4 +1,5 @@
 // Repo test suite — run with `npm test` (tsx). Pure-function tests: no network, no AI calls.
+import { sessionMemoryNote } from "../server/tutorTurn/ledger.ts";
 import { readFileSync, readdirSync } from "node:fs";
 // The app shell was split into client/App.tsx + client/appShared.tsx + client/pages/*.tsx; source checks read them as one.
 // The API was split into server/index.ts + server/http.ts + server/routes/*.ts; source checks read them as one.
@@ -2246,6 +2247,21 @@ section("The voice tutor is Socratic: the rule is in the prompt, nothing contrad
   check("no instruction tells the tutor to hand over the answer", !/\b(?:give|tell|state) (?:them|the student) the (?:final )?answer\b/i.test(p) && !/\bshow (?:them )?the (?:full )?solution\b/i.test(p));
   const bw = readFileSync(new URL("../server/tutorTurn/boardWriter.ts", import.meta.url), "utf8");
   check("the board writer never writes the answer to the tutor's open question and never marks the right option", /THE ANSWER TO THE QUESTION THE TUTOR ASKS AT THE END OF THE EXCHANGE/.test(bw) && /never marking the right one/.test(bw));
+}
+
+section("The tutor sees the Pronote cahier de texte and contenu des cours");
+{
+  const { schoolRecordLine } = await import("../server/schoolRecord.ts");
+  const profile = { about: "", preferences: [], people: [], projects: [], courses: [], sessions: [], pronoteLessons: [
+    { id: "r1:c1", subject: "Physique-Chimie", date: "2026-10-20", title: "Chocs élastiques", text: "Conservation de la quantité de mouvement; exercice 12 p. 140", category: "Cours", files: [{ name: "chocs.pdf", url: "https://x" }] }] };
+  const live = { homework: [
+    { subject: "Mathématiques", description: "Exercices 3 et 4 page 52, rédiger la démonstration", deadline: "2026-10-25T00:00:00.000Z", attachments: [{ name: "fiche.pdf" }] },
+    { subject: "Physique-Chimie", description: "Préparer le contrôle sur les chocs", deadline: "2026-10-23T00:00:00.000Z" }] };
+  const out = schoolRecordLine([], profile, "Physique-Chimie", live);
+  check("the live cahier de texte is listed with the teachers' instructions, files and deadlines, this subject first", /PRONOTE CAHIER DE TEXTE[^\n]*live from Pronote/.test(out) && out.indexOf("Préparer le contrôle") < out.indexOf("Exercices 3 et 4") && /files: fiche\.pdf/.test(out) && /due 2026-10-23/.test(out));
+  check("the contenu des cours is listed with its text and files", /PRONOTE CONTENU DES COURS/.test(out) && /Chocs élastiques/.test(out) && /files: chocs\.pdf/.test(out));
+  const tut = readFileSync(new URL("../server/routes/tutor.ts", import.meta.url), "utf8");
+  check("a voice call start reads Pronote live (4 s at most) before building the tutor's memory", /pronoteSvc\.pronoteContext\(req\.session\.user!, profile\)/.test(tut) && /setTimeout\(\(\) => r\(undefined\), 4000\)/.test(tut));
 }
 
 section("MathText — a mis-wrapped $...$ prose phrase falls back to plain text instead of KaTeX mangling it");
@@ -5208,6 +5224,19 @@ section("Dropdowns share one considered style, and no page loads fonts from Goog
   check("every <select> gets a chevron, padding, hover, focus-visible and disabled state", /select:not\(\[multiple\]\):not\(\[size\]\)\s*\{[^}]*appearance: none/.test(mc) && /background-image: url\("data:image\/svg\+xml/.test(mc) && /select:not\(\[multiple\]\):not\(\[size\]\):hover/.test(mc) && /:focus-visible/.test(mc) && /select:disabled/.test(mc));
   const idx = readFileSync("index.html", "utf8"), vj = readFileSync("vercel.json", "utf8"), srv = readFileSync("server/index.ts", "utf8"), css = readFileSync("client/styles.css", "utf8");
   check("fonts are bundled, not fetched from Google: no Google Fonts link, @import or CSP allowance", !/fonts\.(googleapis|gstatic)\.com/.test(idx + css) && !/fonts\.(googleapis|gstatic)\.com/.test(vj) && !/"(style|font)-src[^"]*fonts\.g/.test(srv) && /@fontsource\/kalam/.test(readFileSync("client/main.tsx", "utf8")));
+}
+
+section("Full mode switches at once with a progress bar; 'what Otto knows / how Otto sees you' work in every mode and feed the tutor");
+{
+  const st = readFileSync("client/pages/Settings.tsx", "utf8"), app = readFileSync("client/App.tsx", "utf8"), tut = readFileSync("server/tutor.ts", "utf8"), tasks = readFileSync("server/routes/tasks.ts", "utf8");
+  check("the Full-mode switch is optimistic (moves on tap, reverts on failure) and shows a progress bar while saving", /fullOptimistic \?\? !!status\.fullApp/.test(st) && /setFullOptimistic\(null\); notify/.test(st) && /className="otto-progress" role="progressbar"/.test(st));
+  check("opening /full shows a progress bar too", /Opening everything…[\s\S]{0,200}otto-progress/.test(app));
+  check("'What Otto knows about you' and 'How Otto sees you' are no longer hidden outside Full mode", !/status\.fullApp \? <section className="settings-sec reveal" style=\{\{ \["--d" as any\]: "0\.1[38]s"/.test(st) && /<h3>\{"What Otto knows about you"\}<\/h3>/.test(st) && /<h3>\{"How Otto sees you"\}<\/h3>/.test(st));
+  check("the tutor is given 'how Otto sees them' as background context", /HOW OTTO SEES THEM/.test(tut) && /p\?\.studentModel\?\.summary/.test(tut));
+  check("closing a session adds a note to the profile and refreshes the read (any mode)", /sessionMemoryNote\(t\.sourceSubject, recap\)/.test(tasks) && /applyRememberFact\(profile, "session", note\)/.test(tasks) && /jobs\.shouldRefreshStudentModel\(profile\)/.test(tasks));
+  const note = sessionMemoryNote("Maths", { learned: ["Expand logs with the 3 laws"], gaps: ["Solve log equations"], mistakes: ["Misconception worked on: thinks log(x+y)=log x+log y"], next: "Next: x" });
+  check("the session note is labels only, short, with subject", /^Maths — finished: Expand logs[^|]*\| still to do: Solve log equations \| kept tripping on: thinks log/.test(note || "") && (note || "").length <= 280);
+  check("a session where nothing happened adds no note", sessionMemoryNote("Maths", { learned: [], gaps: [], mistakes: [], next: "" }) === null);
 }
 
 section("Board changes are undoable in the Tutor session (spec §12 #10, source pins)");

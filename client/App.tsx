@@ -1045,7 +1045,12 @@ export function App() {
               <button type="button" className="btn ghost" onClick={() => navigate("tutor")}>{"Back to the tutor"}</button>
             </p>
           </div>
-        ) : <p className="muted" style={{ padding: "48px 24px", textAlign: "center" }} role="status">{"Opening everything…"}</p>
+        ) : (
+          <div style={{ padding: "48px 24px", textAlign: "center", maxWidth: 360, margin: "0 auto" }} role="status">
+            <p className="muted" style={{ marginBottom: 12 }}>{"Opening everything…"}</p>
+            <div className="otto-progress" role="progressbar" aria-label="Opening the whole app" aria-busy="true"><span /></div>
+          </div>
+        )
       ) : route === "settings" ? (
         <SettingsPage status={status} tasks={tasks} onSignOut={signOut} onChanged={loadStatus} onTasksChanged={setTasks} onStatusUpdate={loadStatus} onReplayOnboarding={replayOnboarding} />
       ) : route === "log" ? (

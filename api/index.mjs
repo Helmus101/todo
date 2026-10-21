@@ -3567,6 +3567,7 @@ async function deleteAccount(email) {
       errors.push(`${table}: ${e?.message || e}`);
     }
   }
+  await deleteAllFeedbackFor(email);
   await destroySessionsForUser(email);
   await deleteAuthUser(email);
   return { ok: errors.length === 0, errors };
@@ -3803,7 +3804,15 @@ async function grantExtraUsage(email, usd, weekKey) {
   await saveState(email, { ...state, profile: p }, { throwOnError: true });
   return true;
 }
-var url, key, TABLE, client, authKey, cloudEnabled, SESSIONS, RESET_TOKENS, memResetTokens, hashResetToken, isTransient2, STATE_CACHE_TTL_MS, STATE_CACHE_MAX, egress, stateCache, BANDIT, OUTCOMES, memBandit, memOutcomes, STUDY_METRIC_NAMES, RATELIMITS, ratelimitsTableOk, JOBS, EVENTS, LOCK_MS, HEARTBEAT_MS, retryBackoffUntil, memJobs, jobsTableOk, heartbeatIntervalMs, memEvents;
+async function deleteAllFeedbackFor(email) {
+  if (!client) {
+    for (let i = memFeedback.length - 1; i >= 0; i--) if (memFeedback[i].user_email === email) memFeedback.splice(i, 1);
+    return;
+  }
+  const { error } = await client.from(FEEDBACK).delete().eq("user_email", email);
+  if (error) console.warn("[store] deleteAllFeedbackFor failed:", error.message);
+}
+var url, key, TABLE, client, authKey, cloudEnabled, SESSIONS, RESET_TOKENS, memResetTokens, hashResetToken, isTransient2, STATE_CACHE_TTL_MS, STATE_CACHE_MAX, egress, stateCache, BANDIT, OUTCOMES, memBandit, memOutcomes, STUDY_METRIC_NAMES, RATELIMITS, ratelimitsTableOk, JOBS, EVENTS, LOCK_MS, HEARTBEAT_MS, retryBackoffUntil, memJobs, jobsTableOk, heartbeatIntervalMs, memEvents, FEEDBACK, memFeedback;
 var init_store = __esm({
   "server/store.ts"() {
     "use strict";
@@ -3859,6 +3868,8 @@ var init_store = __esm({
     jobsTableOk = null;
     heartbeatIntervalMs = HEARTBEAT_MS;
     memEvents = [];
+    FEEDBACK = "weave_web_feedback";
+    memFeedback = [];
   }
 });
 
@@ -3874,6 +3885,7 @@ __export(pronote_exports, {
   invalidatePronoteStatus: () => invalidatePronoteStatus,
   isPrivateOrReservedIp: () => isPrivateOrReservedIp,
   pronoteConnected: () => pronoteConnected,
+  pronoteContext: () => pronoteContext,
   pronoteGrades: () => pronoteGrades,
   pronoteHomework: () => pronoteHomework,
   pronoteLessons: () => pronoteLessons,
@@ -4223,7 +4235,18 @@ async function syncPronoteLessons(profile, email) {
   } catch {
   }
 }
-var PRONOTE_TIMEOUT_MS, LEGACY_MOCK_URL, pronoteLocks, PRIVATE_IPV4_RANGES, TOUCH_MIN_GAP_MS, TEST_DAYS_AHEAD;
+async function pronoteContext(email, profile, opts = {}) {
+  const held = contextCache.get(email);
+  if (held && !opts.fresh && Date.now() - held.at < 10 * 6e4) return held.value;
+  const [hw, ls] = await Promise.allSettled([pronoteHomework(email, 21), pronoteLessons(email)]);
+  const homework = hw.status === "fulfilled" ? hw.value : [];
+  const lessons = ls.status === "fulfilled" ? ls.value : [];
+  if (profile && lessons.length) applyPronoteLessons(profile, lessons);
+  const value = { homework, lessons: lessons.length ? lessons : profile?.pronoteLessons || [] };
+  if (hw.status === "fulfilled" || ls.status === "fulfilled") contextCache.set(email, { at: Date.now(), value });
+  return value;
+}
+var PRONOTE_TIMEOUT_MS, LEGACY_MOCK_URL, pronoteLocks, PRIVATE_IPV4_RANGES, TOUCH_MIN_GAP_MS, TEST_DAYS_AHEAD, contextCache;
 var init_pronote = __esm({
   "server/pronote.ts"() {
     "use strict";
@@ -4252,6 +4275,7 @@ var init_pronote = __esm({
     ];
     TOUCH_MIN_GAP_MS = 2 * 60 * 60 * 1e3;
     TEST_DAYS_AHEAD = 28;
+    contextCache = /* @__PURE__ */ new Map();
   }
 });
 
@@ -14514,6 +14538,8 @@ function backgroundBlock(c) {
     personalContextLine(p),
     milestoneLine(p, c.subject),
     learningStyleLine(p),
+    // "How Otto sees you" (Settings): the synthesized read, refreshed at most daily and after sessions. Background only.
+    p?.studentModel?.summary ? `HOW OTTO SEES THEM (a synthesized read of this student, from their activity \u2014 background, they can see and reset it in Settings): ${String(p.studentModel.summary).slice(0, 700)}` : "",
     hintDensityLine(p),
     p?.tutorPrefs?.length ? `HOW THEY LIKE TO LEARN (from what they've asked for before \u2014 honour it unless it would hand over the answer): ${p.tutorPrefs.join("; ")}.` : "",
     // What they've PROVED (code-verified evidence per skill, server/studentModel.ts) — where to start, what to skip.
@@ -14710,12 +14736,16 @@ import { randomUUID as randomUUID6 } from "node:crypto";
 init_types();
 var clip = (s, n) => String(s || "").replace(/\s+/g, " ").trim().slice(0, n);
 var same = (a, b) => !!a && !!b && a.toLowerCase().includes(b.toLowerCase()) || !!a && !!b && b.toLowerCase().includes(a.toLowerCase());
-function schoolRecordLine(list, profile, subject) {
+function schoolRecordLine(list, profile, subject, live) {
   const tasks = list || [];
   const out = [];
   const pron = tasks.filter((t) => t.source === "pronote" && !isHandled(t.status)).sort((a, b) => String(a.sourceDue || a.when || "9999").localeCompare(String(b.sourceDue || b.when || "9999")));
   const pronPick = [...pron.filter((t) => subject && same(t.sourceSubject, subject)), ...pron.filter((t) => !(subject && same(t.sourceSubject, subject)))].slice(0, 12);
-  if (pronPick.length) {
+  if (live?.homework?.length) {
+    const hw = [...live.homework].sort((a, b) => String(a.deadline).localeCompare(String(b.deadline)));
+    const pick = [...hw.filter((h) => subject && same(h.subject, subject)), ...hw.filter((h) => !(subject && same(h.subject, subject)))].slice(0, 12);
+    out.push("PRONOTE CAHIER DE TEXTE (homework and tests set by their teachers, live from Pronote, nearest first):\n" + pick.map((h) => `- [${clip(h.subject, 30)}] due ${clip(String(h.deadline).slice(0, 10), 12)}${h.description ? ` \u2014 ${clip(h.description, 400)}` : ""}${h.attachments?.length ? ` \u2014 files: ${h.attachments.map((f4) => clip(f4.name, 50)).join(", ")}` : ""}`).join("\n"));
+  } else if (pronPick.length) {
     out.push("PRONOTE CAHIER DE TEXTE (open homework and tests from their school, nearest first):\n" + pronPick.map((t) => `- ${t.sourceSubject ? `[${clip(t.sourceSubject, 30)}] ` : ""}${clip(t.title, 90)}${t.sourceDue || t.when ? ` \u2014 due ${clip(String(t.sourceDue || t.when), 30)}` : ""}${t.sourceDetail ? ` \u2014 ${clip(t.sourceDetail, 140)}` : ""}`).join("\n"));
   }
   const grades = (profile?.grades || []).filter((g) => g.source === "pronote").slice(0, 10);
@@ -16775,6 +16805,23 @@ function registerIntegrationRoutes(app2) {
     });
     res.json({ ok: true });
   });
+  app2.get("/api/pronote/context", requireAuth, rateLimit(10, 6e4), ah(async (req, res) => {
+    if (!(await pronoteConnected(req.session.user)).connected) {
+      res.json({ connected: false, homework: [], lessons: [] });
+      return;
+    }
+    const profile = req.session.profile || emptyProfile();
+    const c = await pronoteContext(req.session.user, profile, { fresh: req.query.fresh === "1" });
+    if (c.lessons.length) {
+      req.session.profile = profile;
+      void commit(req);
+    }
+    res.json({
+      connected: true,
+      homework: c.homework.slice(0, 30).map((h) => ({ id: h.id, subject: h.subject, deadline: h.deadline, text: h.description.slice(0, 500), files: (h.attachments || []).map((f4) => f4.name) })),
+      lessons: c.lessons.slice(0, 30).map((l) => ({ id: l.id, subject: l.subject, date: l.date, title: l.title, category: l.category, text: l.text.slice(0, 500), files: (l.files || []).map((f4) => f4.name) }))
+    });
+  }));
   app2.post("/api/integrations/pronote/disconnect", requireAuth, async (req, res) => {
     try {
       await disconnectPronote(req.session.user);
@@ -17649,6 +17696,16 @@ function buildRecap(i) {
     gaps: open,
     next: open[0] ? `Next: ${open[0]}` : solvedAlone > 0 ? "Next: try a similar problem with new numbers, alone." : "Next: redo the last step on your own."
   };
+}
+function sessionMemoryNote(subject, recap) {
+  const bits = [];
+  if (recap.learned.length) bits.push(`finished: ${recap.learned.slice(0, 3).join("; ")}`);
+  if (recap.gaps.length) bits.push(`still to do: ${recap.gaps.slice(0, 2).join("; ")}`);
+  const mis = recap.mistakes.map((m) => m.replace(/^Misconception worked on:\s*/i, "")).filter(Boolean);
+  if (mis.length) bits.push(`kept tripping on: ${mis.slice(0, 2).join("; ")}`);
+  if (!bits.length) return null;
+  const note = `${subject ? `${subject.slice(0, 40)} \u2014 ` : ""}${bits.join(" | ")}`;
+  return note.length > 280 ? note.slice(0, 279).trimEnd() + "\u2026" : note;
 }
 
 // server/routes/tasks.ts
@@ -18781,6 +18838,23 @@ function registerTaskRoutes(app2) {
     const recap = buildRecap({ log: t.tutorState?.log || [], board, objectives, lang: "en" });
     const due = dueRetests(profile.assistance, /* @__PURE__ */ new Date()).map((a) => a.skill).slice(0, 5);
     res.json({ recap, retestsDue: due });
+    try {
+      const note = sessionMemoryNote(t.sourceSubject, recap);
+      if (note) {
+        applyRememberFact(profile, "session", note);
+        profile.lastTutorActivityAt = (/* @__PURE__ */ new Date()).toISOString();
+        if (shouldRefreshStudentModel(profile)) {
+          const synth = await synthesizeStudentModel(profile, req.session.tasks || []);
+          if (synth) {
+            profile.studentModel = { summary: synth.summary, updatedAt: (/* @__PURE__ */ new Date()).toISOString(), basedOnActivityAt: profile.lastTutorActivityAt };
+            addUsage(profile, synth.tokens, "student_model");
+          }
+        }
+        await commit(req);
+      }
+    } catch (e) {
+      console.warn("[tutor/close] memory update failed:", String(e?.message || e));
+    }
   });
   app2.post("/api/tasks/:id/chat", requireAuth, rateLimit(10, 6e4), dailyTurnCap(), oneTurnAtATime, async (req, res) => {
     if (isPaused(req)) {
@@ -20178,6 +20252,7 @@ ${openQuestion}` : ""}`;
 
 // server/routes/tutor.ts
 init_studentModel();
+init_pronote();
 
 // shared/liveTutor.ts
 function liveInstructions(o) {
@@ -20199,7 +20274,7 @@ HOW YOU TEACH
 AT THEIR LEVEL (this matters as much as anything else)
 - ${o.level ? `The student is: ${o.level}. Pitch EVERY question, example and explanation at that level: the vocabulary, the maths they have met, the typical exam for their programme.` : "You don't know their grade yet: in your first exchange find out (year or grade, and what exam or course they are preparing for) and keep it in mind."} Calibrate in the first two or three questions: start one notch below what you expect, climb quickly while they succeed, step back and shrink the step after two misses. Never talk down, never above their head.
 - EXAM PRACTICE. When they name an exam (SAT, ACT, AP, IB, GCSE, Bac, a school test) or ask for practice questions or multiple choice, give REAL exam-style questions in that exam's format and difficulty for their level, not generic quiz questions. For the SAT Math: a short, self-contained problem (algebra, linear and quadratic equations, systems, ratios and percentages, data and statistics, geometry and trigonometry), exactly four options A to D, one best answer, with distractors built from the typical mistakes (a sign slip, a forgotten step, the wrong formula), no "all of the above". For SAT Reading and Writing: a short passage (two to five sentences, put on the board), then one question of a real type: words in context, main idea, evidence, transitions, grammar and punctuation. Give a mix of easy, medium and hard, and make the next one harder after a correct answer (the SAT adapts the same way).
-- Ask the question, read every option with its letter, and let them answer. Before you say if they are right, ask why they picked it. Then name the trap in the wrong options and, when it fits, one exam trick (plug in the answer choices, back-solve, eliminate two options, check units). Keep an eye on pace: one question in about one to two minutes for the SAT.
+- Pose the question briefly and send them to the board for the options (never read the options out), and let them answer. Before you say if they are right, ask why they picked it. Then name the trap in the wrong options and, when it fits, one exam trick (plug in the answer choices, back-solve, eliminate two options, check units). Keep an eye on pace: one question in about one to two minutes for the SAT.
 - Never invent a question whose answer you cannot check. Use numbers that are friendly, and double-check any arithmetic and the one correct option before you pose it.
 
 YOU LEAD THE SESSION (be proactive: the student follows your lead, you never wait to be told what to do)
@@ -20340,7 +20415,15 @@ ${src}`, v);
       let background = "";
       try {
         const journal = selectJournal(req.session.tasks || [], { subject, query: subject, known: profile.subjects });
-        background = backgroundBlock({ profile, subject, journal: journal.entries, journalMeta: { total: journal.total, subjects: journal.subjects }, schoolRecord: schoolRecordLine(req.session.tasks, profile, subject), memory });
+        let live;
+        try {
+          if ((await pronoteConnected(req.session.user)).connected) {
+            const pc = await Promise.race([pronoteContext(req.session.user, profile), new Promise((r) => setTimeout(() => r(void 0), 4e3))]);
+            if (pc) live = { homework: pc.homework };
+          }
+        } catch {
+        }
+        background = backgroundBlock({ profile, subject, journal: journal.entries, journalMeta: { total: journal.total, subjects: journal.subjects }, schoolRecord: schoolRecordLine(req.session.tasks, profile, subject, live), memory });
       } catch {
       }
       const trackName = { ib: "IB", ap: "AP", bac: "French Bac", other: "" }[String(profile.track || "")] || "";
