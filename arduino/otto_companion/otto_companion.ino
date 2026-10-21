@@ -4,7 +4,7 @@
 //   LEDs (220 ohm resistor each, other leg to GND):  GREEN (listening) = D8, AMBER (thinking) = D9, BLUE (speaking) = D10
 //   Optional: 16x2 I2C LCD on SDA 20 / SCL 21 (uncomment USE_LCD), piezo buzzer on D11.
 // Protocol: one JSON object per line.   device -> app: {"btn":"help"|"next"|"mic"}, {"hello":"otto-mega"}
-//                                       app -> device: {"state":"idle|listening|thinking|speaking|offline"}, {"lcd":"text"}, {"beep":"ok|no"}
+//                                       app -> device: {"state":"idle|ready|listening|thinking|speaking|offline"}, {"lcd":"text"}, {"beep":"ok|no"}
 // The device never sees answers or what the student said.
 
 // #define USE_LCD
