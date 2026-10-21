@@ -558,7 +558,7 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
     if (!t || attaching) return;
     setAttaching(true); setBoardNote(null);
     try {
-      for (const file of files.slice(0, 3)) {
+      for (const file of files.slice(0, 4)) {
         if (file.size > 25 * 1024 * 1024) { setBoardNote(`${file.name} is too big (25 MB max).`); continue; }
         const name = file.name.replace(/\.[a-z0-9]+$/i, "");
         let note: string;
@@ -576,7 +576,7 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
           try { await api.uploadCoursework({ subject: t.sourceSubject || "Other", name, text: doc.text, pages: doc.pages, totalPages: doc.totalPages, truncated: doc.truncated }); } catch { /* it still goes to Otto for this session */ }
           note = `(I'm sharing a document: "${name}". Its text: ${doc.text.replace(/\s+/g, " ").slice(0, 6000)}${doc.truncated ? " …(only the start was read)" : ""} Start from it: say in one sentence what it is, then ask me what I want to do with it. Do not solve its questions for me.)`;
         }
-        if (liveRef.current.status === "live") { onLiveTurn("you", `📎 ${file.name}`); liveRef.current.sendText(note); }
+        if (liveRef.current.status === "live") { onLiveTurn("you", `Shared: ${file.name}`); liveRef.current.sendText(note); }
         else void sendRef.current(note, false);
       }
     } catch (e: any) { setBoardNote(e?.message || "That file couldn't be shared."); }
