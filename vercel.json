@@ -24,6 +24,7 @@
     { "source": "/self-heal.js", "destination": "/self-heal.js" },
     { "source": "/robots.txt", "destination": "/robots.txt" },
     { "source": "/sitemap.xml", "destination": "/sitemap.xml" },
+    { "source": "/googleeb88d5ba4c78424d.html", "destination": "/googleeb88d5ba4c78424d.html" },
     { "source": "/llms.txt", "destination": "/llms.txt" },
     { "source": "/og-image.png", "destination": "/og-image.png" },
     { "source": "/:path*", "destination": "/index.html" }

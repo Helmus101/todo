@@ -5122,6 +5122,13 @@ section("A task never says 'Otto is working on it' forever (reported: stuck work
   check("journal tasks and finished tasks are never touched", ![...plan.fail, ...plan.requeue].some((id) => id === "log" || id === "done"));
 }
 
+section("Google Search Console verification file is served from the site root");
+{
+  const f = readFileSync("public/googleeb88d5ba4c78424d.html", "utf8");
+  check("the verification file is exactly Google's one-line token", f === "google-site-verification: googleeb88d5ba4c78424d.html");
+  check("vercel.json serves it directly instead of the SPA fallback", /"source": "\/googleeb88d5ba4c78424d\.html", "destination": "\/googleeb88d5ba4c78424d\.html"/.test(readFileSync("vercel.json", "utf8")));
+}
+
 section("Board changes are undoable in the Tutor session (spec §12 #10, source pins)");
 {
   const ts = readFileSync("client/tutor/TutorSession.tsx", "utf8");
