@@ -4907,7 +4907,7 @@ button[aria-expanded="true"] > .sm-chev { transform: rotate(45deg); }
 /* ── Live voice bar (Socra-style): Otto's presence, one caption line, a few controls. ───────────────────────── */
 .live-bar { display: flex; flex-direction: column; align-items: center; gap: var(--space-3); padding: var(--space-4) var(--space-4) var(--space-3); }
 .live-bar-main { display: flex; align-items: center; gap: var(--space-4); max-width: 720px; width: 100%; justify-content: center; }
-.live-caption { margin: 0; background-color: rgba(247,243,230,.94); padding: 4px 12px; border-radius: 12px; font-size: 18px; line-height: 1.45; color: var(--ink); max-width: 60ch; min-height: 1.45em; }
+.live-caption { margin: 0; background-color: rgba(250,248,244,.94); padding: 4px 12px; border-radius: 12px; font-size: 18px; line-height: 1.45; color: var(--ink); max-width: 60ch; min-height: 1.45em; }
 .live-caption.is-you { color: var(--muted, var(--ink)); font-style: italic; }
 .live-caption.is-error { color: var(--vermilion, #b3261e); font-size: 15px; }
 .live-controls { display: flex; align-items: center; gap: var(--space-2); padding: 6px 8px; border: 1px solid var(--line); border-radius: 999px; background: var(--surface); box-shadow: 0 6px 24px rgba(0,0,0,.08) !important; }
@@ -4931,7 +4931,7 @@ button[aria-expanded="true"] > .sm-chev { transform: rotate(45deg); }
 @media (max-width: 640px) { .live-caption { font-size: 16px; } .live-main-btn { min-width: 130px; padding: 0 14px; } }
 
 /* ── The tutor board as PAPER (Socra's look): warm cream (no grid), handwriting for what Otto writes, amber titles. ── */
-.tutor-stage .ts-canvas { background-color: #f7f3e6; background-color: oklch(0.965 0.02 95); background-image: none !important; }
+.tutor-stage .ts-canvas { background-color: #faf8f4; background-image: none !important; }
 .tutor-stage .sm-board-line, .tutor-stage .sm-board-entry-text { font-family: "Kalam", "Handlee", "Comic Sans MS", cursive; font-size: 1.25rem; color: #3b3428; }
 .tutor-stage .sm-board-why { font-family: "Kalam", "Handlee", cursive; color: #6b5f4a; }
 .tutor-stage .sm-board-header-subject { font-family: "Instrument Serif", ui-serif, Georgia, serif; font-size: 1.9rem; font-style: italic; color: #b45309; }
