@@ -297,8 +297,10 @@ export const api = {
   // is NOT best-effort-swallowed — a failed read (vision not configured, a blank canvas, a Gemini hiccup)
   // needs to reach the student as a real message ("nothing's configured" / "try drawing it bigger"), not
   // silently vanish, since this is the one thing they actually asked Otto to look at.
-  /** A short-lived, single-use credential for the live voice (Gemini Live). 503/502 means live voice is unavailable: the classic voice takes over. */
-  liveToken: (): Promise<{ token: string; model: string; models?: string[] }> => post("/api/tutor/live/token", {}),
+  /** A short-lived credential for the live voice (Gemini Live) plus the tutor's instructions with what Otto knows about the student. 503/502 means live voice is unavailable: the classic voice takes over. */
+  liveToken: (body: { subject?: string; pastSessions?: unknown[]; resuming?: boolean }): Promise<{ token: string; model: string; models?: string[]; instructions: string }> => post("/api/tutor/live/token", body),
+  /** After each spoken exchange: what should go on the paper (entries to merge into the board). */
+  liveBoard: (exchange: string, board: unknown[], subject?: string): Promise<{ board: any[] }> => post("/api/tutor/live/board", { exchange, board, subject }),
   readWhiteboard: (image: string, context?: string): Promise<{ description: string }> => post("/api/tutor/read-whiteboard", { image, context }),
   uploadCoursework: (body: { subject: string; name: string; text: string; pages: number; totalPages?: number; truncated?: boolean }): Promise<{ doc: CourseworkDoc; tasks: { id: string; title: string }[]; profile: Profile; aiSummarized: boolean }> =>
     post("/api/coursework", body).then((r: any) => ({ ...r, profile: normalizeProfile(r.profile) })),

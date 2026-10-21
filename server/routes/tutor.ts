@@ -7,6 +7,10 @@ import { schoolRecordLine } from "../schoolRecord.ts";
 import { aiReady, visionReady, describeWhiteboard, describeUploadedPhoto, synthesizeSpeech, TTS_MAX_TEXT, tutorOpener } from "../claude.ts";
 import { recordEvent, loadBanditState, saveBanditState } from "../store.ts";
 import { M, ah, commit, dailyCap, isPaused, rateLimit, requireAuth } from "../http.ts";
+import { backgroundBlock } from "../tutor.ts";
+import { selectJournal } from "../journal.ts";
+import { writeBoard } from "../tutorTurn/boardWriter.ts";
+import { liveInstructions } from "../../shared/liveTutor.ts";
 
 export function registerTutorRoutes(app: express.Express): void {
   // Otto SPEAKS FIRST: the tutor session's opening line (see tutorOpener in server/claude.ts). REAL, not a
@@ -50,23 +54,61 @@ export function registerTutorRoutes(app: express.Express): void {
   // base64-inflated by ~33%) — same bumped-limit pattern as /api/account/import, just smaller: nothing
   // resembling a real whiteboard sketch should ever approach 8mb.
   // LIVE VOICE: the browser talks to Gemini Live directly (instant, interruptible speech), so it needs a credential. This mints a
-  // short-lived, single-use token — the real key never leaves the server. The tutor's brain (answers checked by code, the board) stays
-  // server-side behind /api/tasks/:id/chat; the voice model only calls it as a tool. Capped per account per day.
+  // short-lived token — the real key never leaves the server — and returns the tutor's instructions WITH what Otto knows about the
+  // student (profile, past sessions kept on their device, journal, school record), so the voice has Otto's memory. Capped per day.
   app.post("/api/tutor/live/token", requireAuth, rateLimit(6, 60_000), dailyCap("live", Number(process.env.TUTOR_DAILY_LIVE) || 20), ah(async (req, res) => {
     if (isPaused(req)) { res.status(403).json({ error: "AI is paused — resume it in Settings to chat." }); return; }
     const key = process.env.GEMINI_API_KEY;
     if (!key) { res.status(503).json({ error: "Live voice isn't set up on this server.", code: "live_unavailable" }); return; }
     try {
-      const { GoogleGenAI } = await import("@google/genai");
-      const ai = new GoogleGenAI({ apiKey: key });
-      const token = await ai.authTokens.create({ config: { uses: 3, expireTime: new Date(Date.now() + 35 * 60_000).toISOString(), newSessionExpireTime: new Date(Date.now() + 60_000).toISOString() } });
-      if (!token?.name) throw new Error("no token returned");
+      const now = Date.now();
+      const r = await fetch(`https://generativelanguage.googleapis.com/v1alpha/auth_tokens?key=${encodeURIComponent(key)}`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ uses: 3, expireTime: new Date(now + 35 * 60_000).toISOString(), newSessionExpireTime: new Date(now + 60_000).toISOString() }),
+      });
+      if (!r.ok) throw new Error(`token request ${r.status}`);
+      const token = String(((await r.json()) as { name?: string }).name || "");
+      if (!token) throw new Error("no token returned");
+      const subject = typeof req.body?.subject === "string" ? req.body.subject.trim().slice(0, 80) : "";
+      const profile = req.session.profile || emptyProfile();
+      const memory = (Array.isArray(req.body?.pastSessions) ? req.body.pastSessions : []).slice(0, 3).map((m: any) => ({
+        when: typeof m?.when === "string" ? m.when.trim().slice(0, 40) : undefined,
+        subject: typeof m?.subject === "string" ? m.subject.trim().slice(0, 80) : undefined,
+        lines: (Array.isArray(m?.lines) ? m.lines : []).filter((x: any) => typeof x === "string" && x.trim()).slice(0, 6).map((x: string) => x.trim().slice(0, 200)),
+        asked: (Array.isArray(m?.asked) ? m.asked : []).filter((x: any) => typeof x === "string" && x.trim()).slice(0, 3).map((x: string) => x.trim().slice(0, 200)),
+      })).filter((m: any) => m.lines.length || m.asked.length || (m.subject && m.when));
+      let background = "";
+      try {
+        const journal = selectJournal(req.session.tasks || [], { subject, query: subject, known: profile.subjects });
+        background = backgroundBlock({ profile, subject, journal: journal.entries, journalMeta: { total: journal.total, subjects: journal.subjects }, schoolRecord: schoolRecordLine(req.session.tasks, profile, subject), memory } as any);
+      } catch { /* memory is a bonus: the voice works without it */ }
       // Model ids change often; the browser tries them in order until Google accepts one (a configured id always goes first).
-      const models = [...new Set([process.env.GEMINI_LIVE_MODEL, "gemini-3.8-live", "gemini-live-2.5-flash-native-audio", "gemini-2.5-flash-native-audio-preview-09-2025"].filter((m): m is string => !!m))];
-      res.json({ token: token.name, model: models[0], models });
+      const models = [...new Set([process.env.GEMINI_LIVE_MODEL, "gemini-2.5-flash-native-audio-preview-09-2025", "gemini-3.8-live", "gemini-live-2.5-flash-native-audio"].filter((m): m is string => !!m))];
+      res.json({ token, model: models[0], models, instructions: liveInstructions({ subject, level: undefined, background, resuming: req.body?.resuming === true }) });
     } catch (e: any) {
       console.warn(`[live] token request failed: ${String(e?.message || e).slice(0, 160)}`);
       res.status(502).json({ error: "Live voice isn't available right now.", code: "live_unavailable" });
+    }
+  }));
+
+  // THE BOARD FOR THE LIVE VOICE: after each spoken exchange the browser sends what was said and the board as it stands; one call decides
+  // what goes on the paper (the problem, the student's correct steps as Otto's own lines, a takeaway of what was explained, figures).
+  app.post("/api/tutor/live/board", requireAuth, rateLimit(30, 60_000), dailyCap("live-board", Number(process.env.TUTOR_DAILY_LIVE_BOARD) || 400), ah(async (req, res) => {
+    if (isPaused(req)) { res.status(403).json({ error: "AI is paused — resume it in Settings to chat." }); return; }
+    if (!aiReady()) { res.status(503).json({ error: "AI isn't configured." }); return; }
+    const exchange = typeof req.body?.exchange === "string" ? req.body.exchange.slice(0, 4000) : "";
+    if (!exchange.trim()) { res.json({ board: [] }); return; }
+    const board = (Array.isArray(req.body?.board) ? req.body.board : []).slice(-40).filter((e: any) => e && typeof e.id === "string" && typeof e.kind === "string");
+    const subject = typeof req.body?.subject === "string" ? req.body.subject.trim().slice(0, 80) : "";
+    const tokens = { in: 0, out: 0, cachedIn: 0 };
+    try {
+      const out = await writeBoard({ exchange, board, subject }, tokens);
+      const profile = req.session.profile || emptyProfile();
+      addUsage(profile, tokens, "chat");
+      res.json({ board: out.board });
+    } catch (e: any) {
+      console.warn(`[live] board writer failed: ${String(e?.message || e).slice(0, 120)}`);
+      res.status(502).json({ error: "The board couldn't be updated just now.", board: [] });
     }
   }));
 

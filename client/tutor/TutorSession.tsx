@@ -17,7 +17,7 @@ import { useArduino } from "../hardware/useArduino.ts";
 import { DeviceButton } from "../hardware/DeviceButton.tsx";
 import { LiveBar } from "./LiveBar.tsx";
 import { useGeminiLive } from "./live/useGeminiLive.ts";
-import { toolResultFor } from "../../shared/liveTutor.ts";
+import { exchangeText } from "../../shared/liveTutor.ts";
 import { toSpeakableText } from "../voice/useSpeechSynthesis.ts";
 import { buttonMessage, deviceStateOf } from "../../shared/deviceProtocol.ts";
 import { PageTour } from "../PageTour.tsx";
@@ -464,20 +464,63 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
   // LIVE VOICE (Gemini Live): the voice model only talks; every thought goes to Otto's engine through `ask`, and what Otto answers is
   // what it says. If live voice can't start (no key on the server, daily limit, blocked mic) the classic voice dock takes over.
   const [caption, setCaption] = useState<{ who: "you" | "otto"; text: string } | null>(null);
+  // The call's conversation is kept on this device like every other turn: the transcript lands in the chat history as it is said.
+  const taskRef = useRef(task);
+  taskRef.current = task;
+  const turnsRef = useRef<{ who: "you" | "otto"; text: string }[]>([]);
+  const boardQueueRef = useRef<Promise<void>>(Promise.resolve());
+  const onLiveTurn = useCallback((who: "you" | "otto", text: string) => {
+    const t = taskRef.current;
+    if (!t || !text.trim()) return;
+    turnsRef.current.push({ who, text });
+    const chat = setLocalChat(t.id, [...(t.chat || []), { role: who === "you" ? "user" : "assistant", text, at: new Date().toISOString() } as any], userId);
+    taskRef.current = { ...t, chat };
+    setTask((prev) => (prev ? { ...prev, chat } : prev));
+  }, [userId]);
+  // After each spoken exchange the board writer decides what goes on the paper (one at a time, in order).
+  const onLiveTurnComplete = useCallback(() => {
+    const turns = turnsRef.current.splice(0);
+    if (!turns.length) return;
+    boardQueueRef.current = boardQueueRef.current.then(async () => {
+      const t = taskRef.current;
+      if (!t) return;
+      try {
+        const lean = (t.board || []).slice(-40).map((e) => (JSON.stringify(e).length > 6000 ? { ...e, svg: undefined } : e));
+        const r = await api.liveBoard(exchangeText(turns), lean, t.sourceSubject);
+        if (!r.board?.length) return;
+        const cur = taskRef.current!;
+        const merged = mergeBoardById(cur.board || [], r.board);
+        if ((cur.board || []).length) { boardHistoryRef.current = [...boardHistoryRef.current, { taskId: cur.id, board: cur.board || [] }].slice(-20); setUndoCount(boardHistoryRef.current.length); }
+        setLocalBoard(cur.id, merged, userId);
+        taskRef.current = { ...cur, board: merged };
+        setTask((prev) => (prev ? { ...prev, board: merged } : prev));
+      } catch { /* the board is a bonus: the conversation carries on */ }
+    });
+  }, [userId]);
   const live = useGeminiLive({
     subject: task?.sourceSubject,
-    opener: instantOpenerRef.current,
+    pastSessions: task ? sessionMemoryForPrompt(pastSessions, task.sourceSubject, Date.now(), openerLang) : undefined,
     resuming: (task?.chat?.length || 0) > 0,
-    ask: async (said) => {
-      const out = await sendRef.current(said, true);
-      return out ? toolResultFor(out.reply, out.wrote, toSpeakableText) : { say: "", error: "Otto couldn't answer just now. Ask the student to say that again." };
-    },
-    onCaption: (who, text) => setCaption({ who, text }),
+    onTurn: onLiveTurn,
+    onTurnComplete: onLiveTurnComplete,
+    onPartial: (you, otto) => setCaption(otto ? { who: "otto", text: otto } : you ? { who: "you", text: you } : null),
   });
+  const liveRef = useRef(live);
+  liveRef.current = live;
   const liveStatus = live.status;
   useEffect(() => {
-    setVoiceState({ listening: liveStatus === "live" && !live.speaking && !live.thinking && !live.muted, speaking: live.speaking, voiceModeOn: liveStatus === "live", interim: "" });
-  }, [liveStatus, live.speaking, live.thinking, live.muted]);
+    setVoiceState({ listening: liveStatus === "live" && !live.speaking && !live.muted, speaking: live.speaking, voiceModeOn: liveStatus === "live", interim: "" });
+  }, [liveStatus, live.speaking, live.muted]);
+  // What the student draws goes to the voice as a picture (it sees the page and answers when they speak).
+  const inkTimerRef = useRef<number | undefined>(undefined);
+  const onInk = useCallback(() => {
+    window.clearTimeout(inkTimerRef.current);
+    inkTimerRef.current = window.setTimeout(async () => {
+      if (liveRef.current.status !== "live") return;
+      const img = await canvasRef.current?.snapshot();
+      if (img) liveRef.current.sendImage(img);
+    }, 1500);
+  }, []);
   const device = useArduino(useCallback((b) => {
     const en = "en" === "en";
     if (b === "mic") return; // voice mode stays the student's own click on screen — the device never switches it
@@ -991,6 +1034,7 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
           </div>
         ) : null}
         <TutorCanvas
+          onInk={onInk}
           ref={canvasRef}
           contextText={[...(task.problems || []).filter((p) => !p.solved).slice(-1).map((p) => p.question), ...(task.board || []).filter((b) => b.kind !== "annotation" && b.text).slice(-6).map((b) => b.text)].join(" | ").slice(0, 700)}
           visionReady={visionReady}
@@ -1057,10 +1101,10 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
           </>
         ) : (
           <LiveBar
-            status={liveStatus} speaking={live.speaking} thinking={live.thinking} muted={live.muted} caption={caption} error={live.error}
-            sending={sending} blocked={live.blocked} onResume={live.resumePlayback}
+            status={liveStatus} speaking={live.speaking} thinking={false} muted={live.muted} caption={caption} error={live.error}
+            sending={false} blocked={live.blocked} onResume={live.resumePlayback}
             onStart={() => void live.start()} onStop={live.stop} onMute={live.setMuted}
-            onType={(t) => { void (async () => { const out = await send(t, true); if (out && liveStatus === "live") live.say(toSpeakableText(out.reply)); })(); }}
+            onType={(t) => { if (liveStatus === "live") { onLiveTurn("you", t); live.sendText(t); } else void send(t, false); }}
             onHistory={() => setChatDrawer((v) => !v)} historyCount={task.chat?.length || 0}
           />
         )}

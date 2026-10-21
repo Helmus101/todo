@@ -59,9 +59,11 @@ export interface TutorCanvasHandle {
    *  returns the height (px) of the sheet to keep for it, or 0. After this call the board makes room for it, so
    *  whatever Otto writes next lands AFTER the drawing instead of on top of it. */
   freezeSheet: () => number;
+  /** The flattened page (the ink over the board) as a JPEG data URL for the live voice, or null when there is no new ink. */
+  snapshot: () => Promise<string | null>;
 }
 
-export const TutorCanvas = forwardRef<TutorCanvasHandle, { visionReady: boolean; hidden: boolean; surface: HTMLElement | null; onDesmos: () => void; contextText?: string }>(function TutorCanvas({ visionReady, hidden, surface, onDesmos, contextText }, handleRef) {
+export const TutorCanvas = forwardRef<TutorCanvasHandle, { visionReady: boolean; hidden: boolean; surface: HTMLElement | null; onDesmos: () => void; contextText?: string; onInk?: () => void }>(function TutorCanvas({ visionReady, hidden, surface, onDesmos, contextText, onInk }, handleRef) {
   const L = useLang();
   // What they're working on, handed to the image reader so it can name what they drew (kept in a ref: readInk is async).
   const contextRef = useRef("");
@@ -143,7 +145,7 @@ export const TutorCanvas = forwardRef<TutorCanvasHandle, { visionReady: boolean;
   useEffect(() => { if (typing) textRef.current?.focus(); }, [typing]);
 
   const pos = (e: React.PointerEvent): Pt => { const r = canvasRef.current!.getBoundingClientRect(); return { x: e.clientX - r.left, y: e.clientY - r.top }; };
-  const commit = (it: Item) => { inkStamp.current++; items.current.push(it); redo.current = []; setVersion((v) => v + 1); setError(null); };
+  const commit = (it: Item) => { inkStamp.current++; onInk?.(); items.current.push(it); redo.current = []; setVersion((v) => v + 1); setError(null); };
   const commitText = () => {
     const t = typing; setTyping(null);
     if (t && t.value.trim()) { commit({ kind: "text", color, size: 22, x: t.x, y: t.y, value: t.value.trim() }); repaint(); }
@@ -198,7 +200,7 @@ export const TutorCanvas = forwardRef<TutorCanvasHandle, { visionReady: boolean;
   // Ink counts as "seen" once Otto has read it. `inkStamp` changes on every committed edit, so an unchanged
   // board is never re-sent with the next message.
   const seenStamp = useRef(0);
-  const readInk = async (): Promise<string> => {
+  const readInk = async (rawImage = false): Promise<string> => {
     const c = canvasRef.current!;
     // Crop to where the ink actually is (+ margin): the canvas is the whole scrollable page, which would
     // otherwise be a huge mostly-empty image for the vision model.
@@ -268,6 +270,8 @@ export const TutorCanvas = forwardRef<TutorCanvasHandle, { visionReady: boolean;
       } catch { /* a figure that won't rasterise is skipped — the text around it is still painted */ }
     }
     f.drawImage(c, sx * dpr, sy * dpr, sw * dpr, sh * dpr, 0, 0, flat.width, flat.height);
+    // The live voice sees the picture itself (Gemini Live takes images): the flattened page is handed back as a JPEG instead of being described.
+    if (rawImage) { seenStamp.current = inkStamp.current; return flat.toDataURL("image/jpeg", 0.7); }
     const { description } = await api.readWhiteboard(flat.toDataURL("image/png"), contextRef.current);
     seenStamp.current = inkStamp.current;
     return description;
@@ -292,6 +296,7 @@ export const TutorCanvas = forwardRef<TutorCanvasHandle, { visionReady: boolean;
       const h = Math.round(bottom - boardBottom + 32);
       return h;
     },
+    snapshot: async () => { if (!canvasRef.current || !items.current.some((i) => i.kind === "text" || i.tool !== "eraser") || inkStamp.current === seenStamp.current) return null; try { return await readInk(true); } catch { return null; } },
     hasInk: () => !!canvasRef.current && items.current.some((i) => i.kind === "text" || i.tool !== "eraser"),
     // `force`: the student explicitly asked Otto to look, so re-read even ink Otto has already seen.
     readUnseenInk: async (force?: boolean) => {

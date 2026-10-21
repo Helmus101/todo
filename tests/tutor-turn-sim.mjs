@@ -67,6 +67,19 @@ export async function runTutorTurnSim(check, section) {
     { await runTutorTurn({ ...base, message: "hello" });
       check("small talk with nothing to write costs no extra call", calls.length === 1); }
 
+    section("Live voice — the board writer");
+    { const { writeBoard } = await import("../server/tutorTurn/boardWriter.ts");
+      calls.length = 0;
+      script = () => ({ board: [{ op: "topic", cue: 0, text: "Quadratics" }, { op: "step", cue: 0, text: "Solve $x^2 - 5x + 6 = 0$", kind: "given" }, { op: "step", cue: 0, text: "$(x-2)(x-3) = 0$", kind: "formula" }] });
+      const r = await writeBoard({ exchange: "Student: solve x squared minus five x plus six equals zero\nTutor: What two numbers multiply to six and add to minus five?", board: [], subject: "Math" }, { in: 0, out: 0, cachedIn: 0 });
+      check("the board writer turns one exchange into board entries (topic, the problem typeset, a line)", r.board.length >= 2 && r.board.some((e) => /x\^2/.test(String(e.text))) && calls.length === 1 && /NEVER WRITE: questions, hints/.test(calls[0].messages[0].content));
+      script = () => ({ board: [] });
+      const e = await writeBoard({ exchange: "Student: hello\nTutor: Hi! What are you working on?", board: [], subject: "Math" }, { in: 0, out: 0, cachedIn: 0 });
+      check("small talk writes nothing", e.board.length === 0);
+      script = () => "not json";
+      const bad = await writeBoard({ exchange: "Student: hi", board: [], subject: "Math" }, { in: 0, out: 0, cachedIn: 0 });
+      check("an unusable reply writes nothing instead of failing", bad.board.length === 0); }
+
     section("Tutor turn — never a dead end");
     calls.length = 0;
     script = (b, i) => (i === 0 ? "not json at all" : { speech: ["Back on track — what did you get?"], board: [] });
