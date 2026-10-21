@@ -5093,3 +5093,19 @@ html[data-i18n="loading"] body { opacity: 0; }
 .pronote-item { padding: 8px 0; border-bottom: 1px solid var(--line-soft, var(--line)); font-size: 14px; }
 .pronote-item p { margin: 4px 0 0; color: var(--ink-2); }
 .pronote-item small { color: var(--ink-3); }
+
+/* Feedback (Settings) + consented testimonials (landing) */
+.feedback-form { display: grid; gap: 10px; max-width: 520px; }
+.feedback-choices { display: flex; flex-wrap: wrap; gap: 8px; }
+.feedback-consent { display: flex; gap: 10px; align-items: flex-start; font-size: 13px; line-height: 1.45; cursor: pointer; }
+.feedback-consent input { margin-top: 3px; flex: none; }
+.feedback-publish { display: grid; gap: 8px; }
+.feedback-mine h4 { margin: 8px 0 4px; font-size: 13px; }
+.feedback-mine ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.feedback-mine li { display: flex; gap: 10px; align-items: baseline; justify-content: space-between; }
+.landing-quotes { margin-top: 40px; max-width: 640px; text-align: left; }
+.landing-quotes h2 { font-size: 1rem; margin: 0 0 12px; }
+.landing-quotes-list { display: grid; gap: 14px; }
+.landing-quotes figure { margin: 0; padding: 12px 16px; border-left: 3px solid var(--line); }
+.landing-quotes blockquote { margin: 0 0 6px; line-height: 1.5; }
+.landing-quotes figcaption { font-size: 13px; color: var(--ink-3, var(--ink-2)); }

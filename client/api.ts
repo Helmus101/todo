@@ -202,6 +202,7 @@ const j = async (r: Response) => {
 // "still running" by US (with a follow-up re-sync) rather than by the platform killing the request and
 // handing back an error page.
 const GENERATE_TIMEOUT_MS = 120_000;
+export interface FeedbackItem { id: string; helpful: "yes" | "somewhat" | "no"; comment: string; publish: boolean; status: "pending" | "approved" | "rejected"; name: string; level: string; at: string }
 const post = (url: string, body?: unknown) =>
   req(url, { method: "POST", headers: body ? { "content-type": "application/json" } : undefined, body: body ? JSON.stringify(body) : undefined }).then(j);
 // Auth posts surface the server's error message instead of throwing, so the form can show it. Login/signup
@@ -454,6 +455,12 @@ export const api = {
   pronoteContext: (fresh = false): Promise<{ connected: boolean; homework: { id: string; subject: string; deadline: string; text: string; files: string[] }[]; lessons: { id: string; subject: string; date: string; title?: string; category?: string; text: string; files: string[] }[] }> => req(`/api/pronote/context${fresh ? "?fresh=1" : ""}`).then(j),
   reportVoiceSeconds: (seconds: number): Promise<{ ok: boolean }> => post("/api/tutor/live/usage", { seconds }),
   requestMoreUsage: (note?: string): Promise<{ ok: boolean }> => post("/api/usage/request", { note }),
+  sendFeedback: (b: { helpful: "yes" | "somewhat" | "no"; comment: string; publish: boolean; name?: string; level?: string }): Promise<{ ok: boolean }> => post("/api/feedback", b),
+  myFeedback: (): Promise<{ feedback: FeedbackItem[] }> => req("/api/feedback/mine").then(j),
+  withdrawFeedback: (id: string): Promise<{ ok: boolean }> => req(`/api/feedback/${encodeURIComponent(id)}`, { method: "DELETE" }).then(j),
+  testimonials: (): Promise<{ testimonials: { name: string; level: string; text: string; helpful: string; date: string }[] }> => fetch("/api/testimonials", { credentials: "same-origin" }).then((r) => (r.ok ? r.json() : { testimonials: [] })).catch(() => ({ testimonials: [] })),
+  adminFeedback: (status: "pending" | "approved" | "rejected" | "all" = "pending"): Promise<{ feedback: FeedbackItem[] }> => req(`/api/admin/feedback?status=${status}`).then(j),
+  adminDecideFeedback: (id: string, decision: "approve" | "reject"): Promise<{ ok: boolean }> => post(`/api/admin/feedback/${encodeURIComponent(id)}`, { decision }),
   adminUsageRequests: (): Promise<{ requests: { email: string; at: string; note?: string; usd: number; extraUsd: number }[]; weekKey: string }> => req("/api/admin/usage-requests").then(j),
   adminGrantUsage: (email: string, usd: number): Promise<{ ok: boolean }> => post("/api/admin/grant-usage", { email, usd }),
   setFullApp: (on: boolean): Promise<{ ok: boolean; fullApp: boolean }> => post("/api/full-access", { on }),

@@ -745,6 +745,7 @@ export async function deleteAccount(email: string): Promise<{ ok: boolean; error
       if (error) errors.push(`${table}: ${error.message}`);
     } catch (e: any) { errors.push(`${table}: ${e?.message || e}`); }
   }
+  await deleteAllFeedbackFor(email); // feedback and any public quote go with the account
   await destroySessionsForUser(email);
   await deleteAuthUser(email); // the actual credential erasure now, not a mirror cleanup — best-effort, never blocks the rest
   return { ok: errors.length === 0, errors };
@@ -1184,4 +1185,75 @@ export async function grantExtraUsage(email: string, usd: number, weekKey: strin
   p.usageRequest = undefined;
   await saveState(email, { ...state, profile: p }, { throwOnError: true });
   return true;
+}
+
+// ── User feedback + consented testimonials ─────────────────────────────────────────────────────────
+// See supabase.sql (weave_web_feedback). Dev without Supabase keeps rows in memory so the flow is testable.
+const FEEDBACK = "weave_web_feedback";
+export type FeedbackStatus = "pending" | "approved" | "rejected";
+export interface FeedbackRow {
+  id: string;
+  user_email: string;
+  helpful: "yes" | "somewhat" | "no";
+  comment: string;
+  publish_consent: boolean;
+  consent_at: string | null;
+  display_name: string;
+  level: string;
+  status: FeedbackStatus;
+  created_at: string;
+  decided_at: string | null;
+}
+const memFeedback: FeedbackRow[] = [];
+
+export async function addFeedback(row: Omit<FeedbackRow, "id" | "status" | "created_at" | "decided_at" | "consent_at"> & { consent_at?: string | null }): Promise<FeedbackRow | null> {
+  const full: FeedbackRow = { ...row, consent_at: row.publish_consent ? (row.consent_at || new Date().toISOString()) : null, id: crypto.randomUUID(), status: "pending", created_at: new Date().toISOString(), decided_at: null };
+  if (!client) { memFeedback.push(full); return full; }
+  const { id: _omit, ...insert } = full;
+  const { data, error } = await client.from(FEEDBACK).insert(insert).select().single();
+  if (error) { console.warn("[store] addFeedback failed:", error.message); return null; }
+  return data as FeedbackRow;
+}
+export async function listFeedbackFor(email: string): Promise<FeedbackRow[]> {
+  if (!client) return memFeedback.filter((f) => f.user_email === email);
+  const { data, error } = await client.from(FEEDBACK).select("*").eq("user_email", email).order("created_at", { ascending: false }).limit(50);
+  if (error) { console.warn("[store] listFeedbackFor failed:", error.message); return []; }
+  return (data || []) as FeedbackRow[];
+}
+/** Withdraw: the student deletes their own feedback (and with it any public quote). Returns whether a row was removed. */
+export async function deleteFeedbackById(email: string, id: string): Promise<boolean> {
+  if (!client) { const i = memFeedback.findIndex((f) => f.id === id && f.user_email === email); if (i < 0) return false; memFeedback.splice(i, 1); return true; }
+  const { data, error } = await client.from(FEEDBACK).delete().eq("id", id).eq("user_email", email).select("id");
+  if (error) { console.warn("[store] deleteFeedbackById failed:", error.message); return false; }
+  return !!data?.length;
+}
+export async function deleteAllFeedbackFor(email: string): Promise<void> {
+  if (!client) { for (let i = memFeedback.length - 1; i >= 0; i--) if (memFeedback[i].user_email === email) memFeedback.splice(i, 1); return; }
+  const { error } = await client.from(FEEDBACK).delete().eq("user_email", email);
+  if (error) console.warn("[store] deleteAllFeedbackFor failed:", error.message);
+}
+export async function listFeedbackForAdmin(status: FeedbackStatus | "all" = "pending"): Promise<FeedbackRow[]> {
+  if (!client) return memFeedback.filter((f) => status === "all" || f.status === status);
+  let q = client.from(FEEDBACK).select("*").order("created_at", { ascending: false }).limit(200);
+  if (status !== "all") q = q.eq("status", status);
+  const { data, error } = await q;
+  if (error) { console.warn("[store] listFeedbackForAdmin failed:", error.message); return []; }
+  return (data || []) as FeedbackRow[];
+}
+export async function decideFeedback(id: string, status: "approved" | "rejected"): Promise<boolean> {
+  const now = new Date().toISOString();
+  if (!client) { const f = memFeedback.find((x) => x.id === id); if (!f || (status === "approved" && !f.publish_consent)) return false; f.status = status; f.decided_at = now; return true; }
+  // Approval only ever applies to a row whose author consented to publication.
+  let q = client.from(FEEDBACK).update({ status, decided_at: now }).eq("id", id);
+  if (status === "approved") q = q.eq("publish_consent", true);
+  const { data, error } = await q.select("id");
+  if (error) { console.warn("[store] decideFeedback failed:", error.message); return false; }
+  return !!data?.length;
+}
+/** What the public landing page may show: approved AND consented, with NO email. */
+export async function listPublicTestimonials(limit = 6): Promise<{ name: string; level: string; text: string; helpful: string; date: string }[]> {
+  const rows = !client
+    ? memFeedback.filter((f) => f.status === "approved" && f.publish_consent).sort((a, b) => b.created_at.localeCompare(a.created_at)).slice(0, limit)
+    : (((await client.from(FEEDBACK).select("*").eq("status", "approved").eq("publish_consent", true).order("created_at", { ascending: false }).limit(limit)).data) || []) as FeedbackRow[];
+  return rows.filter((r) => r.comment.trim()).map((r) => ({ name: r.display_name, level: r.level, text: r.comment, helpful: r.helpful, date: r.created_at.slice(0, 10) }));
 }

@@ -3804,6 +3804,43 @@ async function grantExtraUsage(email, usd, weekKey) {
   await saveState(email, { ...state, profile: p }, { throwOnError: true });
   return true;
 }
+async function addFeedback(row) {
+  const full = { ...row, consent_at: row.publish_consent ? row.consent_at || (/* @__PURE__ */ new Date()).toISOString() : null, id: crypto.randomUUID(), status: "pending", created_at: (/* @__PURE__ */ new Date()).toISOString(), decided_at: null };
+  if (!client) {
+    memFeedback.push(full);
+    return full;
+  }
+  const { id: _omit, ...insert } = full;
+  const { data, error } = await client.from(FEEDBACK).insert(insert).select().single();
+  if (error) {
+    console.warn("[store] addFeedback failed:", error.message);
+    return null;
+  }
+  return data;
+}
+async function listFeedbackFor(email) {
+  if (!client) return memFeedback.filter((f4) => f4.user_email === email);
+  const { data, error } = await client.from(FEEDBACK).select("*").eq("user_email", email).order("created_at", { ascending: false }).limit(50);
+  if (error) {
+    console.warn("[store] listFeedbackFor failed:", error.message);
+    return [];
+  }
+  return data || [];
+}
+async function deleteFeedbackById(email, id) {
+  if (!client) {
+    const i = memFeedback.findIndex((f4) => f4.id === id && f4.user_email === email);
+    if (i < 0) return false;
+    memFeedback.splice(i, 1);
+    return true;
+  }
+  const { data, error } = await client.from(FEEDBACK).delete().eq("id", id).eq("user_email", email).select("id");
+  if (error) {
+    console.warn("[store] deleteFeedbackById failed:", error.message);
+    return false;
+  }
+  return !!data?.length;
+}
 async function deleteAllFeedbackFor(email) {
   if (!client) {
     for (let i = memFeedback.length - 1; i >= 0; i--) if (memFeedback[i].user_email === email) memFeedback.splice(i, 1);
@@ -3811,6 +3848,39 @@ async function deleteAllFeedbackFor(email) {
   }
   const { error } = await client.from(FEEDBACK).delete().eq("user_email", email);
   if (error) console.warn("[store] deleteAllFeedbackFor failed:", error.message);
+}
+async function listFeedbackForAdmin(status = "pending") {
+  if (!client) return memFeedback.filter((f4) => status === "all" || f4.status === status);
+  let q = client.from(FEEDBACK).select("*").order("created_at", { ascending: false }).limit(200);
+  if (status !== "all") q = q.eq("status", status);
+  const { data, error } = await q;
+  if (error) {
+    console.warn("[store] listFeedbackForAdmin failed:", error.message);
+    return [];
+  }
+  return data || [];
+}
+async function decideFeedback(id, status) {
+  const now2 = (/* @__PURE__ */ new Date()).toISOString();
+  if (!client) {
+    const f4 = memFeedback.find((x) => x.id === id);
+    if (!f4 || status === "approved" && !f4.publish_consent) return false;
+    f4.status = status;
+    f4.decided_at = now2;
+    return true;
+  }
+  let q = client.from(FEEDBACK).update({ status, decided_at: now2 }).eq("id", id);
+  if (status === "approved") q = q.eq("publish_consent", true);
+  const { data, error } = await q.select("id");
+  if (error) {
+    console.warn("[store] decideFeedback failed:", error.message);
+    return false;
+  }
+  return !!data?.length;
+}
+async function listPublicTestimonials(limit = 6) {
+  const rows = !client ? memFeedback.filter((f4) => f4.status === "approved" && f4.publish_consent).sort((a, b) => b.created_at.localeCompare(a.created_at)).slice(0, limit) : (await client.from(FEEDBACK).select("*").eq("status", "approved").eq("publish_consent", true).order("created_at", { ascending: false }).limit(limit)).data || [];
+  return rows.filter((r) => r.comment.trim()).map((r) => ({ name: r.display_name, level: r.level, text: r.comment, helpful: r.helpful, date: r.created_at.slice(0, 10) }));
 }
 var url, key, TABLE, client, authKey, cloudEnabled, SESSIONS, RESET_TOKENS, memResetTokens, hashResetToken, isTransient2, STATE_CACHE_TTL_MS, STATE_CACHE_MAX, egress, stateCache, BANDIT, OUTCOMES, memBandit, memOutcomes, STUDY_METRIC_NAMES, RATELIMITS, ratelimitsTableOk, JOBS, EVENTS, LOCK_MS, HEARTBEAT_MS, retryBackoffUntil, memJobs, jobsTableOk, heartbeatIntervalMs, memEvents, FEEDBACK, memFeedback;
 var init_store = __esm({
@@ -5049,15 +5119,15 @@ Key points already collected: ${[...points].join("; ") || "(none)"}`
   }
 }
 function fallbackCourseworkSummary(text) {
-  const clean = String(text || "").replace(/\s+/g, " ").trim();
-  if (!clean) return "";
-  const sentences2 = clean.split(/(?<=[.!?])\s+/);
+  const clean2 = String(text || "").replace(/\s+/g, " ").trim();
+  if (!clean2) return "";
+  const sentences2 = clean2.split(/(?<=[.!?])\s+/);
   let out = "";
   for (const sn of sentences2) {
     if ((out + " " + sn).length > 420) break;
     out = out ? `${out} ${sn}` : sn;
   }
-  return (out || clean.slice(0, 420)).trim();
+  return (out || clean2.slice(0, 420)).trim();
 }
 var COURSEWORK_WINDOW_CHARS;
 var init_coursework2 = __esm({
@@ -8036,9 +8106,9 @@ ${lastStudentMessage}`;
 }
 function earlierDigest(older, maxChars = 1800) {
   const lines = older.map((m) => {
-    const clean = String(m.text || "").replace(/\[(?:Exercise|Exercice)\][^\n]*/g, "(answered a board exercise)").replace(/\[(?:What I wrote\/drew on the board|Ce que j'ai écrit\/dessiné sur le tableau)[\s\S]*?\]/g, "(showed their whiteboard)").replace(/\s+/g, " ").trim();
-    if (!clean) return "";
-    const firstSentence = m.role === "assistant" ? clean.match(/^.*?[.!?](?:\s|$)/)?.[0] ?? clean : clean;
+    const clean2 = String(m.text || "").replace(/\[(?:Exercise|Exercice)\][^\n]*/g, "(answered a board exercise)").replace(/\[(?:What I wrote\/drew on the board|Ce que j'ai écrit\/dessiné sur le tableau)[\s\S]*?\]/g, "(showed their whiteboard)").replace(/\s+/g, " ").trim();
+    if (!clean2) return "";
+    const firstSentence = m.role === "assistant" ? clean2.match(/^.*?[.!?](?:\s|$)/)?.[0] ?? clean2 : clean2;
     return `- ${m.role === "assistant" ? "Otto" : "Student"}: ${firstSentence.slice(0, 130)}`;
   }).filter(Boolean);
   const kept = [];
@@ -16673,8 +16743,9 @@ function registerAuthRoutes(app2) {
         google: state.google ? { connected: true, email: state.google.email } : null,
         pronote: state.pronote ? { connected: true, url: state.pronote.url, username: state.pronote.username } : null
       };
-      res.setHeader("Content-Disposition", `attachment; filename="otto-data-${email}.json"`);
-      res.json({ email, exportedAt: (/* @__PURE__ */ new Date()).toISOString(), profile: state.profile, tasks: state.tasks, connections, jobs, events });
+      res.setHeader("Content-Disposition", `attachment; filename="otto-data-${email.replace(/[^a-z0-9@._+-]/gi, "_")}.json"`);
+      const feedback = (await listFeedbackFor(email)).map(({ id, helpful, comment, publish_consent, consent_at, display_name, level, status, created_at }) => ({ id, helpful, comment, publish_consent, consent_at, display_name, level, status, created_at }));
+      res.json({ email, exportedAt: (/* @__PURE__ */ new Date()).toISOString(), profile: state.profile, tasks: state.tasks, connections, jobs, events, feedback });
     } catch (e) {
       console.error(e);
       res.status(500).json({ error: "Couldn't export your data \u2014 try again." });
@@ -20122,6 +20193,90 @@ function registerProfileRoutes(app2) {
   }));
 }
 
+// server/routes/feedback.ts
+init_store();
+var clean = (v, max) => String(v ?? "").replace(/<[^>]*>/g, "").replace(/[\u0000-\u001f\u007f]/g, " ").replace(/\s+/g, " ").trim().slice(0, max);
+var HELPFUL = /* @__PURE__ */ new Set(["yes", "somewhat", "no"]);
+var publicView = (r) => ({
+  id: r.id,
+  helpful: r.helpful,
+  comment: r.comment,
+  publish: r.publish_consent,
+  status: r.status,
+  name: r.display_name,
+  level: r.level,
+  at: r.created_at
+});
+function registerFeedbackRoutes(app2) {
+  app2.post("/api/feedback", requireAuth, rateLimit(5, 24 * 60 * 6e4), ah(async (req, res) => {
+    const helpful = String(req.body?.helpful || "");
+    if (!HELPFUL.has(helpful)) {
+      res.status(400).json({ error: "Tell us whether Otto helped." });
+      return;
+    }
+    const comment = clean(req.body?.comment, 600);
+    const wantsPublish = req.body?.publish === true;
+    const name = clean(req.body?.name, 30);
+    const level = clean(req.body?.level, 40);
+    if (wantsPublish && (!comment || comment.length < 10)) {
+      res.status(400).json({ error: "To share a quote, write a sentence or two first." });
+      return;
+    }
+    if (wantsPublish && !name) {
+      res.status(400).json({ error: "Choose the first name or initial to show next to your quote." });
+      return;
+    }
+    const row = await addFeedback({ user_email: req.session.user, helpful, comment, publish_consent: wantsPublish, display_name: wantsPublish ? name : "", level: wantsPublish ? level : "" });
+    if (!row) {
+      res.status(500).json({ error: "Couldn't save that \u2014 try again." });
+      return;
+    }
+    void recordEvent(req.session.user, "feedback_sent", { message: wantsPublish ? "publish-consent" : "private" });
+    res.json({ ok: true, feedback: publicView(row) });
+  }));
+  app2.get("/api/feedback/mine", requireAuth, ah(async (req, res) => {
+    res.json({ feedback: (await listFeedbackFor(req.session.user)).map(publicView) });
+  }));
+  app2.delete("/api/feedback/:id", requireAuth, rateLimit(30, 6e4), ah(async (req, res) => {
+    const ok = await deleteFeedbackById(req.session.user, String(req.params.id || ""));
+    if (!ok) {
+      res.status(404).json({ error: "Not found." });
+      return;
+    }
+    void recordEvent(req.session.user, "feedback_withdrawn", {});
+    res.json({ ok: true });
+  }));
+  app2.get("/api/testimonials", rateLimit(60, 6e4), ah(async (_req, res) => {
+    res.set("Cache-Control", "public, max-age=300, s-maxage=300");
+    res.json({ testimonials: await listPublicTestimonials(6) });
+  }));
+  app2.get("/api/admin/feedback", requireAuth, ah(async (req, res) => {
+    if (!isAdmin(req)) {
+      res.status(403).json({ error: "Access denied." });
+      return;
+    }
+    const status = ["pending", "approved", "rejected", "all"].includes(String(req.query.status)) ? String(req.query.status) : "pending";
+    res.json({ feedback: (await listFeedbackForAdmin(status)).map(publicView) });
+  }));
+  app2.post("/api/admin/feedback/:id", requireAuth, rateLimit(60, 6e4), ah(async (req, res) => {
+    if (!isAdmin(req)) {
+      res.status(403).json({ error: "Access denied." });
+      return;
+    }
+    const decision = req.body?.decision === "approve" ? "approved" : req.body?.decision === "reject" ? "rejected" : null;
+    if (!decision) {
+      res.status(400).json({ error: "decision must be approve or reject." });
+      return;
+    }
+    const ok = await decideFeedback(String(req.params.id || ""), decision);
+    if (!ok) {
+      res.status(404).json({ error: decision === "approved" ? "Not found, or the author did not agree to publication." : "Not found." });
+      return;
+    }
+    res.json({ ok: true });
+  }));
+}
+
 // server/routes/tutor.ts
 init_types();
 init_tutorPolicy();
@@ -21868,6 +22023,7 @@ app.get("/api/status", ah(async (req, res) => {
   res.type("json").send(statusJson);
 }));
 registerProfileRoutes(app);
+registerFeedbackRoutes(app);
 registerTutorRoutes(app);
 registerStudyRoutes(app);
 if (PROD && !process.env.VERCEL) {

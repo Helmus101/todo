@@ -1,5 +1,6 @@
 import { LanguagePicker } from "../LanguagePicker.tsx";
 import { PronoteContext } from "./PronoteContext.tsx";
+import { FeedbackForm } from "./FeedbackForm.tsx";
 import { useEffect, useState, useCallback, useRef } from "react";
 import type { WebTask, ConnectionStatus, Profile } from "../../shared/types.ts";
 import { api, type IntegrationItem, type ConnectedAccount } from "../api.ts";
@@ -433,6 +434,11 @@ export function SettingsPage({ status, tasks, onSignOut, onChanged, onTasksChang
             ) : <p className="settings-hint">{"Not enough activity yet."}</p>}
           </div>
         )}
+      </section>
+
+      <section className="settings-sec reveal">
+        <h3>{"Feedback"}</h3>
+        <FeedbackForm />
       </section>
 
       <section className="settings-sec reveal">

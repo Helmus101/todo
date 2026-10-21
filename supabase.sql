@@ -196,3 +196,27 @@ drop policy if exists "weave_web_session_outcomes server access" on weave_web_se
 --   create policy "weave_web_ratelimits server access"  on weave_web_ratelimits for all using (true) with check (true);
 --   create policy "weave_web_bandit server access"  on weave_web_bandit  for all using (true) with check (true);
 --   create policy "weave_web_session_outcomes server access" on weave_web_session_outcomes for all using (true) with check (true);
+
+-- ── User feedback + (consented) testimonials (server/routes/feedback.ts) ────────────────────────────────────────
+-- Real feedback only. A row is shown publicly ONLY when publish_consent is true AND an admin approved it
+-- (status = 'approved'); the student can withdraw (deleting the row) at any time, and deleting the account deletes
+-- its rows. display_name is whatever the student chose to be shown as (a first name or initial) — never derived
+-- from the email. The email column is private and never returned by the public endpoint.
+create table if not exists weave_web_feedback (
+  id uuid primary key default gen_random_uuid(),
+  user_email text not null,
+  helpful text not null check (helpful in ('yes', 'somewhat', 'no')),
+  comment text not null default '',
+  publish_consent boolean not null default false,
+  consent_at timestamptz,
+  display_name text not null default '',
+  level text not null default '',
+  status text not null default 'pending' check (status in ('pending', 'approved', 'rejected')),
+  created_at timestamptz not null default now(),
+  decided_at timestamptz
+);
+create index if not exists weave_web_feedback_user on weave_web_feedback (user_email, created_at desc);
+create index if not exists weave_web_feedback_public on weave_web_feedback (status, publish_consent, created_at desc);
+alter table weave_web_feedback enable row level security;
+drop policy if exists "weave_web_feedback server access" on weave_web_feedback;
+

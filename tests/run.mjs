@@ -5239,6 +5239,39 @@ section("Full mode switches at once with a progress bar; 'what Otto knows / how 
   check("a session where nothing happened adds no note", sessionMemoryNote("Maths", { learned: [], gaps: [], mistakes: [], next: "" }) === null);
 }
 
+section("Real feedback collection: separate consent to publish, review before anything shows, withdrawal, erasure (GDPR)");
+{
+  const st = await import("../server/store.ts");
+  const fr = readFileSync("server/routes/feedback.ts", "utf8"), sql = readFileSync("supabase.sql", "utf8"), auth = readFileSync("server/routes/auth.ts", "utf8"), store = readFileSync("server/store.ts", "utf8");
+  const private1 = await st.addFeedback({ user_email: "a@x.fr", helpful: "yes", comment: "Helped me with logs", publish_consent: false, display_name: "", level: "" });
+  const public1 = await st.addFeedback({ user_email: "b@x.fr", helpful: "yes", comment: "Otto made me explain every step, which finally made it stick.", publish_consent: true, display_name: "Léa", level: "Year 12 IB" });
+  check("feedback is stored with its own consent flag and timestamp; not-for-publication rows have none", private1.consent_at === null && !!public1.consent_at && public1.status === "pending");
+  check("nothing is public before an admin approves it", (await st.listPublicTestimonials()).length === 0);
+  check("a row whose author did NOT consent can never be approved", (await st.decideFeedback(private1.id, "approved")) === false);
+  check("a consented row can be approved, and then appears with the chosen name, never an email", (await st.decideFeedback(public1.id, "approved")) === true && (() => true)());
+  const shown = await st.listPublicTestimonials();
+  check("the public view carries name, level, text and date only", shown.length === 1 && shown[0].name === "Léa" && !JSON.stringify(shown).includes("@") && Object.keys(shown[0]).sort().join() === "date,helpful,level,name,text");
+  check("a student can withdraw their own feedback (and a stranger cannot)", (await st.deleteFeedbackById("c@x.fr", public1.id)) === false && (await st.deleteFeedbackById("b@x.fr", public1.id)) === true && (await st.listPublicTestimonials()).length === 0);
+  await st.deleteAllFeedbackFor("a@x.fr");
+  check("deleting an account removes its feedback", (await st.listFeedbackFor("a@x.fr")).length === 0 && /await deleteAllFeedbackFor\(email\)/.test(store));
+  check("the data export includes the student's feedback (Art. 15/20)", /listFeedbackFor\(email\)/.test(auth) && /feedback \}\);|, events, feedback/.test(auth));
+  check("the routes: publishing needs the explicit flag, a name and real text; admin-only moderation never exposes emails", /wantsPublish = req\.body\?\.publish === true/.test(fr) && /Choose the first name or initial/.test(fr) && /isAdmin\(req\)/.test(fr) && !/user_email: r\./.test(fr));
+  check("the table has RLS on, a consent column, and a status check", /alter table weave_web_feedback enable row level security/.test(sql) && /publish_consent boolean not null default false/.test(sql) && /check \(status in \('pending', 'approved', 'rejected'\)\)/.test(sql));
+  const form = readFileSync("client/pages/FeedbackForm.tsx", "utf8");
+  check("the publish checkbox starts UNCHECKED and has its own wording; withdraw is offered", /useState\(false\);\n\s*const \[name/.test(form) && /You may quote my words/.test(form) && /Withdraw and remove/.test(form));
+  const land = readFileSync("client/pages/Testimonials.tsx", "utf8");
+  check("the landing shows testimonials only when real ones exist (renders null otherwise), with no review schema", /if \(!items\.length\) return null/.test(land) && !/"@type":\s*"Review"|AggregateRating/.test(readFileSync("index.html", "utf8") + readFileSync("scripts/prerender-landing.tsx", "utf8")));
+}
+
+section("Privacy policy covers the GDPR essentials and tells the truth about DeepSeek");
+{
+  const legal = readFileSync("client/pages/Legal.tsx", "utf8");
+  check("controller, legal bases, cookies, feedback, profiling, breach and CNIL are all in the policy", ["Who is responsible for your data", "Why we may use your data", "Cookies and similar storage", "Feedback you choose to send", "Profiling", "If something goes wrong", "CNIL"].every((k) => legal.includes(k)));
+  check("the policy lists every processor actually used (Sentry, Vercel, Resend, Exa included)", ["Google", "OpenAI", "DeepSeek", "Supabase", "Composio", "Vercel", "Sentry", "Resend", "Exa"].every((k) => legal.includes(`<b>${k}</b>`)));
+  check("it no longer claims every provider has a contractual commitment; it names DeepSeek's gap", !/only use providers that commit contractually/.test(legal) && /We do not currently have a bespoke data processing agreement/.test(legal));
+  check("the data-protection doc lists what still needs the owner (DeepSeek DPA, retention, verification)", /still needs a decision or an action from the owner/.test(readFileSync("DATA_PROTECTION.md", "utf8")));
+}
+
 section("Board changes are undoable in the Tutor session (spec §12 #10, source pins)");
 {
   const ts = readFileSync("client/tutor/TutorSession.tsx", "utf8");
@@ -5929,7 +5962,7 @@ section("Landing page redesign — prototype copy, real features only, no fabric
   // still real, still nothing fabricated; the prototype's copy is the marketing now.
   const app = appSource();
   const landing = readFileSync(new URL("../client/pages/Landing.tsx", import.meta.url), "utf8");
-  check("no fabricated testimonial content (no quote attributed to a named 'customer')", !/testimonial/i.test(landing));
+  check("no fabricated testimonial content: the landing page hard-codes no quotes; the only testimonials come from the consented, reviewed feedback component", !/<blockquote|<figcaption|“[^”]{20,}”/.test(landing) && /<Testimonials \/>/.test(landing) && /api\.testimonials\(\)/.test(readFileSync(new URL("../client/pages/Testimonials.tsx", import.meta.url), "utf8")));
   check("no certifications this app doesn't hold (SOC 2 / ISO 27001 / SAML)", !/SOC\s*2/i.test(landing) && !/ISO\s*27001/i.test(landing) && !/SAML/i.test(landing));
   check("the footer keeps Privacy/Terms only (the legal pages stay reachable)", landing.includes('href="/terms"') && landing.includes('href="/privacy"') && !landing.includes('href="/unlimited"'));
 }

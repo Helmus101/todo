@@ -11,6 +11,16 @@ export function PrivacyBody() {
       <h1>{"Privacy Policy"}</h1>
       <p>{`Otto ("we", "us") is a voice tutor with a shared whiteboard: you talk through a problem, Otto asks questions, explains when you need it, and writes the working on paper as you go. This policy explains what we access, why, and your choices. Otto is operated by ${LEGAL_ENTITY}.`}</p>
 
+      <h2>{"Who is responsible for your data"}</h2>
+      <p>{`The controller is ${LEGAL_ENTITY}, based in ${LEGAL_JURISDICTION}. For anything about your data, write to ${LEGAL_EMAIL}. We are a small team and do not have a data protection officer; that address reaches the person responsible.`}</p>
+
+      <h2>{"Why we may use your data (legal bases)"}</h2>
+      <ul>
+        <li><b>{"To give you the service"}</b>{" (contract): your account, your profile, the tutor's memory of you, and sending what you say to the AI providers so Otto can answer."}</li>
+        <li><b>{"Your consent"}</b>{": using the microphone, connecting an optional app, and letting us quote your feedback on the website. You can withdraw each of these at any time; withdrawing does not undo what was lawful before."}</li>
+        <li><b>{"Our legitimate interests"}</b>{": keeping the service secure, preventing abuse (rate limits, a weekly usage allowance), fixing errors, and improving Otto from your feedback. You may object to these (see your rights below)."}</li>
+      </ul>
+
       <h2>{"What happens when you talk to Otto"}</h2>
       <ul>
         <li><b>{"Your voice."}</b> {"The microphone is only used after you tap to start a call. During the call your browser streams your audio directly to the live-voice provider (Google Gemini Live, or OpenAI Realtime as a fallback) with a short-lived credential our server creates for you. Our servers do not receive or store your audio."}</li>
@@ -50,11 +60,20 @@ export function PrivacyBody() {
         <li><b>DeepSeek</b> — {"the AI model that writes the board and answers typed messages."}</li>
         <li><b>Supabase</b> — {"stores your account and profile."}</li>
         <li><b>Composio</b> — {"brokers the connections to the optional integrations."}</li>
-        <li>{"Hosting/infrastructure providers that run the app."}</li>
+        <li><b>Vercel</b> — {"hosts the app and measures anonymous page views (no advertising, no cross-site tracking)."}</li>
+        <li><b>Sentry</b> — {"receives technical error reports so we can fix bugs; we do not send your messages or tasks to it."}</li>
+        <li><b>Resend</b> — {"sends the password-reset email."}</li>
+        <li><b>Exa</b> {"(or a similar web-search service)"} — {"receives search keywords when Otto looks something up for a task."}</li>
       </ul>
 
+      <h2>{"Cookies and similar storage"}</h2>
+      <p>{"Otto sets one session cookie (to keep you logged in) and a security token that protects your requests. Both are strictly necessary, so there is no cookie banner. Your browser's local storage keeps your tutor sessions, boards and preferences on your device. We do not use advertising or tracking cookies, and we do not load fonts or scripts from advertising networks; the fonts are served from Otto's own address."}</p>
+
+      <h2>{"Feedback you choose to send"}</h2>
+      <p>{"In Settings you can tell us whether Otto helped. That is private by default. Separately, you can tick a box to let us quote your words on the website under a first name or initial that you type; we review each quote before it appears and never show your email. You can see everything you sent in Settings and withdraw any of it at any time, which removes it from the website. Deleting your account removes it too."}</p>
+
       <h2>{"Retention & deletion"}</h2>
-      <p>{`Your account data is kept for as long as your account exists — we don't automatically delete it after a period of inactivity. Your tutoring sessions live in your browser until you delete them or clear the site's data. You're in control, with no email-and-wait required: delete past sessions from the sessions list, clear everything Otto has learned via Settings → "Forget everything", disconnect any app at any time, or delete your account.`}</p>
+      <p>{`Your account data is kept for as long as your account exists, and then deleted when you delete it: your profile, tasks, memory notes, connections, feedback and sign-in are erased together, and the connections to other apps are revoked. Short session notes keep only the latest 30. We don't currently delete accounts automatically after a period of inactivity, so please delete yours when you stop using Otto. Hosting and error logs are kept by those providers for a short period under their own settings. Your tutoring sessions live in your browser until you delete them or clear the site's data. You're in control, with no email-and-wait required: delete past sessions from the sessions list, clear everything Otto has learned via Settings → "Forget everything", disconnect any app at any time, or delete your account.`}</p>
 
       <h2>{"Security"}</h2>
       <p>{"Voice credentials are created on our server for a single call and expire within minutes; our API keys never reach your browser. Google and other OAuth-based connections mean we never see your app passwords. Pronote is the one exception — it has no OAuth, so we keep your Pronote username and password encrypted to reconnect you when its token expires."}</p>
@@ -63,10 +82,16 @@ export function PrivacyBody() {
       <p>{"Otto's use of information received from Google APIs adheres to the "}<a href="https://developers.google.com/terms/api-services-user-data-policy" target="_blank" rel="noreferrer">{"Google API Services User Data Policy"}</a>{", including the Limited Use requirements."}</p>
 
       <h2>{"Your rights (GDPR)"}</h2>
-      <p>{`If you're in the EU/EEA, GDPR gives you the right to access, correct, export (portability), or delete (erasure) your data, and to object to or restrict how it's processed. Your tutoring sessions are already in your hands (they are in your browser), and the account data can be viewed and deleted in Settings. For anything else, or if you're elsewhere and want the same, contact ${LEGAL_EMAIL}.`}</p>
+      <p>{`If you're in the EU/EEA or the UK you have the right to: access your data; correct it; erase it; receive it in a portable file; restrict or object to how we use it; withdraw consent at any time; and not be subject to a decision based only on automated processing that has legal or similarly significant effects (Otto does not make any such decisions: it suggests what to study, and you decide). In Settings you can edit what Otto knows about you, download everything we hold as a file, send or withdraw feedback, pause the AI, and delete your account in one step. For anything else write to ${LEGAL_EMAIL}; we answer within one month. If you think we have not handled your data properly you may complain to your data protection authority; in France that is the CNIL (cnil.fr).`}</p>
+
+      <h2>{"Profiling"}</h2>
+      <p>{"Otto builds a short written picture of how you learn from your sessions (\"How Otto sees you\" in Settings) and a record of the ideas you are working on. It is used only to teach you better, you can read it, edit it and reset it, and it is never used to grade you or shared."}</p>
+
+      <h2>{"If something goes wrong"}</h2>
+      <p>{"If a security incident puts your data at risk, we will tell the CNIL within 72 hours where the law requires it, and tell you without undue delay if the risk to you is high."}</p>
 
       <h2>{"International transfers"}</h2>
-      <p>{`Your data is processed by providers based outside ${LEGAL_JURISDICTION} (including the US and elsewhere) — Google, OpenAI, DeepSeek, Supabase, Composio and our hosting provider. We only use providers that commit contractually to protecting your data (e.g. standard contractual clauses where applicable) to the standard GDPR requires.`}</p>
+      <p>{`Your data is processed by providers based outside ${LEGAL_JURISDICTION}: Google, OpenAI, Supabase, Vercel, Sentry, Composio and Exa mainly in the US, and DeepSeek in China. For the US providers we rely on their standard data processing terms and the EU-US Data Privacy Framework or standard contractual clauses where they apply. We want to be straightforward about DeepSeek: it writes the board and answers typed messages, so it receives the text of what you type to Otto and the tasks it works on. We do not currently have a bespoke data processing agreement or an EU-hosted option with DeepSeek, so please do not type sensitive information (health, religion, family details, passwords) into Otto. We will update this page if that changes.`}</p>
 
       <h2>{"Age"}</h2>
       <p>{`Otto is built with students in mind, but opening an account requires being old enough to consent to data processing on your own (15 in ${LEGAL_JURISDICTION}); younger than that, a parent or guardian should set it up and stay involved. Because Otto uses your voice, please make sure anyone using it has agreed to the microphone being used.`}</p>

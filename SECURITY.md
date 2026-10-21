@@ -27,7 +27,7 @@ Most relevant to Otto's threat model:
   Sessions live in Supabase (`weave_web_sessions`, with a `user_email` owner column); per-instance caches are 60 s.
 - Password reset tokens: 32 random bytes, single use, 30-minute expiry, stored only as a SHA-256 hash
   (`weave_web_reset_tokens`). A reset signs out every other session; account deletion signs out all of them.
-- Admin access (`/admin`) is limited to the emails in `ADMIN_EMAILS`.
+- Admin pages (usage grants, feedback moderation) are limited to the emails in `ADMIN_EMAILS` (default: the owner), checked on the server for every request. Moderation never shows a writer's email.
 - There is no per-account AI spending cap; per-route rate limits are the only throttle. Watch spend in the
   provider dashboards.
 - Pronote credentials (username, password, session token) are stored AES-256-GCM encrypted so Otto can log back

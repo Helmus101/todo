@@ -22,6 +22,7 @@ import { registerAuthRoutes } from "./routes/auth.ts";
 import { registerIntegrationRoutes } from "./routes/integrations.ts";
 import { registerTaskRoutes } from "./routes/tasks.ts";
 import { registerProfileRoutes } from "./routes/profile.ts";
+import { registerFeedbackRoutes } from "./routes/feedback.ts";
 import { registerTutorRoutes } from "./routes/tutor.ts";
 import { registerStudyRoutes } from "./routes/study.ts";
 
@@ -294,6 +295,7 @@ app.get("/api/status", ah(async (req, res) => {
   res.type("json").send(statusJson);
 }));
 registerProfileRoutes(app);
+registerFeedbackRoutes(app);
 registerTutorRoutes(app);
 registerStudyRoutes(app);
 

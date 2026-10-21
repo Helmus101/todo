@@ -5,7 +5,7 @@ import express from "express";
 import { randomBytes } from "node:crypto";
 import type { WebTask } from "../../shared/types.ts";
 import { emptyProfile, normalizeProfile } from "../../shared/types.ts";
-import { loadState, saveState, cloudEnabled, findAuthUserByEmail, createAuthUser, verifyAuthPassword, setAuthPassword, setResetToken, consumeResetToken, destroySessionsForUser, deleteAccount, exportJobsAndEvents, recordEvent } from "../store.ts";
+import { listFeedbackFor, loadState, saveState, cloudEnabled, findAuthUserByEmail, createAuthUser, verifyAuthPassword, setAuthPassword, setResetToken, consumeResetToken, destroySessionsForUser, deleteAccount, exportJobsAndEvents, recordEvent } from "../store.ts";
 import { sendTransactionalEmail } from "../mailer.ts";
 import * as tasks from "../tasks.ts";
 import * as integrations from "../integrations.ts";
@@ -263,8 +263,9 @@ export function registerAuthRoutes(app: express.Express): void {
         google: state.google ? { connected: true, email: state.google.email } : null,
         pronote: state.pronote ? { connected: true, url: state.pronote.url, username: state.pronote.username } : null,
       };
-      res.setHeader("Content-Disposition", `attachment; filename="otto-data-${email}.json"`);
-      res.json({ email, exportedAt: new Date().toISOString(), profile: state.profile, tasks: state.tasks, connections, jobs, events });
+      res.setHeader("Content-Disposition", `attachment; filename="otto-data-${email.replace(/[^a-z0-9@._+-]/gi, "_")}.json"`);
+      const feedback = (await listFeedbackFor(email)).map(({ id, helpful, comment, publish_consent, consent_at, display_name, level, status, created_at }) => ({ id, helpful, comment, publish_consent, consent_at, display_name, level, status, created_at }));
+      res.json({ email, exportedAt: new Date().toISOString(), profile: state.profile, tasks: state.tasks, connections, jobs, events, feedback });
     } catch (e: any) {
       console.error(e);
       res.status(500).json({ error: "Couldn't export your data — try again." });

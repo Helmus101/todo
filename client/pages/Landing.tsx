@@ -1,4 +1,5 @@
 import { LanguagePicker } from "../LanguagePicker.tsx";
+import { Testimonials } from "./Testimonials.tsx";
 import { AiLogo } from "./AiLogos.tsx";
 import { LandingFit } from "./LandingFit.tsx";
 
@@ -46,6 +47,7 @@ export function Landing({ lang, onLangChange }: { lang: "fr" | "en"; onLangChang
           </div>
         </section>
         <LandingFit />
+        <Testimonials />
       </main>
       <footer className="landing-min-foot">
         <a href="/privacy">{"Privacy"}</a>

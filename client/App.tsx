@@ -1296,7 +1296,7 @@ export function App() {
     </LangContext.Provider>
   );
 }
-const LEGAL_UPDATED = "July 30, 2026";
+const LEGAL_UPDATED = "October 21, 2026";
 
 function LegalPage({ kind, lang }: { kind: "privacy" | "terms"; lang?: string }) {
   return (

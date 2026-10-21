@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { api } from "../api.ts";
+import { api, type FeedbackItem } from "../api.ts";
 
 /** Admin (only the account the server lists as admin): who asked for more AI usage this week, and a button to grant it. */
 export function AdminPage() {
@@ -9,6 +9,10 @@ export function AdminPage() {
   const [usd, setUsd] = useState("5");
   const [busy, setBusy] = useState(false);
   const [done, setDone] = useState("");
+  const [fb, setFb] = useState<FeedbackItem[] | null>(null);
+  const loadFb = () => { void api.adminFeedback("pending").then((r) => setFb(r.feedback)).catch(() => setFb([])); };
+  useEffect(loadFb, []);
+  const decide = async (id: string, d: "approve" | "reject") => { try { await api.adminDecideFeedback(id, d); loadFb(); } catch (e: any) { setErr(e?.message || "Couldn't save the decision."); } };
   const load = () => { setErr(""); void api.adminUsageRequests().then((r) => setRows(r.requests)).catch((e: any) => setErr(e?.message || "Couldn't load.")); };
   useEffect(load, []);
   const grant = async (to: string, amount: number) => {
@@ -40,6 +44,19 @@ export function AdminPage() {
           <input className="addinput" style={{ maxWidth: 90 }} inputMode="decimal" value={usd} onChange={(e) => setUsd(e.target.value)} aria-label="Dollars" />
           <button type="button" className="btn primary" disabled={busy || !email.includes("@") || !(Number(usd) > 0)} onClick={() => void grant(email.trim(), Number(usd))}>{"Grant"}</button>
         </div>
+      </section>
+      <section className="settings-sec">
+        <h3>{"Feedback waiting for review"}</h3>
+        <p className="settings-hint">{"Only quotes whose author agreed to publication can be approved. You see the words and the name they chose, not their email."}</p>
+        {fb === null ? <p className="muted small">{"Loading…"}</p> : fb.length === 0 ? <p className="settings-hint">{"Nothing waiting."}</p> : fb.map((f) => (
+          <div key={f.id} className="admin-request">
+            <div><b>{f.helpful}</b><span className="settings-hint">{` · ${f.publish ? `OK to publish as “${f.name}”${f.level ? `, ${f.level}` : ""}` : "private (not for publication)"}`}</span><p>{f.comment || "(no comment)"}</p></div>
+            <div className="admin-actions">
+              <button type="button" className="btn xs primary" disabled={!f.publish || !f.comment} onClick={() => void decide(f.id, "approve")}>{"Approve"}</button>
+              <button type="button" className="btn xs ghost" onClick={() => void decide(f.id, "reject")}>{f.publish ? "Reject" : "Archive"}</button>
+            </div>
+          </div>
+        ))}
       </section>
     </main>
   );

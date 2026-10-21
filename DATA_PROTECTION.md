@@ -74,3 +74,44 @@ doesn't require the credential at all (manual entry, calendar import, etc).
 None of this substitutes for a DPA or Pronote authorization — it reduces the blast radius of an
 existing breach, it doesn't make the current data flow to DeepSeek or the Pronote login flow
 institutionally compliant.
+
+## GDPR checklist — where Otto stands (October 2026)
+
+Honest status, not a certificate. "Done" means it exists in the code or the policy today.
+
+| Requirement | Status | Where |
+|---|---|---|
+| Controller identified; contact for requests | Done | Privacy page "Who is responsible", footer of legal pages |
+| Lawful basis per purpose, stated | Done | Privacy page "Why we may use your data" |
+| Transparent about processors and transfers | Done, with a known gap (below) | Privacy page "Service providers", "International transfers" |
+| Access (Art. 15) and portability (Art. 20) | Done | `GET /api/account/export` (profile, tasks, jobs, events, feedback) |
+| Rectification (Art. 16) | Done | Settings → "What Otto knows about you" is editable |
+| Erasure (Art. 17) | Done | `POST /api/account/delete` (needs the password): account, tasks, jobs, events, feedback, sessions, sign-in, and third-party grants |
+| Restriction / objection (Art. 18, 21) | By request + Pause AI | Privacy page; Settings → pause; email |
+| Withdraw consent | Done | Feedback publication is its own unchecked box and can be withdrawn in Settings; microphone is per-call; integrations can be disconnected |
+| No tracking cookies; strictly-necessary storage only | Done | one session cookie + CSRF token + local storage; no banner needed |
+| No visitor data sent to third parties on page load | Done | Google Fonts removed (fonts bundled, CSP no longer allows it); Vercel Analytics is cookieless page counting |
+| Data minimisation in AI prompts | Done | No real name sent; tutor sessions stay in the browser; only labels go to the profile |
+| Security of processing (Art. 32) | Done | see SECURITY.md: encrypted Pronote credentials, RLS, CSRF, rate limits, per-account login cap, password re-entry to delete |
+| Breach notification (Art. 33/34) | Stated | Privacy page; process is: assess, notify CNIL within 72 h if required, notify users if high risk |
+| Children | Partly | 15+ self-consent, parental consent flow for child accounts, shorter retention profile; see below |
+| Records of processing (Art. 30) | This document + the table at the top | keep updated |
+
+## What still needs a decision or an action from the owner (code cannot close these)
+
+1. **DeepSeek (China)** receives typed tutor text and task content with no DPA, no EEA residency and no training opt-out
+   commitment. The privacy page now says so plainly and tells users not to type sensitive data. The real fix is a
+   provider with an EU DPA (e.g. Mistral) or a signed DPA from DeepSeek. This remains the largest gap.
+2. **DPAs and transfer mechanisms** with Google, OpenAI, Supabase, Vercel, Sentry, Resend, Composio and Exa: confirm
+   each provider's standard DPA is accepted in your account settings and keep copies. Choose EU regions where offered
+   (Supabase and Vercel already can be).
+3. **Retention.** Accounts are kept until deleted; there is no inactivity purge. Storage limitation (Art. 5(1)(e))
+   expects a defined period. Recommended: warn by email, then delete accounts inactive for 24 months, and say so in
+   the policy.
+4. **Minors under 15 / school use.** `dataRetentionDays` is recorded on the profile at signup but not yet enforced by a
+   job. A data protection impact assessment (DPIA) is advisable before any school deployment (see the top of this file).
+5. **Email verification at signup** is off (accounts are created pre-confirmed). Turn on confirmation in Supabase Auth so
+   nobody can register an address that is not theirs.
+6. **Legal review.** The privacy policy and terms are plain-language drafts. Have them checked by a lawyer or the CNIL's
+   guidance for small publishers before relying on them commercially.
+
