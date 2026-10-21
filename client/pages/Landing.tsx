@@ -1,4 +1,5 @@
 import { LanguagePicker } from "../LanguagePicker.tsx";
+import { LandingFit } from "./LandingFit.tsx";
 
 
 
@@ -8,7 +9,7 @@ import { LanguagePicker } from "../LanguagePicker.tsx";
 // time — the only piece of this whole SPA that gets static HTML pre-baked into dist/index.html, since it's
 // the only screen a logged-out visitor or a non-JS crawler/link-unfurler ever needs to see real content
 // for. See that script's own comment for why this is a build-time static render, not per-request SSR.
-const ASK_PROMPT = (site: string) => `I'm deciding whether to try Otto${site ? ` (${site})` : ""}, a voice-first Socratic AI tutor with a shared whiteboard: it asks questions instead of handing over answers, talks out loud, writes the working on a board, and remembers past sessions. Look it up and be honest with me: (1) why Otto is good, (2) why it could be right for me, (3) why it might NOT be right for me, and who should use something else instead. Keep it short and specific, with no hype.`;
+const ASK_PROMPT = (site: string) => `I'm deciding whether to try Otto${site ? ` (${site})` : ""}, a voice-first Socratic AI tutor with a shared whiteboard for students (SAT, AP, IB, French Bac). Note: this is NOT HeyOtto (heyotto.app), a different product. Facts from its own site, in case you can't open the page: it asks questions instead of handing over answers; you talk out loud and typing also works; it writes the working on a board (typeset maths, graphs, multiple choice); it explains when you're stuck; tutor sessions stay in the browser; it remembers earlier sessions and keeps a record of repeat mistakes; it works in 10 languages. If you can't verify something, say so instead of guessing. Be honest with me: (1) why Otto is good, (2) why it could be right for me, (3) why it might NOT be right for me, and who should use something else instead. Keep it short and specific, with no hype.`;
 const ASK_TARGETS: { name: string; url: (q: string) => string }[] = [
   { name: "ChatGPT", url: (q) => `https://chatgpt.com/?q=${q}` },
   { name: "Claude", url: (q) => `https://claude.ai/new?q=${q}` },
@@ -43,6 +44,7 @@ export function Landing({ lang, onLangChange }: { lang: "fr" | "en"; onLangChang
             ))}
           </div>
         </section>
+        <LandingFit />
       </main>
       <footer className="landing-min-foot">
         <a href="/privacy">{"Privacy"}</a>

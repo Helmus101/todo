@@ -116,6 +116,7 @@ export function useSpeechRecognition({ lang, onResult, onInterim, onError }: Use
     rec.interimResults = true;
     rec.maxAlternatives = 3;
     rec.onresult = (e) => {
+      lastHeardRef.current = Date.now();
       let interim = "";
       // Each `isFinal` result is ONE complete utterance per the browser's own pause detection — fire
       // onResult immediately per utterance rather than accumulating across the whole session, so a long
@@ -224,9 +225,20 @@ export function useSpeechRecognition({ lang, onResult, onInterim, onError }: Use
   const createAndStartRef = useRef(createAndStart);
   createAndStartRef.current = createAndStart;
 
+  // The microphone never stays open on its own: a minute without a single word heard ends it.
+  const lastHeardRef = useRef(Date.now());
+  useEffect(() => {
+    if (!listening) return;
+    const t = window.setInterval(() => {
+      if (keepAliveRef.current && Date.now() - lastHeardRef.current > 60_000) { keepAliveRef.current = false; recRef.current?.stop(); }
+    }, 5000);
+    return () => window.clearInterval(t);
+  }, [listening]);
+
   const start = useCallback(() => {
     if (!Ctor || keepAliveRef.current) return;
     keepAliveRef.current = true;
+    lastHeardRef.current = Date.now();
     createAndStart();
   }, [Ctor, createAndStart]);
 

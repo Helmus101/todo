@@ -5005,7 +5005,7 @@ button[aria-expanded="true"] > .sm-chev { transform: rotate(45deg); }
 .landing-ask h2 { font-size: 1.25rem !important; font-weight: 800 !important; letter-spacing: -0.01em; margin: 0 0 var(--space-2); }
 .landing-ask p { margin: 0 0 var(--space-4); }
 .landing-ask-row { display: flex; flex-wrap: wrap; gap: 10px; }
-.landing-ask-btn { padding: 10px 18px; border: 1px solid var(--ink); border-radius: 999px; color: var(--ink) !important; text-decoration: none !important; font-weight: 600; font-size: .95rem; }
+.landing-ask-btn { display: inline-flex; align-items: center; gap: 8px; padding: 10px 18px; border: 1px solid var(--ink); border-radius: 999px; color: var(--ink) !important; text-decoration: none !important; font-weight: 600; font-size: .95rem; }
 .landing-ask-btn:hover { background: var(--ink) !important; color: #fff !important; }
 /* Journal: a calm week strip of day cards and a paper page to write on. */
 .studylog-weeknav { padding: 6px 4px; }
@@ -5056,3 +5056,23 @@ html[data-i18n="loading"] body { opacity: 0; }
 .blog-cta { margin: 36px 0 8px; padding: 18px 20px; border: 1px solid var(--line); border-radius: 14px; background: var(--surface); }
 .blog-cta p { margin: 0 0 12px; }
 .blog-more { padding-left: 18px; }
+.landing-fit { margin-top: var(--space-8); padding-top: var(--space-5); border-top: 1px solid var(--line); }
+.landing-fit h2 { font-size: 1.25rem !important; font-weight: 800 !important; margin: 0 0 var(--space-3); }
+.landing-fit h3 { font-size: .8rem !important; font-weight: 700 !important; letter-spacing: .07em; text-transform: uppercase; color: var(--ink-3); margin: 0 0 6px; }
+.landing-fit-grid { display: grid; gap: var(--space-4); grid-template-columns: 1fr; }
+@media (min-width: 640px) { .landing-fit-grid { grid-template-columns: 1fr 1fr; } }
+.landing-fit ul { margin: 0; padding-left: 18px; color: var(--ink-2); display: grid; gap: 6px; font-size: .95rem; }
+.landing-fit-facts { margin: var(--space-4) 0 0; display: grid; grid-template-columns: max-content 1fr; gap: 8px 16px; font-size: .95rem; }
+.landing-fit-facts dt { font-weight: 700; }
+.landing-fit-facts dd { margin: 0; color: var(--ink-2); }
+.landing-fit-test { margin-top: var(--space-4); padding: var(--space-3) var(--space-4); border: 1px solid var(--ink); border-radius: 12px; font-size: .95rem; }
+/* Subject picker, minimal: one line to type, a few quiet suggestions. */
+.tutor-subject-picker { gap: 10px !important; width: min(100%, 420px); }
+.tutor-subject-input { width: 100%; font: inherit; font-size: 1.1rem; text-align: center; padding: 12px 4px; border: 0 !important; border-bottom: 1px solid var(--ink-3) !important; border-radius: 0 !important; background: transparent !important; color: var(--ink); outline: none; }
+.tutor-subject-input:focus { border-bottom-color: var(--ink) !important; }
+.tutor-subject-suggest { display: flex; flex-wrap: wrap; justify-content: center; gap: 4px 16px; }
+.tutor-subject-suggest button { font: inherit; font-size: .9rem; padding: 2px 0; border: 0; background: none !important; color: var(--ink-3) !important; cursor: pointer; text-decoration: none; }
+.tutor-subject-suggest button:hover { color: var(--ink) !important; text-decoration: underline; text-underline-offset: 3px; }
+.tutor-subject-suggest button.on { color: var(--ink) !important; font-weight: 700; }
+
+.landing-ask-logo { flex: none; }

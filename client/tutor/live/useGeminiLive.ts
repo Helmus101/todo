@@ -51,6 +51,7 @@ export function useGeminiLive(opts: LiveOptions) {
   }, []);
 
   const liveSinceRef = useRef(0);
+  const lastHeardRef = useRef(0); // the last time any words were heard, from the student or from Otto
   const teardown = useCallback((next: LiveStatus) => {
     const wasAlive = aliveRef.current;
     aliveRef.current = false;
@@ -82,6 +83,7 @@ export function useGeminiLive(opts: LiveOptions) {
       if (!aliveRef.current) return;
       const sc = msg.serverContent;
       if (!sc) return;
+      if (sc.inputTranscription?.text || sc.outputTranscription?.text || sc.modelTurn) lastHeardRef.current = Date.now();
       if (sc.interrupted) { player.interrupt(); flush(); }
       if (sc.inputTranscription?.text) youRef.current += sc.inputTranscription.text;
       if (sc.outputTranscription?.text) ottoRef.current += sc.outputTranscription.text;
@@ -111,8 +113,8 @@ export function useGeminiLive(opts: LiveOptions) {
         const handleOai = (ev: any) => {
           if (!aliveRef.current) return;
           switch (ev.type) {
-            case "conversation.item.input_audio_transcription.completed": youRef.current += (youRef.current ? " " : "") + String(ev.transcript || "").trim(); optsRef.current.onPartial?.(youRef.current, ottoRef.current); break;
-            case "response.output_audio_transcript.delta": ottoRef.current += String(ev.delta || ""); optsRef.current.onPartial?.(youRef.current, ottoRef.current); break;
+            case "conversation.item.input_audio_transcription.completed": lastHeardRef.current = Date.now(); youRef.current += (youRef.current ? " " : "") + String(ev.transcript || "").trim(); optsRef.current.onPartial?.(youRef.current, ottoRef.current); break;
+            case "response.output_audio_transcript.delta": lastHeardRef.current = Date.now(); ottoRef.current += String(ev.delta || ""); optsRef.current.onPartial?.(youRef.current, ottoRef.current); break;
             case "output_audio_buffer.started": setSpeaking(true); break;
             case "output_audio_buffer.stopped": case "output_audio_buffer.cleared": setSpeaking(false); break;
             case "input_audio_buffer.speech_started": flush(); break;
@@ -132,7 +134,7 @@ export function useGeminiLive(opts: LiveOptions) {
         if (!r.ok) throw Object.assign(new Error(`The voice service refused the call (${r.status}).`), { status: 503 });
         await pc.setRemoteDescription({ type: "answer", sdp: await r.text() });
         if (!aliveRef.current) return;
-        liveSinceRef.current = Date.now(); setStatus("live");
+        liveSinceRef.current = Date.now(); lastHeardRef.current = Date.now(); setStatus("live");
       };
       const tryGemini = async (tok: Cred) => {
       providerRef.current = "gemini";
@@ -175,7 +177,7 @@ export function useGeminiLive(opts: LiveOptions) {
       // The call may have been ended while the microphone was still starting: then the microphone must not stay open.
       if (!aliveRef.current) { mic.stop(); try { session.close(); } catch { /* */ } return; }
       micRef.current = mic;
-      liveSinceRef.current = Date.now(); setStatus("live");
+      liveSinceRef.current = Date.now(); lastHeardRef.current = Date.now(); setStatus("live");
       window.setTimeout(() => { if (aliveRef.current && player.state !== "running") setBlocked(true); }, 800);
       // The model speaks first: nudge it so it greets from what it knows.
       session.sendClientContent({ turns: [{ role: "user", parts: [{ text: "(Session started. Greet me briefly.)" }] }], turnComplete: true });
@@ -226,6 +228,7 @@ export function useGeminiLive(opts: LiveOptions) {
     if (providerRef.current === "openai") {
       const dc = dcRef.current;
       if (!dc || dc.readyState !== "open" || !text.trim()) return false;
+      lastHeardRef.current = Date.now();
       try {
         dc.send(JSON.stringify({ type: "conversation.item.create", item: { type: "message", role: "user", content: [{ type: "input_text", text }] } }));
         dc.send(JSON.stringify({ type: "response.create" }));
@@ -234,11 +237,19 @@ export function useGeminiLive(opts: LiveOptions) {
     }
     const s = sessionRef.current;
     if (!s || !text.trim()) return false;
-    try { s.sendClientContent({ turns: [{ role: "user", parts: [{ text }] }], turnComplete: true }); youRef.current += ""; return true; } catch { return false; }
+    try { lastHeardRef.current = Date.now(); s.sendClientContent({ turns: [{ role: "user", parts: [{ text }] }], turnComplete: true }); youRef.current += ""; return true; } catch { return false; }
   }, []);
   /** The play button: one tap lets the browser play Otto's voice. */
   const resumePlayback = useCallback(() => { playerRef.current?.unlock(); void audioElRef.current?.play().catch(() => {}); setBlocked(false); }, []);
 
   useEffect(() => () => { if (aliveRef.current) teardown("ended"); }, [teardown]);
+  // The microphone always ends by itself: after a minute with no words heard (the student's or Otto's) the call stops, muted or not.
+  useEffect(() => {
+    if (status !== "live") return;
+    const t = window.setInterval(() => {
+      if (aliveRef.current && Date.now() - lastHeardRef.current > 60_000) { setError("Stopped listening after a minute of silence. Tap Voice mode to continue."); teardown("ended"); }
+    }, 5000);
+    return () => window.clearInterval(t);
+  }, [status, teardown]);
   return { status, error, speaking, muted, blocked, start, stop, setMuted, sendImage, sendText, resumePlayback };
 }

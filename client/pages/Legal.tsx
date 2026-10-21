@@ -184,6 +184,13 @@ export function ResearchPageBody() {
         </section>
 
         <section className="research-sec research-sec-closing">
+          <h2 className="research-sec-title">{"What we haven't shown"}</h2>
+          <p className="research-sec-body">
+            {"The studies above support learning by explaining and by retrieval practice. They are not a trial of Otto itself: we haven't run an outcomes study, so we can't promise better exam results than other tutors. The fair test is your own: work three hard problems with Otto, then solve three similar ones alone the next day. If you can rebuild the reasoning yourself, it's working."}
+          </p>
+          <p className="research-sec-body">
+            {"Otto teaches any subject, but it is built for understanding, not for speed. If you want a quick answer, a normal AI assistant is faster; for timed exam practice use past papers; for high-stakes personal strategy, a human tutor."}
+          </p>
           <h2 className="research-sec-title">{"What this doesn't mean"}</h2>
           <p className="research-sec-body">
             {"Otto can still be wrong — a language model is a language model. If something it says doesn't add up, say so out loud and it will go back over it with you."}

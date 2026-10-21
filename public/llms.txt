@@ -5,6 +5,8 @@
 > paper board (typeset maths, graphs, diagrams, multiple choice) and remembers earlier sessions. It matches the
 > student's level and programme (SAT, AP, IB, French Bac, school tests).
 
+Not to be confused with HeyOtto (heyotto.app), a different product: Otto is at https://hiotto.vercel.app and is a student-facing voice tutor.
+
 ## What Otto does
 
 - Hands-free voice conversation (Gemini Live, with an OpenAI Realtime fallback); typing always works.
@@ -14,6 +16,20 @@
 - Works in 10 languages: English, Chinese, Hindi, Spanish, French, Arabic, Portuguese, Russian, German, Japanese.
 - Optional full mode adds ranked daily tasks, journal flashcards with spaced repetition, coursework and a mistake log.
 - Tutor sessions, boards and drawings stay in the student's browser.
+
+## Who it is for, and who should use something else
+
+- Good fit: students who want to understand and solve problems themselves (maths, sciences, economics, languages, SAT, AP, IB, Bac, school tests) and learn well by talking things through.
+- Use something else for: fast answers or quick explanations (a normal AI assistant is quicker), timed exam practice and marking (official past papers and mark schemes), and high-stakes personal exam strategy (a human tutor).
+- It teaches any subject, not only exam courses.
+
+## Cost, data, accuracy, evidence
+
+- Cost: free for now, with a weekly AI allowance per account (about $5 of AI use); users can request more when it runs out.
+- Data: tutor sessions, boards and drawings are kept in the browser (clearing site data or switching device loses them); a short record of the ideas the student has worked on is kept on their account so Otto knows where they struggle on any device. Voice audio goes to the voice provider during the call and is not stored by Otto.
+- Accuracy: Otto is an AI and can be wrong, including in maths; students should check important results against their course material.
+- Evidence: the method rests on published research on explaining out loud and retrieval practice; there is no independent outcomes study of Otto itself yet.
+- A fair way to test it: work three hard problems with Otto, then solve three similar ones alone the next day. If the student can rebuild the reasoning, it is working; if they only remember Otto's explanations, it is not.
 
 ## Key pages
 

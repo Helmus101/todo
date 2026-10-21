@@ -866,26 +866,20 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
               button right, no separate label above. The gate stays (the button is disabled until a
               subject is picked) but the affordance is always visible. */}
           <div className="tutor-subject-picker" role="group" aria-label={"Subject"}>
-            {subjectGroups.map((g) => (
-              <div key={g.label} className="tutor-subject-group">
-                <span className="tutor-subject-label">{g.label}</span>
-                <div className="tutor-subject-chips">
-                  {g.items.map((subj) => (
-                    <button key={subj} type="button" className={`tutor-chip${selectedSubject === subj ? " on" : ""}`} aria-pressed={selectedSubject === subj} onClick={() => { setSelectedSubject(subj); setTopic(""); }}>{subj}</button>
-                  ))}
-                </div>
-              </div>
-            ))}
             <input
-              className={`tutor-topic-input tutor-subject-other${selectedSubject === OTHER ? " on" : ""}`}
-              value={selectedSubject === OTHER ? topic : ""}
+              className="tutor-subject-input tutor-topic-input"
+              value={selectedSubject === OTHER ? topic : selectedSubject}
               maxLength={80}
-              aria-label={"Another subject"}
-              placeholder={"Another subject… e.g. Latin, Theory of Knowledge"}
-              onFocus={() => { if (selectedSubject !== OTHER) { setSelectedSubject(OTHER); setTopic(""); } }}
+              aria-label={"What are you working on?"}
+              placeholder={"What are you working on?"}
               onChange={(e) => { setSelectedSubject(OTHER); setTopic(e.target.value); }}
               onKeyDown={(e) => { if (e.key === "Enter" && topic.trim()) void startNewSession(); }}
             />
+            <div className="tutor-subject-suggest">
+              {(mine.length ? mine : ["Math", "Physics", "Chemistry", "Biology", "English", "SAT prep"]).slice(0, 6).map((subj) => (
+                <button key={subj} type="button" className={selectedSubject === subj ? "on" : ""} onClick={() => { setSelectedSubject(subj); setTopic(""); }}>{subj}</button>
+              ))}
+            </div>
           </div>
           <div className="tutor-start-actions">
             <button className="btn primary tutor-start-btn" onClick={() => void startNewSession(true)} disabled={startingSession || !chosenSubject}>
