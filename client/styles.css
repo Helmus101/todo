@@ -4979,3 +4979,9 @@ button[aria-expanded="true"] > .sm-chev { transform: rotate(45deg); }
 .sm-board-body .sm-board-entry-result .sm-board-line { font-weight: 600; }
 .sm-board-body .sm-board-line .katex { font-size: 1.1em; }
 .sm-board-body .sm-board-entry-focus { margin-top: var(--space-5); }
+/* Subject picker: grouped, with a field for anything else. */
+.tutor-subject-picker { display: flex; flex-direction: column; gap: 14px; align-items: center; max-width: 560px; width: 100%; }
+.tutor-subject-group { display: flex; flex-direction: column; align-items: center; gap: 8px; }
+.tutor-subject-label { font-size: 11px; font-weight: 700; letter-spacing: .07em; text-transform: uppercase; color: var(--ink-3); }
+.tutor-subject-other { width: min(100%, 360px); text-align: center; border-radius: 999px !important; }
+.tutor-subject-other.on { border-color: var(--accent) !important; }

@@ -111,7 +111,19 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
   // The student's own subjects (set in onboarding) come first; the shared common list follows.
   const [mySubjects, setMySubjects] = useState<string[]>([]);
   useEffect(() => { void api.profile().then((p) => setMySubjects(p.subjects || [])).catch(() => { /* the common list is enough */ }); }, []);
-  const subjectOptions = [...new Set<string>([...mySubjects, ...COMMON_SUBJECTS, "SAT prep"])];
+  const SUBJECT_GROUPS: { label: string; items: string[] }[] = [
+    { label: "Maths & science", items: ["Math", "Physics", "Chemistry", "Biology", "Computer Science", "Economics"] },
+    { label: "Exam prep", items: ["SAT prep"] },
+    { label: "Languages & humanities", items: ["English", "French", "Spanish", "History", "Geography", "Philosophy", "Art", "Music"] },
+  ];
+  const known = new Set(SUBJECT_GROUPS.flatMap((g) => g.items));
+  const mine = mySubjects.filter((x) => x && x !== "Other");
+  const extra = COMMON_SUBJECTS.filter((x) => x !== "Other" && !known.has(x));
+  const subjectGroups = [
+    ...(mine.length ? [{ label: "Your subjects", items: [...new Set(mine)] }] : []),
+    ...SUBJECT_GROUPS.map((g) => ({ ...g, items: g.items.filter((x) => !mine.includes(x)) })),
+    ...(extra.length ? [{ label: "More", items: extra.filter((x) => !mine.includes(x)) }] : []),
+  ].filter((g) => g.items.length);
   const [selectedSubject, setSelectedSubject] = useState("");
   // Only used when the subject is "Other": the student names it here. Every other subject starts with one tap, no extra question.
   const OTHER = "__other__";
@@ -801,15 +813,31 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
               rendered as the prototype's single wide pill: subject select left, orange "Start a session"
               button right, no separate label above. The gate stays (the button is disabled until a
               subject is picked) but the affordance is always visible. */}
-          <div className="tutor-subject-chips" role="group" aria-label={"Subject"}>
-            {subjectOptions.map((subj) => (
-              <button key={subj} type="button" className={`tutor-chip${selectedSubject === subj ? " on" : ""}`} aria-pressed={selectedSubject === subj} onClick={() => { setSelectedSubject(subj); setTopic(""); }}>{subj}</button>
+          <div className="tutor-subject-picker" role="group" aria-label={"Subject"}>
+            {subjectGroups.map((g) => (
+              <div key={g.label} className="tutor-subject-group">
+                <span className="tutor-subject-label">{g.label}</span>
+                <div className="tutor-subject-chips">
+                  {g.items.map((subj) => (
+                    <button key={subj} type="button" className={`tutor-chip${selectedSubject === subj ? " on" : ""}`} aria-pressed={selectedSubject === subj} onClick={() => { setSelectedSubject(subj); setTopic(""); }}>{subj}</button>
+                  ))}
+                </div>
+              </div>
             ))}
-            <button type="button" className={`tutor-chip${selectedSubject === OTHER ? " on" : ""}`} aria-pressed={selectedSubject === OTHER} onClick={() => { setSelectedSubject(OTHER); setTopic(""); }}>{"Other…"}</button>
+            <input
+              className={`tutor-topic-input tutor-subject-other${selectedSubject === OTHER ? " on" : ""}`}
+              value={selectedSubject === OTHER ? topic : ""}
+              maxLength={80}
+              aria-label={"Another subject"}
+              placeholder={"Another subject… e.g. Latin, Theory of Knowledge"}
+              onFocus={() => { if (selectedSubject !== OTHER) { setSelectedSubject(OTHER); setTopic(""); } }}
+              onChange={(e) => { setSelectedSubject(OTHER); setTopic(e.target.value); }}
+              onKeyDown={(e) => { if (e.key === "Enter" && topic.trim()) void startNewSession(); }}
+            />
           </div>
           <div className="tutor-start-actions">
             <button className="btn primary tutor-start-btn" onClick={() => void startNewSession(true)} disabled={startingSession || !chosenSubject}>
-              <Mic size={18} aria-hidden="true" />{startingSession ? "Starting…" : "Start talking"}
+              <Mic size={18} aria-hidden="true" />{startingSession ? "Starting…" : chosenSubject ? `Start talking · ${chosenSubject}` : "Pick a subject to start"}
             </button>
             <button type="button" className="tutor-start-type" onClick={() => void startNewSession(false)} disabled={startingSession || !chosenSubject}>
               {"or type instead"}
@@ -817,21 +845,6 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
           </div>
           {error ? <p className="tutor-error" role="alert">{error}</p> : null}
 
-          {selectedSubject === OTHER && (
-            <div className="tutor-topic">
-              <input
-                id="tutor-topic-input"
-                className="tutor-topic-input"
-                value={topic}
-                maxLength={80}
-                autoFocus
-                aria-label={"Which subject?"}
-                placeholder={"Which subject? e.g. Theory of Knowledge, Latin…"}
-                onChange={(e) => setTopic(e.target.value)}
-                onKeyDown={(e) => { if (e.key === "Enter" && topic.trim()) void startNewSession(); }}
-              />
-            </div>
-          )}
 
           {/* Direct request: sessions are stored only in this browser now (client/localChatBoard.ts +
               tutorSessions.ts), so say so plainly — clearing site data is the one way to lose them. */}
