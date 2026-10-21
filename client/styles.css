@@ -4994,3 +4994,5 @@ button[aria-expanded="true"] > .sm-chev { transform: rotate(45deg); }
 .tutor-stage .sm-board-body .sm-board-entry-summary .sm-board-entry-main { padding: 8px 12px; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); }
 .tutor-stage .sm-board-body .sm-board-entry-summary .sm-board-line::before { content: "In short  "; font-size: 11px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--ink-3); }
 .tutor-stage .sm-board-body .sm-board-entry-strategy .sm-board-entry-main { padding: 4px 10px; background: rgba(120,100,60,.08) !important; border-radius: 6px; }
+.settings-more { margin-top: var(--space-3); }
+.settings-more > summary { cursor: pointer; font-size: 14px; color: var(--ink-2); padding: 6px 0; }

@@ -111,7 +111,7 @@ function PreferencesFields({ profile, onChanged }: { profile: Profile | null; on
   return (
     <>
       <div className="set-row">
-        <span className="set-text"><b>{"Your track"}</b><span className="settings-hint">{"Vocabulary, integrations offered, and the style of generated exercises/quizzes. Not doing Bac, IB, or AP (middle school, etc.)? Pick \"Other\"."}</span></span>
+        <span className="set-text"><b>{"Your track"}</b><span className="settings-hint">{"Your programme, so exam practice matches it."}</span></span>
         <div className="lang-toggle">
           <button type="button" className={`btn xs ${track === "bac" ? "" : "ghost"}`} aria-pressed={track === "bac"} onClick={() => void saveTrack("bac")}>{"Bac"}</button>
           <button type="button" className={`btn xs ${track === "ib" ? "" : "ghost"}`} aria-pressed={track === "ib"} onClick={() => void saveTrack("ib")}>IB</button>
@@ -120,7 +120,7 @@ function PreferencesFields({ profile, onChanged }: { profile: Profile | null; on
         </div>
       </div>
       <label className="set-row">
-        <span className="set-text"><b>{"Your year/grade"}</b><span className="settings-hint">{"Helps Otto match revision sheets and exercises to your exact level."}</span></span>
+        <span className="set-text"><b>{"Your year/grade"}</b><span className="settings-hint">{"Otto pitches every question at your level."}</span></span>
         <input className="addinput" style={{ maxWidth: 160 }} maxLength={40}
           placeholder={track === "ib" ? "e.g. DP1" : track === "ap" ? "e.g. Junior year" : track === "other" ? "e.g. Grade 7" : "e.g. Terminale"}
           value={yearLevel} onChange={(e) => setYearLevelState(e.target.value)}
@@ -258,8 +258,7 @@ export function SettingsPage({ status, tasks, onSignOut, onChanged, onTasksChang
   return (
     <main className="settings-page">
       {/* The prototype's Settings head: "Set the bar for Otto." + "Your account, your connections, your standards." */}
-      <h1 className="list-head">{"Set the bar for Otto."}</h1>
-      <p className="page-sub mt-3 mb-6">{"Your account, your connections, your standards."}</p>
+      <h1 className="list-head">{"Settings"}</h1>
       {profileError ? (
         <ErrorNote onRetry={loadProfile}>{"Some profile info couldn't load."}</ErrorNote>
       ) : null}
@@ -277,12 +276,9 @@ export function SettingsPage({ status, tasks, onSignOut, onChanged, onTasksChang
           </div>
           <button className="btn xs ghost" onClick={() => void onSignOut()}>{"Sign out"}</button>
         </div>
-        <div className="modal-row"><span className="lbl">{"Privacy"}</span><span className="val">{"Your Pronote password is encrypted and never resold. "}<a href="/privacy">{"Details →"}</a></span></div>
+        <details className="settings-more">
+          <summary>{"Your data and privacy"}</summary>
         <div className="modal-row"><span className="lbl">{"Legal"}</span><span className="val"><a href="/privacy">{"Privacy"}</a> · <a href="/terms">{"Terms"}</a></span></div>
-        <div className="modal-row" data-tour="replay-onboarding">
-          <span className="lbl">{"Welcome tour"}</span>
-          <span className="val"><button type="button" className="btn xs ghost" onClick={() => onReplayOnboarding?.()}>{"Test onboarding"}</button></span>
-        </div>
         <div className="modal-row">
           <span className="lbl">{"Your data"}</span>
           <span className="val"><a href={api.exportDataUrl()} download>{"Download my data"}</a></span>
@@ -320,23 +316,24 @@ export function SettingsPage({ status, tasks, onSignOut, onChanged, onTasksChang
             >{deletingAccount ? "Deleting…" : "Delete everything"}</button>
           </div>
         </div>
+        </details>
       </section>
 
       <section className="settings-sec reveal" style={{ ["--d" as any]: "0.07s" }}>
-        <h3>{"Sources"}</h3>
+        <h3>{status.fullApp ? "Sources" : "School"}</h3>
         <p className="settings-hint">{status.fullApp ? "Otto reads these sources and preps the work — " : "Connect Pronote so Otto knows what you are studying: your homework (cahier de texte) and the lesson content your teachers publish. "}<b>{"It never sends or hands anything in for you"}</b>.</p>
         <PronoteTile status={status} onStatusUpdate={onStatusUpdate} />
         {status.fullApp ? <GoogleTiles onChanged={onChanged} restricted={profile?.track !== "ib" && profile?.track !== "ap" && profile?.track !== "other"} /> : null}
       </section>
 
       <section className="settings-sec reveal" style={{ ["--d" as any]: "0.09s" }}>
-        <h3>{"Preferences"}</h3>
+        <h3>{"About you"}</h3>
         <div className="set-list">
           <label className="set-row">
             <span className="set-text"><b>{"Language"}</b><span className="settings-hint">{"The whole app, and Otto's voice and board, use this language."}</span></span>
             <LanguagePicker />
           </label>
-          <label className="set-row">
+          {status.fullApp ? <label className="set-row">
             <span className="set-text"><b>{"Pause Otto"}</b><span className="settings-hint">{"Stops all AI activity. Your tasks stay as they are."}</span></span>
             <span className="switch"><input type="checkbox" checked={paused} onChange={(e) => {
               const v = e.target.checked;
@@ -346,12 +343,12 @@ export function SettingsPage({ status, tasks, onSignOut, onChanged, onTasksChang
                 notify(err?.message || "That setting didn't save — give it another try.", "error");
               });
             }} /><span className="switch-track" /></span>
-          </label>
+          </label> : null}
           <PreferencesFields profile={profile} onChanged={(p) => { setProfile(p); onChanged(); }} />
         </div>
       </section>
 
-      {usage && (
+      {status.fullApp && usage && (
         <section className="settings-sec reveal" style={{ ["--d" as any]: "0.11s" }}>
           <h3>{"AI usage"}</h3>
           <div className="set-list">
@@ -373,15 +370,15 @@ export function SettingsPage({ status, tasks, onSignOut, onChanged, onTasksChang
         </section>
       )}
 
-      <section className="settings-sec reveal" style={{ ["--d" as any]: "0.13s" }}>
+      {status.fullApp ? <section className="settings-sec reveal" style={{ ["--d" as any]: "0.13s" }}>
         <button className="sec-toggle" aria-expanded={showKnows} onClick={() => setShowKnows((v) => !v)}>
           <h3>{"What Otto knows about you"}</h3>
           <span className={`caret ${showKnows ? "open" : ""}`} aria-hidden="true">›</span>
         </button>
         {showKnows && <div className="settings-reveal"><p className="settings-hint">{"Otto fills this in over time. You can edit anything."}</p><ProfileEditor /></div>}
-      </section>
+      </section> : null}
 
-      <section className="settings-sec reveal" style={{ ["--d" as any]: "0.18s" }}>
+      {status.fullApp ? <section className="settings-sec reveal" style={{ ["--d" as any]: "0.18s" }}>
         <button className="sec-toggle" aria-expanded={showStudentModel} onClick={() => setShowStudentModel((v) => !v)}>
           <h3>{"How Otto sees you"}</h3>
           <span className={`caret ${showStudentModel ? "open" : ""}`} aria-hidden="true">›</span>
@@ -401,7 +398,7 @@ export function SettingsPage({ status, tasks, onSignOut, onChanged, onTasksChang
             ) : <p className="settings-hint">{"Not enough activity yet."}</p>}
           </div>
         )}
-      </section>
+      </section> : null}
     </main>
   );
 }
