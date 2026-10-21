@@ -352,7 +352,7 @@ export function StudyLogPage({ lang, tasks, status, phoneOnly }: { lang?: "fr" |
       <h1 className="list-head">{phoneOnly ? "Your flashcards" : "Journal"}</h1>
       <p className="page-sub mt-3">{phoneOnly
         ? "Review your flashcards here — the rest of Otto works better on a bigger screen."
-        : "Keep what you learned. Come back to what matters."}</p>
+        : "What clicked today? Write it down once, remember it for good."}</p>
 
       {/* Same .seg/.seg-btn segmented-control pattern as Pronote's Student/Parent picker — one visual
           language for every binary switcher in the app, not a second bespoke tab style. Hidden on phone:
@@ -380,7 +380,7 @@ export function StudyLogPage({ lang, tasks, status, phoneOnly }: { lang?: "fr" |
 
       <div className="studylog-days">
         {dayLabels.map((label, i) => (
-          <button key={i} type="button" className={`studylog-day-btn ${selected === i ? "active" : ""} ${days[i]?.logText ? "has-entry" : ""}`} onClick={() => setSelected(i)}>
+          <button key={i} type="button" aria-pressed={selected === i} className={`studylog-day-btn ${selected === i ? "active" : ""} ${days[i]?.logText ? "has-entry" : ""} ${dates[i] === todayIso() ? "is-today" : ""}`} onClick={() => setSelected(i)}>
             <span>{label}</span><span className="studylog-day-date">{fmtDate(dates[i], L)}</span>
           </button>
         ))}
@@ -444,7 +444,7 @@ export function StudyLogPage({ lang, tasks, status, phoneOnly }: { lang?: "fr" |
                 </div>
               ) : null}
               <textarea className="studylog-textarea" rows={14}
-                placeholder={"What did you learn today?"} aria-label={"What did you learn today?"}
+                placeholder={"What clicked today? What are you still unsure about?"} aria-label={"What did you learn today?"}
                 value={text} onChange={(e) => setText(e.target.value)} maxLength={4000} />
               <div className="studylog-actions">
                 <button type="button" className="btn primary" disabled={saving || !text.trim()} onClick={() => void save()}>

@@ -5001,3 +5001,26 @@ button[aria-expanded="true"] > .sm-chev { transform: rotate(45deg); }
 .landing-min-main h1 { font-size: clamp(2rem, 7vw, 3rem) !important; line-height: 1.05 !important; }
 .tutor-landing-title { font-family: var(--sans) !important; line-height: 1.05; }
 .list-head { font-size: clamp(1.7rem, 4vw, 2.2rem) !important; }
+.landing-ask { margin-top: var(--space-8); padding-top: var(--space-5); border-top: 1px solid var(--line); }
+.landing-ask h2 { font-size: 1.25rem !important; font-weight: 800 !important; letter-spacing: -0.01em; margin: 0 0 var(--space-2); }
+.landing-ask p { margin: 0 0 var(--space-4); }
+.landing-ask-row { display: flex; flex-wrap: wrap; gap: 10px; }
+.landing-ask-btn { padding: 10px 18px; border: 1px solid var(--ink); border-radius: 999px; color: var(--ink) !important; text-decoration: none !important; font-weight: 600; font-size: .95rem; }
+.landing-ask-btn:hover { background: var(--ink) !important; color: #fff !important; }
+/* Journal: a calm week strip of day cards and a paper page to write on. */
+.studylog-weeknav { padding: 6px 4px; }
+.studylog-weeklabel { font-size: 15px; font-weight: 700; color: var(--ink); }
+.studylog-days { display: grid !important; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 6px !important; }
+.studylog-day-btn { flex-direction: column !important; align-items: center !important; gap: 2px !important; padding: 8px 2px !important; border: 1px solid var(--line) !important; border-radius: 12px !important; background: var(--surface) !important; color: var(--ink-2) !important; position: relative; }
+.studylog-day-btn:hover { border-color: var(--ink-3) !important; }
+.studylog-day-btn.active { background: var(--ink) !important; border-color: var(--ink) !important; color: #fff !important; }
+.studylog-day-btn.active .studylog-day-date { color: rgba(255,255,255,.75); }
+.studylog-day-btn.has-entry span:first-child::after { content: ""; display: block; width: 5px; height: 5px; margin: 3px auto 0; border-radius: 50%; background: var(--ink); }
+.studylog-day-btn.active.has-entry span:first-child::after { background: #fff; }
+.studylog-day-btn.is-today:not(.active) { border-color: var(--ink) !important; }
+.studylog-textarea { background: #faf8f4 !important; border: 1px solid #e6e0d2 !important; border-radius: 14px !important; padding: var(--space-4) var(--space-5) !important; line-height: 1.75 !important; min-height: 300px; }
+.studylog-textarea:focus { border-color: var(--ink) !important; box-shadow: none !important; }
+.studylog-summary-sec { padding: var(--space-4); border: 1px solid var(--line); border-radius: 14px; background: var(--surface); margin-top: var(--space-4); }
+.studylog-summary-sec h3 { font-weight: 800 !important; }
+.studylog-day-cards-head h3 { font-weight: 800 !important; font-size: 1.15rem !important; }
+.exam-strip-label { font-weight: 800; }
