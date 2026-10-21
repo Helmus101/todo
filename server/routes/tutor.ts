@@ -10,6 +10,7 @@ import { M, ah, commit, dailyCap, isPaused, rateLimit, requireAuth } from "../ht
 import { backgroundBlock } from "../tutor.ts";
 import { selectJournal } from "../journal.ts";
 import { writeBoard } from "../tutorTurn/boardWriter.ts";
+import { normalizeStudentModel, emptyStudentModel, recordConceptEvidence } from "../studentModel.ts";
 import { liveInstructions } from "../../shared/liveTutor.ts";
 import { isLangCode, languageName } from "../../shared/languages.ts";
 import { createTutorChat, usageOf } from "../claude.ts";
@@ -173,6 +174,20 @@ export function registerTutorRoutes(app: express.Express): void {
       const out = await writeBoard({ exchange, board, subject, history, language }, tokens);
       const profile = req.session.profile || emptyProfile();
       addUsage(profile, tokens, "chat");
+      // What the exchange showed about the student feeds their concept record (Settings shows it; the voice is told it next session).
+      try {
+        const kinds = ["solved-unaided", "solved-after-hint", "solved-after-explanation", "mistake", "misconception", "recall"];
+        let m = normalizeStudentModel(profile.conceptModel) || emptyStudentModel();
+        let changed = false;
+        for (const c of (out.concepts || []).slice(0, 3)) {
+          const label = typeof c?.label === "string" ? c.label.trim().slice(0, 80) : "";
+          if (!label || !kinds.includes(c?.kind)) continue;
+          m = recordConceptEvidence(m, { label, subject: typeof c.subject === "string" ? c.subject.slice(0, 40) : subject, kind: c.kind, ...(typeof c.detail === "string" && c.detail.trim() ? { detail: c.detail.trim().slice(0, 160) } : {}) }, new Date());
+          changed = true;
+        }
+        if (changed) { profile.conceptModel = m; req.session.profile = profile; }
+      } catch { /* tracking is a bonus */ }
+      await commit(req);
       res.json({ board: out.board });
     } catch (e: any) {
       console.warn(`[live] board writer failed: ${String(e?.message || e).slice(0, 120)}`);

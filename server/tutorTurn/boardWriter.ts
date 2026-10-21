@@ -43,7 +43,9 @@ Return: {"notes":["definition: a logarithm is the opposite of an exponent","exam
 (The question about $\\log_3 9$ is NOT written: the tutor asks it out loud.)
 
 ${OPS}
-Return ONLY JSON: {"notes":["rule: …","result: …"],"board":[…ops…]}. Every op carries "cue":0. Inside strings write every LaTeX backslash TWICE.`;
+Also return "concepts": what this exchange shows about the STUDENT, as at most 3 items {"label":"short concept name (e.g. product rule for logs)","subject":"Math","kind":"solved-unaided|solved-after-hint|solved-after-explanation|mistake|misconception|recall","detail":"one short clause: what they did or got wrong"}. Only evidence that is actually in the exchange (the student reached it alone / after a hint / after the tutor explained it / got it wrong / showed a wrong belief); [] when there is none. Never invent.
+
+Return ONLY JSON: {"notes":["rule: …","result: …"],"board":[…ops…],"concepts":[…]}. Every op carries "cue":0. Inside strings write every LaTeX backslash TWICE.`;
 
 /** Someone mentioned graphing, plotting, a curve, a shape or a diagram (or the tutor offered to graph it): a figure belongs on the board. Pure. */
 export function wantsPicture(exchange: string): boolean {
@@ -77,7 +79,7 @@ export function tutorExplained(exchange: string): boolean {
   return /\b(?:for example|for instance|means|is the (?:opposite|inverse|same)|opposite of|equals?|is called|defined as|the rule|formula|because|so that|therefore|works like|think of)\b/i.test(tutor) && (/\d|\$|=|\bsquared|\bpower\b|\bbase\b|\bderivative\b|\bintegral\b/i.test(tutor) || tutor.split(/\s+/).length > 30);
 }
 
-export async function writeBoard(input: { exchange: string; board: BoardEntry[]; subject?: string; history?: string; language?: string }, tokens: { in: number; out: number; cachedIn: number }): Promise<{ board: BoardEntry[]; dropped: string[] }> {
+export async function writeBoard(input: { exchange: string; board: BoardEntry[]; subject?: string; history?: string; language?: string }, tokens: { in: number; out: number; cachedIn: number }): Promise<{ board: BoardEntry[]; dropped: string[]; concepts: any[] }> {
   const canDraw = !input.subject || /math|physic|chem|bio|econ|scien|geom|stat|calc|algebra|trig|histor|geograph/i.test(input.subject) || input.board.some((b) => ["graph", "svg", "diagram"].includes(String(b.kind)));
   const system = BOARD_WRITER_PROMPT + (input.language ? `\n\nLANGUAGE: the student works in ${input.language}. Write every board line, heading, option and label in ${input.language} (maths stays LaTeX). Op names and kinds stay as specified.` : "") + (canDraw ? DRAW_REFERENCE : "") + `\n\nTHE BOARD (margin numbers #n are what you point at)${boardSurfaceBlock(input.board, []) || ": empty."}`;
   // The tutor's closing question is still UNANSWERED: it is shown to the writer separately, so the working for it is never mistaken for something the student reached.
@@ -91,10 +93,11 @@ export async function writeBoard(input: { exchange: string; board: BoardEntry[];
     const u = usageOf(res); tokens.in += u.in; tokens.out += u.out; tokens.cachedIn += u.cachedIn;
     const raw = String(res?.choices?.[0]?.message?.content || "");
     const parsed: any = extractJsonObject(raw) ?? salvageTurn(raw);
+    const concepts = Array.isArray(parsed?.concepts) ? parsed.concepts : [];
     const turn = normalizeTurn({ speech: ["."], board: Array.isArray(parsed?.board) ? parsed.board : [] });
-    if (!turn || !turn.board.length) return { board: [] as BoardEntry[], dropped: [] as string[] };
+    if (!turn || !turn.board.length) return { board: [] as BoardEntry[], dropped: [] as string[], concepts };
     const applied = applyOps(turn.board.map((o) => ({ ...o, cue: 0 })), { board: [...input.board, ...already], problems: [], theirWords: studentWords });
-    return { board: applied.board, dropped: applied.dropped };
+    return { board: applied.board, dropped: applied.dropped, concepts };
   };
   let out = await once();
   // The board has to match the lesson. Two things are always checked, and one more call fixes both: (1) the tutor explained something and
@@ -110,7 +113,7 @@ export async function writeBoard(input: { exchange: string; board: BoardEntry[];
       needProblem ? `The tutor posed a problem and you did not write it: write the problem itself now as a task line (kind "given") in LaTeX, without its answer: ${openQuestion.slice(0, 300)}` : "",
     ].filter(Boolean).join(" ");
     const second = await once(`${asks} Return the same JSON shape.`, out.board);
-    if (second.board.length) { const all = [...out.board, ...second.board]; out = { board: [...all.filter((e) => e.kind === "focus"), ...all.filter((e) => e.kind !== "focus")], dropped: out.dropped }; }
+    if (second.board.length) { const all = [...out.board, ...second.board]; out = { board: [...all.filter((e) => e.kind === "focus"), ...all.filter((e) => e.kind !== "focus")], dropped: out.dropped, concepts: out.concepts.length ? out.concepts : second.concepts }; }
     else console.warn(`[live] board writer still wrote nothing (${(second.dropped.length ? second.dropped : out.dropped).slice(0, 2).join("; ") || "no ops"})`);
   }
   return out;

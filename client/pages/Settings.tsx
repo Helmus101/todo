@@ -355,6 +355,8 @@ export function SettingsPage({ status, tasks, onSignOut, onChanged, onTasksChang
         </div>
       </section>
 
+      <ConceptsPanel profile={profile} />
+
       {status.fullApp && usage && (
         <section className="settings-sec reveal" style={{ ["--d" as any]: "0.11s" }}>
           <h3>{"AI usage"}</h3>
@@ -737,5 +739,52 @@ function AddRow({ placeholder, onAdd }: { placeholder: string; onAdd: (v: string
       <input className="addinput sm" placeholder={placeholder} aria-label={placeholder} value={text} onChange={(e) => setText(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") void go(); }} />
       <button className="btn" disabled={!text.trim()} onClick={() => void go()}>{"Add"}</button>
     </div>
+  );
+}
+
+
+/** What the tutor has seen of the student, concept by concept: how solid it is, what keeps going wrong, when to revisit. Built from their sessions. */
+function ConceptsPanel({ profile }: { profile: Profile | null }) {
+  const [open, setOpen] = useState(true);
+  const concepts = Object.values(profile?.conceptModel?.concepts || {}).sort((a, b) => (b.updatedAt || "").localeCompare(a.updatedAt || ""));
+  const bySubject = new Map<string, typeof concepts>();
+  for (const c of concepts) bySubject.set(c.subject || "Other", [...(bySubject.get(c.subject || "Other") || []), c]);
+  const level = (p: number) => (p >= 0.75 ? "Solid" : p >= 0.45 ? "Getting there" : "Needs work");
+  const when = (iso?: string) => { const d = Date.parse(iso || ""); if (!d) return ""; const days = Math.round((d - Date.now()) / 86_400_000); return days <= 0 ? "review now" : days === 1 ? "review tomorrow" : `review in ${days} days`; };
+  return (
+    <section className="settings-sec reveal">
+      <button className="sec-toggle" aria-expanded={open} onClick={() => setOpen((v) => !v)}>
+        <h3>{"What you're working on"}</h3>
+        <span className={`caret ${open ? "open" : ""}`} aria-hidden="true">›</span>
+      </button>
+      {open ? (
+        <div className="settings-reveal">
+          {!concepts.length ? <p className="settings-hint">{"Nothing tracked yet. Talk to Otto and the ideas you work on show up here, with how solid each one is."}</p> : (
+            <>
+              <p className="settings-hint">{"Built from your sessions, only on your account. Otto uses it to pick what to ask next."}</p>
+              {[...bySubject.entries()].map(([subject, list]) => (
+                <div key={subject} className="concept-group">
+                  <div className="concept-subject">{subject}</div>
+                  {list.slice(0, 12).map((c) => {
+                    const p = Math.max(0, Math.min(1, c.kt?.p ?? c.mastery ?? 0));
+                    const live = (c.misconceptions || []).filter((m) => !m.retiredAt).slice(-1)[0];
+                    return (
+                      <div key={c.key} className="concept-row">
+                        <div className="concept-top"><b>{c.label}</b><span className="concept-level">{level(p)}</span></div>
+                        <div className="concept-bar" aria-hidden="true"><span style={{ width: `${Math.round(p * 100)}%` }} /></div>
+                        <div className="concept-meta">
+                          {live ? <span>{`Watch out: ${live.text}`}</span> : null}
+                          {c.nextReview && p >= 0.45 ? <span>{when(c.nextReview)}</span> : null}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              ))}
+            </>
+          )}
+        </div>
+      ) : null}
+    </section>
   );
 }

@@ -26,6 +26,7 @@ export function PrivacyBody() {
       <ul>
         <li>{"Your account email and a securely hashed password (we never store your password in plain text)."}</li>
         <li>{"A small profile of facts that help Otto teach you (for example your level and how you like to learn) — you can view and delete these any time in Settings."}</li>
+        <li>{"A short record of the ideas you have worked on (for example \"product rule for logs: getting there\", and a mistake that keeps coming back). It is shown in Settings so you can see it, and Otto uses it to personalise your sessions. The conversation itself is not stored."}</li>
         <li>{"Approximate AI-usage counts, used for daily limits and to show your usage."}</li>
         <li>{"If you use the optional integrations (see below): the connection details they need. Pronote credentials are stored encrypted (AES-256-GCM) and deleted when you disconnect."}</li>
       </ul>
