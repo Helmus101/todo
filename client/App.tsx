@@ -288,7 +288,9 @@ export function App() {
     if (msg && kind === "error") pushError(msg);
   }, []);
   const dismissNote = useCallback(() => { if (noteTimer.current) clearTimeout(noteTimer.current); setNote(""); }, []);
-  const [onboard, setOnboard] = useState(() => { try { return localStorage.getItem("otto-onboard") === "1"; } catch { return false; } });
+  // Onboarding is hidden for now (the code stays): nobody is walked through it, new accounts go straight to the tutor.
+  const ONBOARDING_ENABLED = false;
+  const [onboard, setOnboard] = useState(() => { if (!ONBOARDING_ENABLED) return false; try { return localStorage.getItem("otto-onboard") === "1"; } catch { return false; } });
   // Page guides already shown (client/PageTour.tsx): cached locally for instant paint, merged with the account's
   // server-side list so a guide never repeats on another device.
   const [toursSeen, setToursSeen] = useState<Set<string>>(() => { try { return new Set<string>(JSON.parse(localStorage.getItem("otto-tours-seen") || "[]")); } catch { return new Set<string>(); } });
@@ -322,7 +324,7 @@ export function App() {
     if (server?.length) setToursSeen((prev) => { const n = new Set([...prev, ...server]); return n.size === prev.size ? prev : n; });
   }, [status?.toursSeen]);
   // First-run onboarding is the ONE place Otto is explained — set on signup, cleared when the flow finishes.
-  const startOnboard = () => { try { localStorage.setItem("otto-onboard", "1"); } catch { /* ignore */ } setOnboard(true); };
+  const startOnboard = () => { if (!ONBOARDING_ENABLED) return; try { localStorage.setItem("otto-onboard", "1"); } catch { /* ignore */ } setOnboard(true); };
   const finishOnboard = () => {
     try { localStorage.removeItem("otto-onboard"); localStorage.removeItem("otto-onboard-step"); localStorage.removeItem("otto-onboard-track"); } catch { /* ignore */ }
     setOnboard(false);

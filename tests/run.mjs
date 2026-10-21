@@ -5367,7 +5367,6 @@ section("hintDensity preference — new axis, distinct from learningStyle, never
   check("chatAboutTask's dynamicContext includes hintDensityLine", /learningStyleLine\(profile\) \+ hintDensityLine\(profile\)/.test(claudeSrcHint));
 
   const appSrcHint = appSource();
-  check("Settings has a hint-density 3-position slider, distinct from the learningStyle VARK field", /hint-density-slider/.test(appSrcHint) && /type="range" min=\{0\} max=\{2\} step=\{1\}/.test(appSrcHint));
   check("the slider's 3 stops map to hints/balanced/steps in that order", /const HINT_DENSITY_POSITIONS: \("hints" \| "balanced" \| "steps"\)\[\] = \["hints", "balanced", "steps"\];/.test(appSrcHint));
 }
 
@@ -6974,6 +6973,14 @@ section("Past sessions — any of them can be resumed at any point; OpenAI Realt
   check("the OpenAI path in the browser: WebRTC with an 'oai-events' data channel, SDP posted to /v1/realtime/calls, transcripts and response.done drive the board writer, speaking state from output_audio_buffer events, mic muting, typed text and drawings sent as conversation items", /api\.openai\.com\/v1\/realtime\/calls/.test(hook) && /createDataChannel\("oai-events"\)/.test(hook) && /response\.output_audio_transcript\.delta/.test(hook) && /case "response\.done": flush\(\); optsRef\.current\.onTurnComplete\(\)/.test(hook) && /output_audio_buffer\.started/.test(hook) && /input_image/.test(hook) && /conversation\.item\.create/.test(hook));
   const idx = readFileSync(new URL("../server/index.ts", import.meta.url), "utf8"), vj = readFileSync(new URL("../vercel.json", import.meta.url), "utf8");
   check("both CSP copies let the page reach the live voice services (OpenAI and Gemini, https and wss), and the mic worklet is a same-origin file (a blob: script is blocked by script-src)", [idx, vj].every((c) => /connect-src 'self' https:\/\/api\.openai\.com https:\/\/generativelanguage\.googleapis\.com wss:\/\/generativelanguage\.googleapis\.com/.test(c)) && /addModule\("\/otto-tap\.js"\)/.test(audio) && !/createObjectURL/.test(audio) && /registerProcessor\("otto-tap"/.test(readFileSync(new URL("../public/otto-tap.js", import.meta.url), "utf8"))); }
+
+section("Tutor-only mode — Settings shows only Pronote, no 'how Otto teaches you', onboarding hidden (source pins)");
+{ const st = readFileSync(new URL("../client/pages/Settings.tsx", import.meta.url), "utf8");
+  const app = readFileSync(new URL("../client/App.tsx", import.meta.url), "utf8");
+  const rec = readFileSync(new URL("../server/schoolRecord.ts", import.meta.url), "utf8");
+  check("Settings no longer has 'How Otto teaches you' or the learning-style slider; Google and other app connections are for full accounts only, Pronote is always offered", !/<TutorPolicyRow \/>/.test(st) && !/hint-density-slider/.test(st) && /\{status\.fullApp \? <GoogleTiles/.test(st) && /<PronoteTile status=\{status\}/.test(st));
+  check("onboarding is hidden (ONBOARDING_ENABLED = false: no flow on signup or later) but the code stays", /const ONBOARDING_ENABLED = false;/.test(app) && /if \(!ONBOARDING_ENABLED\) return;/.test(app));
+  check("the tutor's memory carries the Pronote cahier de texte (homework) and the lesson content (contenu des cours)", /PRONOTE CAHIER DE TEXTE/.test(rec) && /PRONOTE CONTENU DES COURS/.test(rec)); }
 
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

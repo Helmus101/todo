@@ -18,7 +18,7 @@ export function schoolRecordLine(list: WebTask[] | undefined, profile: Profile |
     .sort((a, b) => String(a.sourceDue || a.when || "9999").localeCompare(String(b.sourceDue || b.when || "9999")));
   const pronPick = [...pron.filter((t) => subject && same(t.sourceSubject, subject)), ...pron.filter((t) => !(subject && same(t.sourceSubject, subject)))].slice(0, 8);
   if (pronPick.length) {
-    out.push("PRONOTE (open homework and tests from their school, nearest first):\n" + pronPick.map((t) =>
+    out.push("PRONOTE CAHIER DE TEXTE (open homework and tests from their school, nearest first):\n" + pronPick.map((t) =>
       `- ${t.sourceSubject ? `[${clip(t.sourceSubject, 30)}] ` : ""}${clip(t.title, 90)}${t.sourceDue || t.when ? ` — due ${clip(String(t.sourceDue || t.when), 30)}` : ""}${t.sourceDetail ? ` — ${clip(t.sourceDetail, 140)}` : ""}`).join("\n"));
   }
   const grades = (profile?.grades || []).filter((g) => g.source === "pronote").slice(0, 10);
@@ -30,7 +30,7 @@ export function schoolRecordLine(list: WebTask[] | undefined, profile: Profile |
   const lessons = (profile?.pronoteLessons || []).slice().sort((a, b) => b.date.localeCompare(a.date));
   const lPick = [...lessons.filter((l) => subject && same(l.subject, subject)), ...lessons.filter((l) => !(subject && same(l.subject, subject)))].slice(0, 8);
   if (lPick.length) {
-    out.push("PRONOTE LESSON CONTENT AND TEACHER RESOURCES (what the teachers published for recent classes — the real course material):\n" + lPick.map((l) =>
+    out.push("PRONOTE CONTENU DES COURS — LESSON CONTENT AND TEACHER RESOURCES (what the teachers published for recent classes, the real course material):\n" + lPick.map((l) =>
       `- ${l.date} [${clip(l.subject, 30)}]${l.category ? ` (${clip(l.category, 24)})` : ""}${l.title ? ` ${clip(l.title, 100)}` : ""}${l.text ? `: ${clip(l.text, 420)}` : ""}${l.files?.length ? ` — files: ${l.files.map((f) => clip(f.name, 50)).join(", ")}` : ""}`).join("\n"));
   }
 

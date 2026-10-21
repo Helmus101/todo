@@ -118,22 +118,6 @@ function PreferencesFields({ profile, onChanged }: { profile: Profile | null; on
           <button type="button" className={`btn xs ${track === "other" ? "" : "ghost"}`} aria-pressed={track === "other"} onClick={() => void saveTrack("other")}>{"Other"}</button>
         </div>
       </div>
-      <div className="set-row">
-        <span className="set-text"><b>{"Learning style"}</b><span className="settings-hint">{"When you're stuck: Otto gives just a hint, walks through it step by step, or judges it case by case. Either way, it never just gives you the direct answer."}</span></span>
-        <div className="hint-density-slider">
-          <input
-            type="range" min={0} max={2} step={1}
-            value={HINT_DENSITY_POSITIONS.indexOf(hintDensity || "balanced")}
-            onChange={(e) => void saveHintDensity(HINT_DENSITY_POSITIONS[Number(e.target.value)])}
-            aria-label={"Learning style"}
-          />
-          <div className="hint-density-slider-labels">
-            <span className={hintDensity === "hints" ? "active" : ""}>{"Just a hint"}</span>
-            <span className={!hintDensity || hintDensity === "balanced" ? "active" : ""}>{"Balanced"}</span>
-            <span className={hintDensity === "steps" ? "active" : ""}>{"All the steps"}</span>
-          </div>
-        </div>
-      </div>
       <label className="set-row">
         <span className="set-text"><b>{"Your year/grade"}</b><span className="settings-hint">{"Helps Otto match revision sheets and exercises to your exact level."}</span></span>
         <input className="addinput" style={{ maxWidth: 160 }} maxLength={40}
@@ -294,7 +278,6 @@ export function SettingsPage({ status, tasks, onSignOut, onChanged, onTasksChang
         </div>
         <div className="modal-row"><span className="lbl">{"Privacy"}</span><span className="val">{"Your Pronote password is encrypted and never resold. "}<a href="/privacy">{"Details →"}</a></span></div>
         <div className="modal-row"><span className="lbl">{"Legal"}</span><span className="val"><a href="/privacy">{"Privacy"}</a> · <a href="/terms">{"Terms"}</a></span></div>
-        <TutorPolicyRow />
         <div className="modal-row" data-tour="replay-onboarding">
           <span className="lbl">{"Welcome tour"}</span>
           <span className="val"><button type="button" className="btn xs ghost" onClick={() => onReplayOnboarding?.()}>{"Test onboarding"}</button></span>
@@ -340,9 +323,9 @@ export function SettingsPage({ status, tasks, onSignOut, onChanged, onTasksChang
 
       <section className="settings-sec reveal" style={{ ["--d" as any]: "0.07s" }}>
         <h3>{"Sources"}</h3>
-        <p className="settings-hint">{"Otto reads these sources and preps the work — "}<b>{"it never sends or hands anything in for you"}</b>.</p>
+        <p className="settings-hint">{status.fullApp ? "Otto reads these sources and preps the work — " : "Connect Pronote so Otto knows what you are studying: your homework (cahier de texte) and the lesson content your teachers publish. "}<b>{"It never sends or hands anything in for you"}</b>.</p>
         <PronoteTile status={status} onStatusUpdate={onStatusUpdate} />
-        <GoogleTiles onChanged={onChanged} restricted={profile?.track !== "ib" && profile?.track !== "ap" && profile?.track !== "other"} />
+        {status.fullApp ? <GoogleTiles onChanged={onChanged} restricted={profile?.track !== "ib" && profile?.track !== "ap" && profile?.track !== "other"} /> : null}
       </section>
 
       <section className="settings-sec reveal" style={{ ["--d" as any]: "0.09s" }}>
