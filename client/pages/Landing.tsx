@@ -1,4 +1,5 @@
 import { LanguagePicker } from "../LanguagePicker.tsx";
+import { AiLogo } from "./AiLogos.tsx";
 import { LandingFit } from "./LandingFit.tsx";
 
 
@@ -40,7 +41,7 @@ export function Landing({ lang, onLangChange }: { lang: "fr" | "en"; onLangChang
             {ASK_TARGETS.map((t) => (
               <a key={t.name} className="landing-ask-btn" target="_blank" rel="noopener noreferrer" translate="no"
                 href={t.url(encodeURIComponent(ASK_PROMPT(typeof window !== "undefined" ? window.location.origin : "")))}
-                onClick={(e) => { e.currentTarget.href = t.url(encodeURIComponent(ASK_PROMPT(window.location.origin))); }}>{t.name}</a>
+                onClick={(e) => { e.currentTarget.href = t.url(encodeURIComponent(ASK_PROMPT(window.location.origin))); }}><AiLogo name={t.name} />{t.name}</a>
             ))}
           </div>
         </section>

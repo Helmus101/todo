@@ -5183,6 +5183,7 @@ section("Blog: evidence-based guides, each a real prerendered page with its own 
   const pre = readFileSync("scripts/prerender-landing.tsx", "utf8");
   check("the build writes the blog index, one HTML file per post, Article JSON-LD and a sitemap listing them", /blog\.html/.test(pre) && /blog\/\$\{post\.slug\}\.html/.test(pre) && /BlogPosting/.test(pre) && /sitemap\.xml/.test(pre) && /postPath\(p\), "monthly"/.test(pre));
   check("Vercel and Express both serve the blog pages before the SPA fallback", /"\/blog\/:slug", "destination": "\/blog\/:slug\.html"/.test(readFileSync("vercel.json", "utf8")) && /app\.get\("\/blog\/:slug"/.test(readFileSync("server/index.ts", "utf8")));
+  check("each Ask-an-AI button carries its assistant's logo, and the prompt is self-contained and says Otto is not HeyOtto", (readFileSync("client/pages/Landing.tsx", "utf8").match(/<AiLogo name=\{t\.name\} \/>/g) || []).length === 1 && ["ChatGPT", "Claude", "Perplexity"].every((n) => new RegExp(n + ": \"").test(readFileSync("client/pages/AiLogos.tsx", "utf8"))) && /NOT HeyOtto/.test(readFileSync("client/pages/Landing.tsx", "utf8")) && /HeyOtto/.test(readFileSync("public/llms.txt", "utf8")));
   check("the landing page links to the blog from the nav and the footer (no guide list on the page itself)", (readFileSync("client/pages/Landing.tsx", "utf8").match(/href="\/blog"/g) || []).length === 2 && !/landing-blog/.test(readFileSync("client/pages/Landing.tsx", "utf8")));
 }
 
