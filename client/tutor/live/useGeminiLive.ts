@@ -142,7 +142,7 @@ export function useGeminiLive(opts: LiveOptions) {
         speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: "Aoede" } } },
       } as any;
       // Try the model ids in order: Google renames its live models often, so one that is refused (not found / not supported) just moves on.
-      let session: any = null, lastErr = "";
+      let session: any = null; const modelErrs: string[] = [];
       for (const model of tok.models?.length ? tok.models : [tok.model]) {
         if (!aliveRef.current) return;
         try {
@@ -162,9 +162,9 @@ export function useGeminiLive(opts: LiveOptions) {
             connecting.then((sess: any) => { opened = sess; }, (e: any) => done(() => reject(e)));
           });
           break;
-        } catch (e: any) { lastErr = `${model}: ${String(e?.message || e)}`.slice(0, 200); session = null; }
+        } catch (e: any) { modelErrs.push(`${model}: ${String(e?.message || e).slice(0, 110)}`); session = null; }
       }
-      if (!session) throw Object.assign(new Error(lastErr || "Live voice isn't available right now."), { status: 503 });
+      if (!session) throw Object.assign(new Error(modelErrs.join("; ") || "no model accepted the call"), { status: 503 });
       if (!aliveRef.current) { try { session.close(); } catch { /* */ } return; }
       sessionRef.current = session;
       micRef.current = await startMic((b64) => { try { sessionRef.current?.sendRealtimeInput({ audio: { data: b64, mimeType: "audio/pcm;rate=16000" } }); } catch { /* socket closing */ } });
@@ -176,11 +176,13 @@ export function useGeminiLive(opts: LiveOptions) {
       // Gemini first; if it cannot connect (or isn't configured), OpenAI takes over. The server sends a credential for each provider it has a key for.
       const creds = (tok.providers?.length ? tok.providers : [tok]) as Array<Cred & { provider?: string }>;
       let lastFailure: any = null;
+      const failures: string[] = [];
       for (const c of creds) {
         if (!aliveRef.current) return;
         try { if (c.provider === "openai") await tryOpenAI(c); else await tryGemini(c); lastFailure = null; break; }
         catch (e: any) {
           lastFailure = e;
+          failures.push(`${c.provider === "openai" ? "OpenAI" : "Gemini"}: ${String(e?.message || e).replace(/^Error:\s*/, "").slice(0, 160)}`);
           // clean up what the failed attempt left behind, then try the next provider (a blocked microphone is the same for all of them)
           try { dcRef.current?.close(); } catch { /* */ } dcRef.current = null;
           try { pcRef.current?.close(); } catch { /* */ } pcRef.current = null;
@@ -190,11 +192,11 @@ export function useGeminiLive(opts: LiveOptions) {
           if (/NotAllowed|Permission|denied/i.test(String(e?.name || e?.message))) break;
         }
       }
-      if (lastFailure) throw lastFailure;
+      if (lastFailure) throw Object.assign(new Error(failures.join(" · ")), { status: lastFailure?.status ?? 503, name: lastFailure?.name, failures });
     } catch (e: any) {
       const denied = /NotAllowed|Permission|denied/i.test(String(e?.name || e?.message));
       const unavailable = e?.status === 503 || e?.status === 502 || e?.status === 429 || e?.status === 403 || denied;
-      setError(e?.status === 429 ? String(e?.message || "Live voice limit reached for today.") : denied ? "Microphone blocked — allow it for this site and try again." : e?.status === 503 && /set up/i.test(String(e?.message)) ? "Live voice isn't set up on this server (no Gemini key)." : "Live voice isn't available right now.");
+      setError(e?.status === 429 ? String(e?.message || "Live voice limit reached for today.") : denied ? "Microphone blocked — allow it for this site and try again." : e?.status === 503 && /set up/i.test(String(e?.message)) ? "Live voice isn't set up on this server (no Gemini or OpenAI key)." : `Live voice couldn't connect. ${String(e?.message || "").replace(/^Error:\s*/, "").slice(0, 280)}`.trim());
       teardown(unavailable ? "unavailable" : "ended");
     }
   }, [teardown, flush]);

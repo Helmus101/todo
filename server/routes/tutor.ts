@@ -117,11 +117,11 @@ export function registerTutorRoutes(app: express.Express): void {
           }
         } catch (e: any) { detail += `openai ${String(e?.message || e).slice(0, 60)}; `; }
       }
-      if (!providers.length) { console.warn(`[live] no live voice credential could be minted (${detail.trim()})`); res.status(502).json({ error: "Live voice isn't available right now.", code: "live_unavailable", detail: detail.trim().slice(0, 160) }); return; }
+      if (!providers.length) { console.warn(`[live] no live voice credential could be minted (${detail.trim()})`); res.status(502).json({ error: `Live voice couldn't start: no credential could be created (${detail.trim().slice(0, 160) || "no details"}).`, code: "live_unavailable", detail: detail.trim().slice(0, 160) }); return; }
       res.json({ ...providers[0], providers });
     } catch (e: any) {
       console.warn(`[live] token request failed: ${String(e?.message || e).slice(0, 160)}`);
-      res.status(502).json({ error: "Live voice isn't available right now.", code: "live_unavailable", detail: String(e?.message || e).slice(0, 120) });
+      res.status(502).json({ error: `Live voice couldn't start: ${String(e?.message || e).slice(0, 120)}.`, code: "live_unavailable", detail: String(e?.message || e).slice(0, 120) });
     }
   }));
 

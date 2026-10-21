@@ -16,7 +16,7 @@ export const BOARD_WRITER_PROMPT = `You keep the paper whiteboard for a spoken t
 FIRST, in "notes", list in a few words each thing in this exchange that qualifies, answering this checklist honestly:
 (a) Was a RULE, DEFINITION, FORMULA or IDENTITY stated or confirmed, by the tutor or by the student (even if the student said it in words)? → it is written, in tidy general form.
 (b) Did the student reach a RESULT, expansion, simplification or final answer that the tutor confirmed as right ("exactly", "that's right", "spot on")? → the result line is written (the full line, e.g. the finished expansion). A result counts ONLY if the student reached it BEFORE the tutor's last question: whatever that last question asks them to work out is NOT a result yet (a worked example you would write to answer it is exactly what must not appear).
-(c) Was a new PROBLEM or task posed? → written once.
+(c) Did the tutor pose a PROBLEM or task (a question with maths in it, an expression to evaluate, rewrite, solve, simplify or expand), including in its closing question? → ALWAYS write the problem itself on the board as a task line ("given"), in LaTeX, WITHOUT its answer (for example: "Rewrite $\\log_3(2x+1) = 2$ in exponential form"). Every problem that is posed is on the board, once.
 (d) Would a PICTURE help? → drawn.
 Then put the ops for every item you listed in "board". If a box has nothing, say so in "notes" and write nothing for it.
 
@@ -40,6 +40,13 @@ Return: {"notes":["definition: a logarithm is the opposite of an exponent","exam
 
 ${OPS}
 Return ONLY JSON: {"notes":["rule: …","result: …"],"board":[…ops…]}. Every op carries "cue":0. Inside strings write every LaTeX backslash TWICE.`;
+
+/** The closing question poses a concrete problem (maths in it, or an instruction like "rewrite / evaluate / solve / simplify / expand"). Pure. */
+export function posesProblem(question: string): boolean {
+  const q = String(question || "");
+  if (q.split(/\s+/).length < 4) return false;
+  return /\$|\d|\b(?:log|ln|sin|cos|tan|derivative|integral|equation|fraction|square root|squared|cubed|power|base)\b/i.test(q) && /\b(?:rewrite|evaluate|solve|simplify|expand|factori[sz]e|find|work out|calculate|compute|what (?:is|would|does|do)|how (?:would|do)|can you|try)\b/i.test(q);
+}
 
 /** The tutor's last line ends in a question: split it off, so "what is log_5 25?" is never turned into "log_5 25 = 2" on the board. Pure. */
 export function splitOpenQuestion(exchange: string): { finished: string; openQuestion: string } {
@@ -66,7 +73,7 @@ export async function writeBoard(input: { exchange: string; board: BoardEntry[];
   const system = BOARD_WRITER_PROMPT + (canDraw ? DRAW_REFERENCE : "") + `\n\nTHE BOARD (margin numbers #n are what you point at)${boardSurfaceBlock(input.board, []) || ": empty."}`;
   // The tutor's closing question is still UNANSWERED: it is shown to the writer separately, so the working for it is never mistaken for something the student reached.
   const { finished, openQuestion } = splitOpenQuestion(input.exchange.slice(0, 4000));
-  const user = `${input.subject ? `Subject: ${input.subject}\n` : ""}${input.history ? `EARLIER IN THIS SESSION (context only: it tells you what a short answer like "two, right?" refers to; do NOT rewrite what is already on the board):\n${input.history.slice(-2500)}\n\n` : ""}LATEST EXCHANGE (what has been said and settled):\n${finished}${openQuestion ? `\n\nTHE TUTOR THEN ASKED THE STUDENT (still unanswered: never write its answer or its working; if it poses a new problem or task you may write that task once, as a line without its answer):\n${openQuestion}` : ""}`;
+  const user = `${input.subject ? `Subject: ${input.subject}\n` : ""}${input.history ? `EARLIER IN THIS SESSION (context only: it tells you what a short answer like "two, right?" refers to; do NOT rewrite what is already on the board):\n${input.history.slice(-2500)}\n\n` : ""}LATEST EXCHANGE (what has been said and settled):\n${finished}${openQuestion ? `\n\nTHE TUTOR THEN ASKED THE STUDENT (still unanswered: never write its answer or its working; if it poses a problem or task, WRITE that problem now as a task line in LaTeX, without its answer):\n${openQuestion}` : ""}`;
   const studentWords = input.exchange.split("\n").filter((l) => /^Student:/i.test(l)).map((l) => l.replace(/^Student:\s*/i, ""));
   const once = async (extra?: string) => {
     const messages: any[] = [{ role: "system", content: system }, { role: "user", content: user }];
@@ -81,13 +88,19 @@ export async function writeBoard(input: { exchange: string; board: BoardEntry[];
     return { board: applied.board, dropped: applied.dropped };
   };
   let out = await once();
-  // The board has to match the explanation: when the tutor explained something and nothing was written (the model was cautious, or the app
-  // rejected the ops), ask once more, saying exactly that.
-  if (!out.board.length && tutorExplained(input.exchange)) {
+  // The board has to match the lesson. Two things are always checked, and one more call fixes both: (1) the tutor explained something and
+  // nothing was written (the model was cautious, or the app rejected the ops); (2) the tutor posed a problem and no task line came back.
+  const needExplain = !out.board.length && tutorExplained(input.exchange);
+  const needProblem = posesProblem(openQuestion) && !out.board.some((e) => e.kind === "given");
+  if (needExplain || needProblem) {
     const why = out.dropped.length ? ` The app rejected these ops: ${out.dropped.slice(0, 3).join("; ")}.` : "";
-    const second = await once(`(You wrote nothing, but the tutor explained something worth keeping.${why} Write the definition or rule and the worked example the tutor gave as board lines now, never the question it asked. Return the same JSON shape.)`);
-    if (second.board.length) out = second;
-    else console.warn(`[live] board writer wrote nothing for an explanation (${(second.dropped.length ? second.dropped : out.dropped).slice(0, 2).join("; ") || "no ops"})`);
+    const asks = [
+      needExplain ? "(You wrote nothing, but the tutor explained something worth keeping." + why + " Write the definition or rule and the worked example the tutor gave as board lines now, never the question it asked.)" : "",
+      needProblem ? `The tutor posed a problem and you did not write it: write the problem itself now as a task line (kind "given") in LaTeX, without its answer: ${openQuestion.slice(0, 300)}` : "",
+    ].filter(Boolean).join(" ");
+    const second = await once(`${asks} Return the same JSON shape.`);
+    if (second.board.length) out = { board: [...out.board, ...second.board], dropped: out.dropped };
+    else console.warn(`[live] board writer still wrote nothing (${(second.dropped.length ? second.dropped : out.dropped).slice(0, 2).join("; ") || "no ops"})`);
   }
   return out;
 }
