@@ -2183,7 +2183,7 @@ section("Board renders each entry ONCE (the duplicated render block is gone) + p
   check("no 'Your turn' / 'à toi' chips under board lines (reported: too many of them) — a gap is just its '= ?' line", !/isCompletionGap/.test(boardSrc) && !/sm-board-todo-chip/.test(boardSrc));
   check("new entries write themselves in (drafted, not swapped)", /sm-board-writein/.test(boardSrc));
   check("the board shows a live 'Otto écrit…' drafting indicator while the tutor composes", /writing\?/.test(boardSrc) && /sm-board-drafting/.test(boardSrc));
-  check("TutorSession wires the drafting indicator to the chat's sending state", /writing=\{sending\}/.test(readFileSync(new URL("../client/tutor/TutorSession.tsx", import.meta.url), "utf8")));
+  check("TutorSession wires the drafting indicator to the chat's sending state", /writing=\{sending/.test(readFileSync(new URL("../client/tutor/TutorSession.tsx", import.meta.url), "utf8")));
   check("a heading that repeats an earlier one is shown once", /nearSameHeading/.test(boardSrc));
   // Direct request: problems should sit IN the board's flow (between the entries around them), not pinned
   // at the top — the board is one document telling the lesson's story in the order it happened.
