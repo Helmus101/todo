@@ -1295,6 +1295,9 @@ export interface TutorSolution {
 export interface SessionGoals { aim?: string; deadline?: string; hard?: string; minutes?: number; asked: number }
 
 export interface TutorTeachingState {
+  /** Web research done once at the start of the sitting (server/tutorTurn/research.ts), or that research was tried and found nothing. */
+  research?: { topic: string; brief: string; sources: { title: string; url: string }[]; at: string };
+  researchTried?: boolean;
   /** Their goals for this sitting, gathered before the plan. */
   goals?: SessionGoals;
   helpLevel: number;

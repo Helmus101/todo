@@ -48,6 +48,7 @@ npm run dev           # http://localhost:5273
 - Still around: `ledger.ts` (recap at `POST /api/tasks/:id/tutor/close`), `keySeal.ts` / `problemCheck.ts` (sealed keys for exercises from older boards).
 - Tests: `tests/tutor-turn-sim.mjs` (scripted fake model, real engine).
 - Live check: `DEEPSEEK_API_KEY=… npm run tutor:eval` (3 scripted students, real model, capped at ~15 cents, prints transcripts with flags). A long sitting keeps the first request via `earlierInSitting`.
+- Research (`research.ts`): on the first 1–3 student messages of a sitting a cheap DeepSeek gate call decides whether the topic is one a tutor might not know (an olympiad, a niche exam). Only then: 2–3 web searches (`websearch.ts`: Exa if `EXA_API_KEY`, keyless fallback), two pages read, one call writes a ≤220-word brief. It is saved on `tutorState.research`, rides in every later prompt as DATA (never instructions), and the sources go on the board once. Ordinary topics cost one tiny gate call. Kill switch: `TUTOR_RESEARCH=off`.
 - Voice: the mic is closed while Otto thinks or speaks; the student interrupts with the "Interrupt" button.
 
 - AI cost meter (`shared/types.ts` `callCostUsd`): per-model rates (V4-Flash $0.14 miss / $0.0028 hit / $0.28 out per 1M, off-peak; peak ×2; weekends off-peak), cache hits priced separately (`usageOf` reads them; auto-runs now count them too), reasoning tokens billed as output, and calls Gemini served are not put on the DeepSeek meter. Rates can be corrected with `DEEPSEEK_PRICING` (JSON). The V4-Pro rates are the least certain.

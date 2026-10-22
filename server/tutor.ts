@@ -647,6 +647,10 @@ export interface TutorTurnInput {
   solutionPromise?: Promise<TutorSolution | null>;
   /** Help given so far this session (nextTeachingState). */
   teaching?: TutorTeachingState;
+  /** Web research done at the start of the sitting (server/tutorTurn/research.ts). */
+  research?: { topic: string; brief: string; sources: { title: string; url: string }[]; at: string } | null;
+  /** True on the turn the research was just done, so the board gets a sources note once. */
+  researchFresh?: boolean;
   lang: "fr" | "en";
 }
 

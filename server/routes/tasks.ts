@@ -15,6 +15,7 @@ import { studentProblemStatement } from "../tutorAdapt.ts";
 import { recordConceptEvidence, normalizeStudentModel, emptyStudentModel } from "../studentModel.ts";
 import { detectSubject, computedGapKey, solvedGapKey } from "../tutor.ts";
 import { runTutorTurn } from "../tutorTurn/engine.ts";
+import { researchTopic, worthGating } from "../tutorTurn/research.ts";
 import { logAssistance, settleRetest, buildRecap, dueRetests, sessionMemoryNote } from "../tutorTurn/ledger.ts";
 import { selectJournal } from "../journal.ts";
 import type { TutorOpenerMemory } from "../claude.ts";
@@ -185,8 +186,20 @@ async function tutorTurn(
       return rehydrateProblemKey(opened ? { ...p, answer: opened.answer, value: opened.value, correct: opened.correct, rubric: opened.rubric, why: opened.why } : p, known);
     });
   const spoken = spokenFromBody(req.body?.spoken);
+  // Research at the start of the sitting (once, only when the topic is unfamiliar): see tutorTurn/research.ts.
+  let researchFresh = false;
+  const earlyOpening = history.filter((h) => h.role === "user").length < 3;
+  if (!t.tutorState?.research && !t.tutorState?.researchTried && earlyOpening && worthGating(message) && process.env.TUTOR_RESEARCH !== "off") {
+    const tokens = { in: 0, out: 0, cachedIn: 0 };
+    const { research, needed, decided } = await researchTopic({ message, subject: t.sourceSubject, tokens });
+    addUsage(profile, tokens, "chat");
+    // Tried is remembered once the gate said "no" or the research ran; a provider hiccup (needed:false with no verdict) retries next message, at most twice more.
+    t.tutorState = { helpLevel: 0, stuckStreak: 0, turns: 0, ...(t.tutorState || {}), ...(research ? { research } : {}), researchTried: research || needed || decided || history.filter((h) => h.role === "user").length >= 2 ? true : undefined };
+    researchFresh = !!research;
+  }
   const out = await runTutorTurn({
     message, history, board: currentBoard, problems, objectives: currentObjectives, lang: "en",
+    research: t.tutorState?.research || null, researchFresh,
     voiceMode: req.body?.voiceMode === true, canvasMode: req.body?.canvasMode === true, spoken,
     context: { profile, subject: t.sourceSubject, journal: c.recentJournal, journalMeta: c.journalMeta, schoolRecord: schoolRecordLine(req.session.tasks, profile, t.sourceSubject), memory: memoryFromBody(req.body?.memory) },
   });
