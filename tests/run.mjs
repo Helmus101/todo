@@ -7118,6 +7118,7 @@ section("Multiple choice — the voice offers it, the board shows tappable optio
   const ts = readFileSync(new URL("../client/tutor/TutorSession.tsx", import.meta.url), "utf8");
   const lt = readFileSync(new URL("../shared/liveTutor.ts", import.meta.url), "utf8");
   const bw = readFileSync(new URL("../server/tutorTurn/boardWriter.ts", import.meta.url), "utf8");
+  check("the board never runs ahead of the student: a value goes up only if a Student line said it, at most the one step they just completed, and nothing while the tutor is pushing back", /PACING \(the board must never run ahead of the student\)/.test(bw) && /ONLY if it appears in a Student line/.test(bw) && /Write at most the ONE step the student has just completed/.test(bw) && /write NOTHING for that part/.test(bw));
   check("a 'choice' entry renders as lettered buttons, the tap goes to the tutor as what the student said (voice or typed), the voice and the board writer both know how to do multiple choice", /function ChoiceBlock/.test(ba) && /e\.kind === "choice" && e\.options\?\.length/.test(ba) && /const onChoice = useCallback/.test(ts) && /My answer: \$\{"ABCDEF"\[index\]\}/.test(ts) && /MULTIPLE-CHOICE/.test(lt) && /NEVER say you cannot do multiple choice/.test(lt) && /"choice" op/.test(bw)); }
 
 console.log(`\n${pass} passed, ${fail} failed`);
