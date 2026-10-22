@@ -11,6 +11,8 @@ import { backgroundBlock, type TutorTurnInput, type TutorTurnResult } from "../t
 import { TURN_PROMPT, VOICE_NOTE, DRAW_REFERENCE } from "./prompt.ts";
 import { applyOps } from "./apply.ts";
 import { carriesWorking, checkWork } from "./check.ts";
+import { researchBlock } from "./research.ts";
+import { makeBoardEntry } from "../claude.ts";
 
 const MAX_HISTORY = 14;
 /** A turn is a few sentences plus a few board ops; this caps a runaway reply (and its cost), not a normal one. */
@@ -58,6 +60,7 @@ export async function runTutorTurn(input: TutorTurnInput): Promise<TutorTurnResu
     + backgroundBlock(context)
     + `\n\nToday is ${new Date().toLocaleDateString("en-US", { weekday: "long", year: "numeric", month: "long", day: "numeric" })}.`
     + `\n\nTHE BOARD (margin numbers #n are what you point at)${boardSurfaceBlock(board, problems) || ": empty."}`
+    + researchBlock(input.research)
     + earlierInSitting(history)
     + (checked ? `\n\nCHECKED BY CODE-LIKE RECOMPUTATION (trust this over your own quick reading of their message): ${checked}` : "")
     + (input.spoken && spokenRepair ? voiceInputBlock(message, input.spoken.alternatives, spokenRepair) : "")
@@ -97,6 +100,11 @@ export async function runTutorTurn(input: TutorTurnInput): Promise<TutorTurnResu
     cur = again.turn; applied = next;
   }
   result.board = applied.board;
+  // The sources go on the board once, right after the research, so the student can see where the session is anchored.
+  if (input.researchFresh && input.research?.sources.length) {
+    const note = makeBoardEntry({ text: `Sources I looked at — ${input.research.topic}\n${input.research.sources.slice(0, 4).map((x) => `• ${x.title}: ${x.url}`).join("\n")}`, kind: "note", owner: "otto" });
+    if (!("error" in note)) result.board = [note.entry, ...result.board];
+  }
   console.log(`[tutor] turn ${Date.now() - t0}ms tokens in=${result.tokens.in} out=${result.tokens.out} cached=${result.tokens.cachedIn} board=${applied.board.length}`); // (counts only: never the text)
   result.reply = cur.speech.join(" ");
   result.turn = { speech: cur.speech, ms: Date.now() - t0 };

@@ -101,6 +101,29 @@ export async function runTutorTurnSim(check, section) {
       const long = Array.from({ length: 30 }, (_, i) => ({ role: i % 2 ? "assistant" : "user", text: i === 0 ? "I want to master quadratics before Friday" : `message ${i}` }));
       check("a long sitting keeps the student's first request in the prompt; a short one adds nothing", /quadratics before Friday/.test(earlierInSitting(long)) && earlierInSitting(long.slice(0, 10)) === ""); }
 
+    section("Tutor turn — quick research at the start");
+    { const { researchTopic, researchBlock, worthGating } = await import("../server/tutorTurn/research.ts");
+      const deps = { search: async () => [{ title: "IEO past papers", url: "https://example.org/ieo", snippet: "The International Economics Olympiad has open questions and a team round." }], read: async () => "Format: open questions, 4 hours." };
+      const tk = () => ({ in: 0, out: 0, cachedIn: 0 });
+      calls.length = 0;
+      script = (b, i) => (i === 0 ? { research: true, topic: "International Economics Olympiad", queries: ["International Economics Olympiad past papers"] } : "The IEO is a contest with open questions. Past papers: example.org.");
+      const r = await researchTopic({ message: "I want to work on the international economics olympiad open questions", tokens: tk(), deps });
+      check("an unfamiliar named topic: gate → search → one brief (3 model calls at most), with sources", r.research && /open questions/.test(r.research.brief) && r.research.sources[0].url === "https://example.org/ieo" && calls.length === 2 && r.decided);
+      check("the brief is labelled as data in the prompt and tells Otto to say he looked it up and not to pass off invented questions as real", /DATA/.test(researchBlock(r.research)) && /looked it up/.test(researchBlock(r.research)) && /never present an invented question/.test(researchBlock(r.research)));
+      calls.length = 0;
+      script = () => ({ research: false });
+      const n = await researchTopic({ message: "can we do quadratic equations today", tokens: tk(), deps });
+      check("an ordinary school topic costs one tiny gate call and no search", n.research === null && n.decided && calls.length === 1);
+      script = () => ({ fail: true, status: 500 });
+      const f = await researchTopic({ message: "I want to work on the international economics olympiad", tokens: tk(), deps });
+      check("a provider failure never breaks the turn (no research, not decided so it retries)", f.research === null && !f.decided);
+      check("one-word and app-generated messages skip the gate", !worthGating("ok") && !worthGating("[Exercise] I answered 5") && worthGating("help me with the economics olympiad"));
+      script = () => ({});
+      const e = await runTutorTurn({ ...base, message: "hello there", research: { topic: "IEO", brief: "b", sources: [{ title: "T", url: "https://x.org" }], at: "" }, researchFresh: true });
+      script = () => ({ speech: ["I looked it up.", "What round are you after?"], board: [] });
+      const e2 = await runTutorTurn({ ...base, message: "hello there", research: { topic: "IEO", brief: "b", sources: [{ title: "T", url: "https://x.org" }], at: "" }, researchFresh: true });
+      check("the sources land on the board once, and the research is in the system prompt", e2.board.length >= 1 && /x\.org/.test(e2.board[0].text) && /RESEARCH YOU DID/.test(calls.at(-1).messages[0].content)); }
+
     section("Tutor turn — never a dead end");
     calls.length = 0;
     script = (b, i) => (i === 0 ? "not json at all" : { speech: ["Back on track — what did you get?"], board: [] });
