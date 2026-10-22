@@ -17,6 +17,7 @@
     "start": "cross-env NODE_ENV=production tsx server/index.ts",
     "typecheck": "tsc --noEmit",
     "test": "tsx tests/run.mjs",
+    "tutor:eval": "tsx scripts/tutor-eval.mjs",
     "test:smoke": "tsx tests/smoke.mjs",
     "eval:tutor": "tsx scripts/tutor-eval.ts"
   },

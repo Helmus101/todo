@@ -203,7 +203,7 @@ async function tutorTurn(
       if (kind === "balance" || kind === "auth") reportError("tutor-provider", new Error(`tutor provider ${kind}`), { kind });
       const wait = kind === "rate" ? 20 : 30;
       res.setHeader("Retry-After", String(wait));
-      res.status(503).json({ error: "Otto is briefly unavailable — please try again in a minute.", code: "tutor_unavailable", retryAfter: wait });
+      res.status(503).json({ error: "Otto is briefly unavailable — your message is kept, so try again in a minute (or keep working on the board meanwhile).", code: "tutor_unavailable", retryAfter: wait });
       return;
     }
     res.status(500).json({ error: "Otto couldn't reply just now — try again in a moment." });
@@ -994,7 +994,7 @@ export function registerTaskRoutes(app: express.Express): void {
       const kind = classifyProviderError(e);
       console.error(`[chat] failed: ${kind}${e?.status ? ` ${e.status}` : ""} ${String(e?.message || "").slice(0, 120)}`);
       reportError("tutor-chat", e instanceof Error ? e : new Error(String(e)), { kind });
-      if (kind !== "other") { res.setHeader("Retry-After", "30"); res.status(503).json({ error: "Otto is briefly unavailable — please try again in a minute.", code: "tutor_unavailable", retryAfter: 30 }); return; }
+      if (kind !== "other") { res.setHeader("Retry-After", "30"); res.status(503).json({ error: "Otto is briefly unavailable — your message is kept, so try again in a minute (or keep working on the board meanwhile).", code: "tutor_unavailable", retryAfter: 30 }); return; }
       res.status(500).json({ error: "chat failed" });
     }
   });
