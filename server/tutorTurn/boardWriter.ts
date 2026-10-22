@@ -7,6 +7,7 @@ import { extractJsonObject, normalizeTurn, salvageTurn } from "../../shared/tuto
 import { boardSurfaceBlock } from "../boardEvents.ts";
 import { createTutorChat, usageOf } from "../claude.ts";
 import { applyOps } from "./apply.ts";
+import { boardLineIsWrong } from "../boardMath.ts";
 import { DRAW_REFERENCE, TURN_PROMPT } from "./prompt.ts";
 
 const OPS = TURN_PROMPT.slice(TURN_PROMPT.indexOf("BOARD OPS"), TURN_PROMPT.indexOf("RETURN ONLY"));
@@ -103,7 +104,14 @@ export async function writeBoard(input: { exchange: string; board: BoardEntry[];
     const turn = normalizeTurn({ speech: ["."], board: Array.isArray(parsed?.board) ? parsed.board : [] });
     if (!turn || !turn.board.length) return { board: [] as BoardEntry[], dropped: [] as string[], concepts };
     const applied = applyOps(turn.board.map((o) => ({ ...o, cue: 0 })), { board: [...input.board, ...already], problems: [], theirWords: studentWords });
-    return { board: applied.board, dropped: applied.dropped, concepts };
+    // Independent arithmetic check: a line whose own equalities are false (a student slip the model let through, or its own
+    // slip) never reaches the paper. Lines the checker cannot read are kept.
+    const board = applied.board.filter((e) => {
+      const wrong = typeof e.text === "string" && boardLineIsWrong(e.text);
+      if (wrong) { applied.dropped.push(`line: its arithmetic does not hold, not written: ${String(e.text).slice(0, 80)}`); console.warn(`[live] board line dropped, arithmetic does not hold: ${String(e.text).slice(0, 120)}`); }
+      return !wrong;
+    });
+    return { board, dropped: applied.dropped, concepts };
   };
   let out = await once();
   // The board has to match the lesson. Two things are always checked, and one more call fixes both: (1) the tutor explained something and

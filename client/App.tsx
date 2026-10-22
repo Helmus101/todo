@@ -352,21 +352,27 @@ export function App() {
     if (server?.length) setToursSeen((prev) => { const n = new Set([...prev, ...server]); return n.size === prev.size ? prev : n; });
   }, [status?.toursSeen]);
   // First-run onboarding is the ONE place Otto is explained — set on signup, cleared when the flow finishes.
+  const [onboardMode, setOnboardMode] = useState<"tutor" | "full" | null>(null);
   const startOnboard = () => { if (!ONBOARDING_ENABLED) return; try { localStorage.setItem("otto-onboard", "1"); } catch { /* ignore */ } setOnboard(true); };
   const finishOnboard = () => {
     try { localStorage.removeItem("otto-onboard"); localStorage.removeItem("otto-onboard-step"); localStorage.removeItem("otto-onboard-track"); } catch { /* ignore */ }
     setOnboard(false);
+    const finishedMode = onboardMode ?? (status?.fullApp ? "full" : "tutor");
+    setOnboardMode(null);
+    navigate(finishedMode === "tutor" ? "tutor" : status?.fullApp ? "tasks" : "tutor");
     // Finished OR skipped: remember it on the account so the basic flow doesn't come back on another device.
     void api.markOnboarded().then(() => loadStatusRef.current()).catch(() => { /* best-effort */ });
   };
   // "Test onboarding" (Settings): forget the basic flow and every page guide, then replay from the top.
-  const replayOnboarding = async () => {
+  // Two flows to test: the short one for tutor-only accounts, the complete one for full mode. These run even though
+  // automatic onboarding is switched off (ONBOARDING_ENABLED), because the student asked for them explicitly.
+  const replayOnboarding = async (mode: "tutor" | "full") => {
     try { await api.resetOnboarding(); } catch { /* still replay locally */ }
-    try { localStorage.removeItem("otto-tours-seen"); localStorage.removeItem("otto-onboard-step"); } catch { /* ignore */ }
+    try { localStorage.removeItem("otto-tours-seen"); localStorage.removeItem("otto-onboard-step"); localStorage.removeItem("otto-onboard-track"); } catch { /* ignore */ }
     setToursSeen(new Set());
     onboardTriggered.current = true;
-    navigate("tasks");
-    startOnboard();
+    setOnboardMode(mode);
+    setOnboard(true);
   };
   const loadStatusRef = useRef<() => void>(() => {});
   const onboardTriggered = useRef(false);
@@ -1041,7 +1047,7 @@ export function App() {
             : <button type="button" className="btn primary" onClick={() => { void api.requestMoreUsage().then(() => loadStatus()).catch((e: any) => notify(e?.message || "Couldn't send the request — try again.", "error")); }}>{"Request more usage"}</button>}
         </div>
       ) : null}
-      {onboard && <Suspense fallback={null}><Onboarding status={status} onStatus={loadStatus} onDone={finishOnboard} /></Suspense>}
+      {onboard && <Suspense fallback={null}><Onboarding mode={onboardMode ?? (status?.fullApp ? "full" : "tutor")} status={status} onStatus={loadStatus} onDone={finishOnboard} /></Suspense>}
       {/* First visit to a page: an interactive guide pointing at the real controls (client/PageTour.tsx). */}
       {(() => {
         const id = route === "" || route === "tasks" ? "tasks" : route === "log" ? "journal" : route === "errorlog" ? "mistakes" : route === "coursework" ? "coursework" : route === "settings" ? "settings" : null;

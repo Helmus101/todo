@@ -26,8 +26,12 @@ const OB_STEPS = 5;
  *  carried lives in each feature's own first-time hint instead (FirstTimeHint, client/ui.tsx), shown when
  *  the student actually reaches the feature. The old 3-app OAuth picker (Gmail/Calendar/Drive) is gone —
  *  Pronote's connect flow (URL + identifiants, handled by PronoteTile) isn't OAuth at all. */
-export function Onboarding({ status, onStatus, onDone }: { status?: ConnectionStatus | null; onStatus: () => void; onDone: () => void }) {
+export function Onboarding({ status, onStatus, onDone, mode = "full" }: { status?: ConnectionStatus | null; onStatus: () => void; onDone: () => void; mode?: "tutor" | "full" }) {
   const L = useLang();
+  // Two flows. "tutor" (tutor-only accounts): name + language, grade, Pronote, done: no track, no subject list, no Google.
+  // "full" (whole app): the complete flow below.
+  const tutorMode = mode === "tutor";
+  const stepOrder = tutorMode ? [0, 2, 3, 4] : [0, 1, 2, 3, 4];
   // Every profile write below is deliberately non-blocking (a failed save shouldn't trap the student on
   // this screen — see saveTrack's own comment, and the copy already tells them everything here is
   // "changeable any time in Settings"), but non-blocking used to also mean SILENT: the catch blocks were
@@ -91,14 +95,14 @@ export function Onboarding({ status, onStatus, onDone }: { status?: ConnectionSt
   const saveYearSubjects = async () => {
     try {
       if (year.trim()) await api.setProfilePreference("yearLevel", year.trim());
-      await api.setSubjects(subs);
+      if (!tutorMode) await api.setSubjects(subs);
     } catch { notify("Year/subjects didn't save — you can set them later in Settings.", "error"); }
     setStep(3);
   };
   const saveName = async () => {
     const n = name.trim();
     if (n) { try { await api.setProfile("name", n); await onStatus(); } catch { notify("Name didn't save — you can set it later in Settings.", "error"); } }
-    setStep(1);
+    setStep(tutorMode ? 2 : 1);
   };
   const saveTrack = async (t: "ib" | "ap" | "bac" | "other") => {
     setTrack(t);
@@ -125,8 +129,8 @@ export function Onboarding({ status, onStatus, onDone }: { status?: ConnectionSt
         <button className="onboard-skip" onClick={onDone} aria-label={"Skip"}>{"Skip"}</button>
         <div className="onboard-top">
           <div className="onboard-brand"><Logo size={20} /> <span>Otto</span> <LanguagePicker compact /></div>
-          <div className="onboard-progress" role="progressbar" aria-valuemin={1} aria-valuemax={OB_STEPS} aria-valuenow={step + 1} aria-label={`Step ${step + 1} of ${OB_STEPS}`}>
-            {Array.from({ length: OB_STEPS }).map((_, d) => <span key={d} aria-hidden="true" className={d <= step ? "on" : ""} />)}
+          <div className="onboard-progress" role="progressbar" aria-valuemin={1} aria-valuemax={stepOrder.length} aria-valuenow={stepOrder.indexOf(step) + 1} aria-label={`Step ${stepOrder.indexOf(step) + 1} of ${stepOrder.length}`}>
+            {stepOrder.map((_, d) => <span key={d} aria-hidden="true" className={d <= stepOrder.indexOf(step) ? "on" : ""} />)}
           </div>
         </div>
 
@@ -165,23 +169,23 @@ export function Onboarding({ status, onStatus, onDone }: { status?: ConnectionSt
 
         {step === 2 && (
           <div className="onboard-step">
-            <h2>{"Your classes"}</h2>
-            <p className="onboard-lead">{"Otto pitches his level to you and files your coursework by subject."}</p>
-            <p className="onboard-lead mt-3">{"Your year"}</p>
+            <h2>{tutorMode ? "Your grade" : "Your classes"}</h2>
+            <p className="onboard-lead">{tutorMode ? "Otto pitches his questions at your level." : "Otto pitches his level to you and files your coursework by subject."}</p>
+            {!tutorMode && <p className="onboard-lead mt-3">{"Your year"}</p>}
             <div className="onboard-chips">
               {["Seconde", "Première", "Terminale", "IB DP1", "IB DP2", "Grade 9", "Grade 10", "Grade 11", "Grade 12"].map((y) => (
                 <button key={y} type="button" className={`btn xs ${year === y ? "" : "ghost"}`} onClick={() => setYear(y)} aria-pressed={year === y}>{y}</button>
               ))}
             </div>
-            <p className="onboard-lead mt-4">{"Your subjects"}</p>
-            <div className="onboard-chips">
+            {!tutorMode && <p className="onboard-lead mt-4">{"Your subjects"}</p>}
+            {!tutorMode && <div className="onboard-chips">
               {COMMON_SUBJECTS.filter((x) => x !== "Other").map((x) => (
                 <button key={x} type="button" className={`btn xs ${subs.includes(x) ? "" : "ghost"}`} onClick={() => setSubs((cur) => (cur.includes(x) ? cur.filter((c) => c !== x) : [...cur, x]))} aria-pressed={subs.includes(x)}>{x}</button>
               ))}
-            </div>
+            </div>}
             <p className="muted small">{"Optional — change it any time in Settings."}</p>
             <div className="onboard-actions onboard-actions-split">
-              <button className="btn ghost" onClick={() => setStep(1)}>{"Back"}</button>
+              <button className="btn ghost" onClick={() => setStep(tutorMode ? 0 : 1)}>{"Back"}</button>
               <button className="btn primary" onClick={() => void saveYearSubjects()}>{"Continue"}</button>
             </div>
           </div>
@@ -194,13 +198,15 @@ export function Onboarding({ status, onStatus, onDone }: { status?: ConnectionSt
                 reframes as optional/parallel rather than "the one thing Otto reads" for them. Pronote and
                 Google live on ONE step now — two separate connect screens was two more taps for zero
                 extra understanding, and both are skippable anyway. */}
-            <h2>{"Connect your sources"}</h2>
-            <p className="onboard-lead">{pronoteIsPrimary
+            <h2>{tutorMode ? "Connect Pronote" : "Connect your sources"}</h2>
+            <p className="onboard-lead">{tutorMode
+              ? "Optional. If your school uses Pronote, Otto can see your homework and tests and start from what you're studying. Your credentials are encrypted."
+              : pronoteIsPrimary
               ? "Pronote alone gets Otto going. Gmail and Calendar are optional — Otto spots homework and deadlines in them. Your credentials are encrypted, never resold."
               : "Most IB schools don't use Pronote — connect it only if your school has it. Otherwise Gmail/Calendar, or add your homework by hand."}</p>
             <div className="onboard-apps">
               <PronoteTile status={status} onChanged={() => void checkPronote()} />
-              <GoogleTiles restricted={true} onChanged={() => void onStatus()} />
+              {!tutorMode && <GoogleTiles restricted={true} onChanged={() => void onStatus()} />}
             </div>
             <p className="muted small">{"You can connect any of these later from Settings."}</p>
             <div className="onboard-actions onboard-actions-split">
@@ -219,13 +225,15 @@ export function Onboarding({ status, onStatus, onDone }: { status?: ConnectionSt
           <div className="onboard-step onboard-done">
             <div className="onboard-done-mark"><Logo size={30} /></div>
             <h2>{"You're all set"}{name.trim() ? `, ${name.trim().split(/\s+/)[0]}` : ""}</h2>
-            <p className="onboard-lead">{pronoteConnected
+            <p className="onboard-lead">{tutorMode
+              ? "Pick a subject, press Start talking, and Otto asks the first question. Press the button again whenever you want to stop."
+              : pronoteConnected
               ? "Otto is getting to work. Your plan for today is on its way."
               // Nothing connected yet — offer the whole picker (Pronote, Gmail, Calendar, Drive) rather
               // than naming Pronote as if it were required, and remind them manual tasks work too.
               : "Connect an app (Pronote, Gmail, Calendar) or add your exams from Settings, and Otto gets to work."}</p>
-            <p className="muted small">{"The first time you open a page, Otto shows you how it works — step by step, on the real buttons."}</p>
-            <div className="onboard-actions"><button className="btn primary big" onClick={onDone}>{"See my tasks"}</button></div>
+            {!tutorMode && <p className="muted small">{"The first time you open a page, Otto shows you how it works — step by step, on the real buttons."}</p>}
+            <div className="onboard-actions"><button className="btn primary big" onClick={onDone}>{tutorMode ? "Start talking" : "See my tasks"}</button></div>
           </div>
         )}
       </div>

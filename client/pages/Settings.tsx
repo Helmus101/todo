@@ -160,7 +160,7 @@ function TutorPolicyRow() {
   );
 }
 
-export function SettingsPage({ status, tasks, onSignOut, onChanged, onTasksChanged, onStatusUpdate, onReplayOnboarding }: { status: ConnectionStatus; tasks: WebTask[]; onSignOut: () => void; onChanged: () => void; onTasksChanged: (tasks: WebTask[]) => void; onStatusUpdate?: () => void; onReplayOnboarding?: () => void }) {
+export function SettingsPage({ status, tasks, onSignOut, onChanged, onTasksChanged, onStatusUpdate, onReplayOnboarding }: { status: ConnectionStatus; tasks: WebTask[]; onSignOut: () => void; onChanged: () => void; onTasksChanged: (tasks: WebTask[]) => void; onStatusUpdate?: () => void; onReplayOnboarding?: (mode: "tutor" | "full") => void }) {
   const L = useLang();
   const notify = useNotify();
   const [profile, setProfile] = useState<Profile | null>(null);
@@ -407,6 +407,17 @@ export function SettingsPage({ status, tasks, onSignOut, onChanged, onTasksChang
       </section>
 
       {status.isAdmin ? <AdminTools /> : null}
+
+      {status.isAdmin && onReplayOnboarding ? (
+        <section className="settings-sec reveal">
+          <h3>{"Test onboarding"}</h3>
+          <p className="settings-hint">{"Replay the first-run flow to see what a new person sees. There are two: a short one for tutor-only accounts (name and language, grade, Pronote) and the complete one for full mode (adds your track, subjects and Google apps). Your answers are saved as you go."}</p>
+          <div className="admin-actions">
+            <button type="button" className="btn xs" onClick={() => onReplayOnboarding("tutor")}>{"Test tutor-only onboarding"}</button>
+            <button type="button" className="btn xs" onClick={() => onReplayOnboarding("full")}>{"Test full-mode onboarding"}</button>
+          </div>
+        </section>
+      ) : null}
 
       <section className="settings-sec reveal">
         <h3>{"Feedback"}</h3>
