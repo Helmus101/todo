@@ -220,3 +220,15 @@ create index if not exists weave_web_feedback_public on weave_web_feedback (stat
 alter table weave_web_feedback enable row level security;
 drop policy if exists "weave_web_feedback server access" on weave_web_feedback;
 
+
+-- Tutor archive: transcripts + boards of students who opted in ("Help improve Otto"). Pseudonymised (hash of the email), written by the server only.
+create table if not exists weave_web_tutor_archive (
+  user_hash text not null,
+  session_id text not null,
+  subject text,
+  chat jsonb not null default '[]',
+  board jsonb not null default '[]',
+  updated_at timestamptz not null default now(),
+  primary key (user_hash, session_id)
+);
+alter table weave_web_tutor_archive enable row level security;

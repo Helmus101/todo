@@ -5,7 +5,7 @@ import { emptyProfile, addUsage, addWeeklyCost, bumpActivityHour, LIVE_VOICE_USD
 import { parsePolicy, summarize as summarizePolicy } from "../tutorPolicy.ts";
 import { schoolRecordLine } from "../schoolRecord.ts";
 import { aiReady, visionReady, describeWhiteboard, describeUploadedPhoto, synthesizeSpeech, TTS_MAX_TEXT, tutorOpener } from "../claude.ts";
-import { recordEvent, loadBanditState, saveBanditState } from "../store.ts";
+import { recordEvent, loadBanditState, saveBanditState, saveTutorArchive } from "../store.ts";
 import { M, ah, commit, dailyCap, isAdmin, isPaused, overWeeklyCap, rateLimit, requireAuth } from "../http.ts";
 import { backgroundBlock } from "../tutor.ts";
 import { selectJournal } from "../journal.ts";
@@ -228,6 +228,17 @@ export function registerTutorRoutes(app: express.Express): void {
       console.warn(`[live] board writer failed: ${String(e?.message || e).slice(0, 120)}`);
       res.status(502).json({ error: "The board couldn't be updated just now.", board: [] });
     }
+  }));
+
+  // Opt-in training archive: the finished session's transcript and board, for accounts that switched it on.
+  app.post("/api/tutor/archive", requireAuth, rateLimit(20, 60_000), express.json({ limit: "2mb" }), ah(async (req, res) => {
+    if (!req.session.profile?.trainingShare) { res.json({ ok: false, skipped: "not opted in" }); return; }
+    const sessionId = String(req.body?.sessionId || "").replace(/[^\w-]/g, "").slice(0, 80);
+    if (!sessionId) { res.status(400).json({ error: "sessionId required" }); return; }
+    const chat = (Array.isArray(req.body?.chat) ? req.body.chat : []).slice(-400).map((m: any) => ({ role: m?.role === "user" ? "user" : "assistant", text: String(m?.text || "").slice(0, 4000), at: typeof m?.at === "string" ? m.at.slice(0, 40) : undefined }));
+    const board = (Array.isArray(req.body?.board) ? req.body.board : []).slice(-200).map((e: any) => (JSON.stringify(e).length > 8000 ? { ...e, svg: undefined } : e));
+    const ok = await saveTutorArchive(req.session.user!, { sessionId, subject: typeof req.body?.subject === "string" ? req.body.subject : undefined, chat, board });
+    res.json({ ok });
   }));
 
   // The browser reports how long a voice call lasted; it is metered at the estimated voice price (plus a small charge when a call starts, so a missing report is not free).

@@ -288,6 +288,8 @@ export interface Profile {
   onboardedAt?: string;
   // Page guides already shown (ids like "tasks", "tutor-session") — server-side so a guide never repeats on another device.
   toursSeen?: string[];
+  // Opt-in: the student agreed that their tutor transcripts and boards (pseudonymised) may be kept to improve Otto. Off unless they turn it on.
+  trainingShare?: boolean;
   // The subjects this student takes (picked in onboarding): ordered first wherever a subject is chosen.
   subjects?: string[];
   // A student-maintained log of specific mistakes — "what question, what I got wrong, what to do about it
@@ -541,6 +543,7 @@ export function normalizeProfile(p: any): Profile {
         }))
       : undefined,
     onboardedAt: typeof p?.onboardedAt === "string" ? p.onboardedAt : undefined,
+    trainingShare: p?.trainingShare === true ? true : undefined,
     toursSeen: Array.isArray(p?.toursSeen) ? [...new Set<string>(p.toursSeen.map((t: any) => String(t).slice(0, 40)).filter(Boolean))].slice(0, 40) : undefined,
     subjects: Array.isArray(p?.subjects) ? [...new Set<string>(p.subjects.map((t: any) => String(t).trim().slice(0, 60)).filter(Boolean))].slice(0, 14) : undefined,
     errorLog: Array.isArray(p?.errorLog)
@@ -2205,6 +2208,7 @@ export interface ConnectionStatus {
   timezone?: string;          // the account's captured IANA timezone (client compares to detect a change)
   customTheme?: ThemeTokens;  // AI-personalized theme override, if the student opted in (see validateThemeTokens)
   onboarded?: boolean;  // the basic onboarding has been finished/skipped (or the account clearly predates it)
+  trainingShare?: boolean; // opted in to keeping tutor transcripts + boards for training
   toursSeen?: string[]; // page guides already shown on this account (Profile.toursSeen)
   fullApp?: boolean;          // this account sees every page (the owner account, or it opened /full); everyone else gets the tutor only
   home?: "tutor" | "tasks";   // where a signed-in visit lands

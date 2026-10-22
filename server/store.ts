@@ -1352,3 +1352,20 @@ export async function listPublicTestimonials(limit = 6): Promise<{ name: string;
     : (((await client.from(FEEDBACK).select("*").eq("status", "approved").eq("publish_consent", true).order("created_at", { ascending: false }).limit(limit)).data) || []) as FeedbackRow[];
   return rows.filter((r) => r.comment.trim()).map((r) => ({ name: r.display_name, level: r.level, text: r.comment, helpful: r.helpful, date: r.created_at.slice(0, 10) }));
 }
+
+// ── Tutor archive (opt-in training data) ─────────────────────────────────────────────────────────────────
+// Only written for accounts that switched "Help improve Otto" on. Keyed by a one-way hash of the email (never the
+// email itself), write-only from the app: nothing in the product reads it back, so it costs no read egress.
+const ARCHIVE = "weave_web_tutor_archive";
+const archiveUser = (email: string) => createHash("sha256").update(`otto-archive:${email.toLowerCase()}`).digest("hex").slice(0, 32);
+export async function saveTutorArchive(email: string, a: { sessionId: string; subject?: string; chat: unknown[]; board: unknown[] }): Promise<boolean> {
+  if (!client) return false;
+  const { error } = await client.from(ARCHIVE).upsert({ user_hash: archiveUser(email), session_id: a.sessionId.slice(0, 80), subject: a.subject?.slice(0, 80) ?? null, chat: a.chat, board: a.board, updated_at: new Date().toISOString() }, { onConflict: "user_hash,session_id" });
+  if (error) { reportError("save-tutor-archive", error); return false; }
+  return true;
+}
+export async function deleteTutorArchive(email: string): Promise<void> {
+  if (!client) return;
+  const { error } = await client.from(ARCHIVE).delete().eq("user_hash", archiveUser(email));
+  if (error) reportError("delete-tutor-archive", error);
+}

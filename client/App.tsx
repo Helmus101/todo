@@ -143,7 +143,8 @@ const CACHED_TASKS: WebTask[] = (() => {
 
 // Start the task fetch NOW (parallel with /api/status) when the last visit was signed in, instead of waiting for status
 // to resolve first — the first sync consumes it, so the list refreshes one round-trip sooner.
-let EARLY_TASKS: Promise<WebTask[] | null> | null = CACHED_STATUS?.loggedIn ? api.tasks().catch(() => null) : null;
+// Tutor-only accounts never show the task list, so they never download it (egress): only a known full-app account prefetches.
+let EARLY_TASKS: Promise<WebTask[] | null> | null = CACHED_STATUS?.loggedIn && CACHED_STATUS.fullApp ? api.tasks().catch(() => null) : null;
 
 // "New" indicator: task ids the user has already OPENED at least once, so a fresh card gets a small dot
 // until they look at it, then never again — permanent per-id memory (not a session flag), purely local
@@ -513,6 +514,7 @@ export function App() {
   const syncTasks = useCallback(async () => {
     if (signedOutRef.current) return;
     const early = EARLY_TASKS; EARLY_TASKS = null;
+    if (statusRef.current && !statusRef.current.fullApp) { setLoaded(true); return; } // tutor-only: no task list to fetch
     const t = await (early ?? api.tasks().catch(() => null));
     if (signedOutRef.current) return; // signed out while the request was in flight — drop the stale response
     if (t) setTasks((prev) => keepLocalHandled(prev, retryFlags(t)));
@@ -644,7 +646,7 @@ export function App() {
   const hasActiveWork = (list: WebTask[]) => list.some((t) => isInFlight(t.status) || canonStatus(t.status) === "failed_retryable");
   useEffect(() => {
     if (!connected || !loaded || status?.paused) return;
-    if (!hasActiveWork(tasks)) return;
+    if (!status?.fullApp || !hasActiveWork(tasks)) return;
     kickIdle.current = 0; kickSkip.current = 0;
     const tick = async () => {
       // Backgrounded tabs don't need live updates within seconds — this loop runs while ANY job is in
@@ -679,7 +681,7 @@ export function App() {
     const onVisible = () => { if (!document.hidden) void tick(); };
     document.addEventListener("visibilitychange", onVisible);
     return () => { clearInterval(id); document.removeEventListener("visibilitychange", onVisible); };
-  }, [connected, loaded, status?.paused, hasActiveWork(tasks)]);
+  }, [connected, loaded, status?.paused, status?.fullApp, hasActiveWork(tasks)]);
 
   // Manual ↻ Refresh: an on-demand FORCED sweep (bypasses the daily floor). The automatic daily sweep is
   // sweepIfDue above — once per day, retried on focus/interval until it succeeds, never more.

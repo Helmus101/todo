@@ -1,6 +1,7 @@
 
 import "../env.ts";
 import express from "express";
+import { deleteTutorArchive } from "../store.ts";
 import { randomUUID, createHash } from "node:crypto";
 import { emptyProfile, isValidTz, monthCostUsd, addUsage, learnedProductiveHour } from "../../shared/types.ts";
 import { aiReady, generateThemeTokens } from "../claude.ts";
@@ -307,6 +308,16 @@ export function registerProfileRoutes(app: express.Express): void {
     p.toursSeen = [...new Set([...(p.toursSeen || []), id])].slice(0, 40);
     await commit(req);
     res.json({ ok: true, toursSeen: p.toursSeen });
+  }));
+
+  // Opt in/out of keeping tutor transcripts + boards for training. Turning it off also erases what was kept.
+  app.post("/api/profile/training-share", requireAuth, ah(async (req, res) => {
+    const on = req.body?.on === true;
+    const p = (req.session.profile ||= emptyProfile());
+    p.trainingShare = on ? true : undefined;
+    if (!on) await deleteTutorArchive(req.session.user!);
+    await commit(req);
+    res.json({ ok: true, trainingShare: on });
   }));
 
   // "Test onboarding" (Settings): forget the basic flow AND every page guide so the whole first-run experience replays.

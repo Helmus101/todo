@@ -92,7 +92,19 @@ export const scheduler = makeSyncScheduler<WebTask[]>(
   { debounceMs: 6000, maxWaitMs: 25000 },
 );
 
+/** CPU: express-session JSON-hashes every enumerable key of `req.session` at the end of EVERY request (twice), and
+ *  tasks + profile are the account's whole blob. They are never persisted in the session row anyway (the store
+ *  strips them), so make them non-enumerable: still plain read/write properties for every route, invisible to the hash. */
+export const hideBlobs = (sess: any) => {
+  if (!sess) return;
+  for (const k of ["tasks", "profile"] as const) {
+    const d = Object.getOwnPropertyDescriptor(sess, k);
+    if (d && d.enumerable) Object.defineProperty(sess, k, { value: d.value, writable: true, configurable: true, enumerable: false });
+  }
+};
+
 export const commit = async (req: express.Request, opts?: { awaitCloud?: boolean }) => {
+  hideBlobs(req.session);
   // Saves the session, then syncs the account row to the cloud. `awaitCloud` waits for that cloud write before
   // responding (journal saves, flashcard reviews); otherwise it runs in the background (see the branches below).
   if (req.session.tasks) req.session.tasks = tasks.trimOldStudylogArtifacts(req.session.tasks);

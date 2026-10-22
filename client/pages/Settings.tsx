@@ -256,6 +256,7 @@ export function SettingsPage({ status, tasks, onSignOut, onChanged, onTasksChang
   const [fullBusy, setFullBusy] = useState(false);
   // The switch moves the instant it's tapped (optimistic); the slim bar shows the save + refresh in flight; a failure puts it back.
   const [fullOptimistic, setFullOptimistic] = useState<boolean | null>(null);
+  const [trainOptimistic, setTrainOptimistic] = useState<boolean | null>(null);
   const loadProfile = () => { setProfileError(false); void api.profile().then(setProfile).catch(() => setProfileError(true)); };
   useEffect(() => { setPausedLocal(status.paused); }, [status.paused]);
   useEffect(() => { loadProfile(); }, []);
@@ -415,7 +416,7 @@ export function SettingsPage({ status, tasks, onSignOut, onChanged, onTasksChang
 
       <section className="settings-sec reveal">
         <h3>{"Where your data goes"}</h3>
-        <p className="settings-hint">{"Your tutoring sessions, boards and drawings are saved only in this browser. Your account keeps a small profile and the learning notes above. What leaves your device:"}</p>
+        <p className="settings-hint">{"Your tutoring sessions, boards and drawings are saved only in this browser, unless you switch on Help improve Otto below. Your account keeps a small profile and the learning notes above. What leaves your device:"}</p>
         <ul className="settings-hint" style={{ paddingLeft: 18, margin: "4px 0 8px" }}>
           <li>{"Your voice goes from the browser straight to Google (Gemini Live), or to OpenAI (Realtime) as a backup, which send back a transcript."}</li>
           <li>{"What you type, and the lines Otto writes on the board, are handled by Google first. If Google is unavailable, DeepSeek answers instead, and DeepSeek processes data outside the EU."}</li>
@@ -441,6 +442,23 @@ export function SettingsPage({ status, tasks, onSignOut, onChanged, onTasksChang
       <section className="settings-sec reveal">
         <h3>{"Feedback"}</h3>
         <FeedbackForm />
+      </section>
+
+      <section className="settings-sec reveal">
+        <h3>{"Help improve Otto"}</h3>
+        <div className="set-list">
+          <label className="set-row">
+            <span className="set-text"><b>{"Keep my tutor sessions to improve Otto"}</b><span className="settings-hint">{"Off by default. If you turn it on, the transcript and board of each finished tutor session are kept, tied to a scrambled ID instead of your email, and used only to improve Otto. Turn it off and everything kept is deleted."}</span></span>
+            <span className="switch"><input type="checkbox" checked={trainOptimistic ?? !!status.trainingShare} onChange={(e) => {
+              const on = e.target.checked;
+              setTrainOptimistic(on);
+              void api.setTrainingShare(on)
+                .then(() => { try { const s = JSON.parse(localStorage.getItem("weave-status") || "null"); if (s) localStorage.setItem("weave-status", JSON.stringify({ ...s, trainingShare: on })); } catch { /* ignore */ } onStatusUpdate?.(); })
+                .catch((err: any) => notify(err?.message || "That didn't save — give it another try.", "error"))
+                .finally(() => setTrainOptimistic(null));
+            }} /><span className="switch-track" /></span>
+          </label>
+        </div>
       </section>
 
       <section className="settings-sec reveal">

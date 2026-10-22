@@ -12,7 +12,7 @@ import { aiReady, visionReady } from "./claude.ts";
 import { loadState, cloudEnabled, makeSessionStore } from "./store.ts";
 import * as integrations from "./integrations.ts";
 import * as pronoteSvc from "./pronote.ts";
-import { PROD, ah, commit, isAdmin, scheduler, weeklyCap } from "./http.ts";
+import { PROD, ah, commit, hideBlobs, isAdmin, scheduler, weeklyCap } from "./http.ts";
 import { BRIEF_PATH } from "../shared/ottoBrief.ts";
 import { weeklyUsage } from "../shared/types.ts";
 import { shouldAutoPause } from "./autoPause.ts";
@@ -218,6 +218,7 @@ app.use(async (req, _res, next) => {
       if (req.session.tasks === undefined) req.session.tasks = st.tasks;
       if (req.session.profile === undefined) req.session.profile = st.profile;
     }
+    hideBlobs(req.session); // keep the account blob out of express-session's per-request JSON hash
   } catch { /* best-effort */ }
   next();
 });
@@ -280,6 +281,7 @@ app.get("/api/status", ah(async (req, res) => {
     // tasks) — those are never put through name/track questions they've long answered. Page guides still run.
     onboarded: !!req.session.profile?.onboardedAt || !!req.session.profile?.name || !!req.session.profile?.track || (req.session.tasks || []).length > 0,
     toursSeen: req.session.profile?.toursSeen,
+    trainingShare: !!req.session.profile?.trainingShare,
   };
   // Hand the CSRF synchronizer token to the client here — this is the ONE place it's ever transmitted (see
   // requireAuth's own comment). Generated lazily so an already-logged-in session picks one up on its next

@@ -35,6 +35,8 @@ import { buildSessionSummary, saveTutorSession, getTutorSessions, sessionCardTit
 // ending a session feel slow; a genuine, repeated failure still degrades gracefully (the ghost-cleanup in
 // peekForActiveSession above is the backstop for whatever still slips through).
 const ENDED_KEY = "otto.tutor.endedSessions";
+/** Opted in to "Help improve Otto"? Read from the status the app already keeps on this device, so a student who did not opt in costs no request. */
+const statusRef_trainingShare = (): boolean => { try { return !!JSON.parse(localStorage.getItem("weave-status") || "null")?.trainingShare; } catch { return false; } };
 const endedIds = (): string[] => { try { return JSON.parse(localStorage.getItem(ENDED_KEY) || "[]"); } catch { return []; } };
 const markEnded = (id: string) => { try { localStorage.setItem(ENDED_KEY, JSON.stringify([...new Set([...endedIds(), id])].slice(-40))); } catch { /* storage unavailable */ } };
 const unmarkEnded = (id: string) => { try { localStorage.setItem(ENDED_KEY, JSON.stringify(endedIds().filter((x) => x !== id))); } catch { /* storage unavailable */ } };
@@ -514,7 +516,8 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
       const t = sessionTask();
       if (!t) return;
       try {
-        const lean = (t.board || []).slice(-40).map((e) => (JSON.stringify(e).length > 6000 ? { ...e, svg: undefined } : e));
+        // EGRESS/CPU: the writer only needs the recent lines, not the whole paper, and never the drawings.
+        const lean = (t.board || []).slice(-16).map((e: any) => (e && e.svg ? { ...e, svg: undefined } : e));
         // A slow board call must never hold up the ones behind it: after 40 s it is given up on.
         const r = await Promise.race([api.liveBoard(exchangeText(turns), lean, t.sourceSubject, exchangeText((t.chat || []).slice(-14, Math.max(0, (t.chat || []).length - turns.length)).map((m) => ({ who: m.role === "user" ? "you" as const : "otto" as const, text: String(m.text || "").slice(0, 400) }))), getLanguage()), new Promise<{ board: any[] }>((_, rej) => setTimeout(() => rej(new Error("board timeout")), 40_000))]);
         setBoardNote(null);
@@ -699,6 +702,7 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
       try { liveRef.current.stop(); } catch { /* not on a call */ }
       try { await Promise.race([boardQueueRef.current, new Promise((r) => setTimeout(r, 2500))]); } catch { /* best effort */ }
       const latest = taskRef.current || endedTaskRef.current || task;
+      if (statusRef_trainingShare()) void api.archiveTutor(latest.id, latest.sourceSubject, latest.chat || [], latest.board || []).catch(() => {});
       try { saveAndClose(latest, sessionStart || latest.createdAt || new Date().toISOString(), reflection); } catch (e) { console.warn("[tutor] couldn't save the session summary:", e); }
     } finally {
       setTask(null);
