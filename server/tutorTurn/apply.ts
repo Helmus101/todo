@@ -104,7 +104,7 @@ export function applyOps(ops: BoardOp[], c: ApplyContext): Applied {
         const kind = o.kind && o.kind !== "note" ? o.kind : "note";
         const raw = String(o.text || "");
         // THE BOARD NEVER SHOWS THE STUDENT'S OWN TEXT: a line the model marks as theirs is refused, and so is one that mostly repeats what they said
-        // (a speech transcript, a typed answer). Otto writes his own clean, verified line instead (engine.ts builds it from the verified solution).
+        // (a speech transcript, a typed answer). Otto writes its own clean, verified line instead (engine.ts builds it from the verified solution).
         if (transcribes(raw, c.theirWords)) { drop("echoes the student's words"); break; }
         const text = latexifyBoardLine(repairLatex(typesetPlainMath(raw)), kind);
         // A bare whole number or year ("1917", "5", "$12$") says nothing on a board: reported live as "given: 1917" and "result: 5"

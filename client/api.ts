@@ -216,6 +216,8 @@ const authPost = (url: string, body: unknown): Promise<{ ok: boolean; error?: st
     .then((res) => { if (res.csrfToken) csrfToken = res.csrfToken; return res; });
 
 export const api = {
+  /** Forget every cached response and the session token (sign-out): nothing of the last account stays in memory. */
+  clearCaches: (): void => { etagCache.clear(); csrfToken = null; },
   status: (): Promise<ConnectionStatus> => req("/api/status").then(j).then((s: ConnectionStatus) => { if (s.csrfToken) csrfToken = s.csrfToken; return s; }),
   signup: (email: string, password: string, consent: boolean, isChildAccount?: boolean, birthYear?: number, parentalConsent?: boolean) => 
     authPost("/api/auth/signup", { email, password, consent, isChildAccount, birthYear, parentalConsent }),

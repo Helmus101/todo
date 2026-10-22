@@ -32,7 +32,7 @@ interface AskOttoPanelProps {
   onOpenQuiz: (id: string, title: string) => void;
   /** Optional overrides (Tutor Session) for the empty-state line and input placeholder. */
   emptyText?: string;
-  /** Bumped by the Tutor's "Start talking" click (the student's own tap): turns voice mode on and has Otto speak his opening line. */
+  /** Bumped by the Tutor's "Start talking" click (the student's own tap): turns voice mode on and has Otto speak its opening line. */
   talkRequest?: number;
   placeholder?: string;
   /** Tutor Session only — reports the voice loop's state upward ({@link TutorSession}) so the BOARD pane
@@ -45,7 +45,7 @@ interface AskOttoPanelProps {
    *  false-trigger from speaker echo or a throat-clear; two real words is intent. Kept local to Tutor
    *  Session — the per-task chat in TaskCard.tsx keeps its pause-and-resume behavior. */
   bargeIn?: boolean;
-  /** "dock" (Tutor stage): no transcript at all — Otto is just his avatar plus the LATEST answer in one
+  /** "dock" (Tutor stage): no transcript at all — Otto is just its avatar plus the LATEST answer in one
    *  bubble, and the student's input sits right under it. Every voice/echo/send behavior is shared with the
    *  full chat; only the rendering differs. */
   variant?: "chat" | "dock";
@@ -55,7 +55,7 @@ interface AskOttoPanelProps {
 }
 
 // The text currently being spoken aloud (the newest assistant reply) — the echo guard's reference: Otto
-// can only echo words he is saying right now, so anything he isn't saying is the student.
+// can only echo words it is saying right now, so anything it isn't saying is the student.
 function speakingNowText(task: WebTask): string {
   const chat = task.chat || [];
   return chat.length ? chat[chat.length - 1]?.text || "" : "";
@@ -122,9 +122,9 @@ export function AskOttoPanel({
   const bargeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const speakingRef = useRef(false);
   speakingRef.current = synth.speaking;
-  // THE LOOP-KILLER (the recurring "Otto hears himself" bug). The old guard only checked echo WHILE
+  // THE LOOP-KILLER (the recurring "Otto hears itself" bug). The old guard only checked echo WHILE
   // synth.speaking was true — but recognition lag means Otto's echo routinely FINALIZES after the flag
-  // already flipped false, exactly when the check was skipped, so his own reply went out as a student
+  // already flipped false, exactly when the check was skipped, so its own reply went out as a student
   // message, Otto replied to it, the reply was spoken, re-echoed, re-sent… The stateful filter
   // (createEchoFilter, client/voice/echoGuard.ts) classifies across the whole speech window PLUS a tail
   // after it, and drops a verbatim repeat of the just-spoken reply regardless of timing.
@@ -181,12 +181,12 @@ export function AskOttoPanel({
       // Otto's own voice coming back (during speech, in the post-speech tail, or verbatim) is NEVER input.
       if (echoFilterRef.current.isEcho(text)) { setHeardNote(text); return; }
       setHeardNote(null);
-      // Real student speech while Otto talks: interrupt him — cancel the TTS, the utterance still sends.
+      // Real student speech while Otto talks: interrupt it — cancel the TTS, the utterance still sends.
       if (speakingRef.current && bargeIn) synth.cancel();
       onSend(text, true, undefined, { alternatives: meta?.alternatives || [] });
     },
     // Live barge-in channel: interim text streams in while the student is still talking — cancel the TTS
-    // the instant real speech is detected. Echo-filtered so Otto doesn't cancel himself.
+    // the instant real speech is detected. Echo-filtered so Otto doesn't cancel itself.
     onInterim: (text) => {
       const real = !!bargeIn && !!text && !echoFilterRef.current.isEcho(text) && speakingRef.current && text.trim().split(/\s+/).length >= 2;
       // Only SUSTAINED speech interrupts (400 ms of real, non-echo words) — a cough or a speaker echo clears the timer.
@@ -307,7 +307,7 @@ export function AskOttoPanel({
       ) : null}
       {/* Real mic failure surfacing (permission denied, no mic, network) — previously silent. */}
       {micError ? <div className="sm-ai-error" role="alert">{micError[1]}</div> : null}
-      {heardNote ? <div className="sm-ai-hint" role="status">{"I heard “"}{heardNote.slice(0, 80)}{"” — ignored as Otto's own voice. Say it again after he finishes."}</div> : null}
+      {heardNote ? <div className="sm-ai-hint" role="status">{"I heard “"}{heardNote.slice(0, 80)}{"” — ignored as Otto's own voice. Say it again after it finishes."}</div> : null}
       {/* TTS diagnostic (useSpeechSynthesis's lastDiagnostic): which speech path actually ran and, when it
           fell back, WHY. Voice failures were the last fully-silent surface in this panel — a 501 from a
           missing server key, a CSP-blocked audio element, and a vendor outage all looked like "Otto just

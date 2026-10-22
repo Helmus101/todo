@@ -820,7 +820,7 @@ function StudyHelpPanel({ taskId, card }: { taskId?: string; card: StudyHelpCard
           <div className="study-help-log">
             {history.length === 0 && (
               <p className="study-help-empty">
-                {"Otto can help you think it through — he'll never just give you the answer."}
+                {"Otto can help you think it through — it'll never just give you the answer."}
               </p>
             )}
             {history.map((h, i) => (

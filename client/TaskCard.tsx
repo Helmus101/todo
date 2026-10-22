@@ -1359,7 +1359,7 @@ function TaskChat({ task, input, setInput, sending, error, pendingMsg, onSend, i
   // the speakers across the speech window PLUS a post-speech tail (recognition lag means his echo often
   // finalizes after synth.speaking flips false — a speaking-flag-only guard skipped exactly that), and
   // drops a verbatim repeat of the just-spoken reply regardless of timing. That verbatim path is what
-  // produced the reported recurring loop: Otto hears himself, replies, re-quotes himself, re-hears…
+  // produced the reported recurring loop: Otto hears itself, replies, re-quotes itself, re-hears…
   const speakingRef = useRef(false);
   speakingRef.current = synth.speaking;
   const echoFilterRef = useRef(createEchoFilter());

@@ -174,7 +174,7 @@ export function Onboarding({ status, onStatus, onDone, mode = "full" }: { status
         {step === 2 && (
           <div className="onboard-step">
             <h2>{tutorMode ? "Your grade" : "Your classes"}</h2>
-            <p className="onboard-lead">{tutorMode ? "Otto pitches his questions at your level." : "Otto pitches his level to you and files your coursework by subject."}</p>
+            <p className="onboard-lead">{tutorMode ? "Otto pitches its questions at your level." : "Otto pitches its level to you and files your coursework by subject."}</p>
             {!tutorMode && <p className="onboard-lead mt-3">{"Your year"}</p>}
             <div className="onboard-chips">
               {YEAR_CHIPS.map((y) => (

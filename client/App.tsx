@@ -12,7 +12,7 @@ import { t } from "./i18n.ts";
 import { TaskCardRow, TaskFocus, TaskReadOnly } from "./TaskCard.tsx";
 import { TourProvider, PageTour } from "./PageTour.tsx";
 import { TOURS } from "./tours.ts";
-import { LEGAL_EMAIL, LEGAL_ENTITY, Logo, clearAllLocalAccountData, firstName, navigate, unionChatEntries } from "./appShared.tsx";
+import { LEGAL_EMAIL, LEGAL_ENTITY, Logo, clearAllLocalAccountData, enforceAccountOwner, firstName, navigate, unionChatEntries } from "./appShared.tsx";
 import { LoginPage } from "./pages/Login.tsx";
 import { Landing } from "./pages/Landing.tsx";
 import { AddTask, ConnectCard, TaskSkeleton } from "./pages/Dashboard.tsx";
@@ -394,6 +394,7 @@ export function App() {
 
   const applyStatus = useCallback((next: ConnectionStatus) => {
     if (next.loggedIn) {
+      if (next.user) enforceAccountOwner(next.user);
       lastAuthenticatedStatusRef.current = next;
       setStatus(next);
       return;
@@ -727,11 +728,16 @@ export function App() {
   };
   const signOut = async () => {
     signedOutRef.current = true;
+    const whoWasIn = status?.user || lastAuthenticatedStatusRef.current?.user || null; // read before the ref is cleared
     lastAuthenticatedStatusRef.current = null;
     setStatus(null);
     try { await api.logout(); } catch { /* ignore */ }
-    clearAllLocalAccountData(status?.user || null);
-    setTasks([]); setLoaded(false); generatedOnce.current = false; navigate(""); void loadStatus();
+    clearAllLocalAccountData(whoWasIn);
+    api.clearCaches();
+    setTasks([]); setLoaded(false); generatedOnce.current = false;
+    // A full reload, not just a state reset: it drops every in-memory copy (React state, request caches, module-level
+    // caches) and every open request, so nothing of this account survives in the page.
+    window.location.replace("/");
   };
 
   // Signed in, the dashboard lives at /tasks. Redirect the bare "/" there (landing only shows signed-OUT).

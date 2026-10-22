@@ -200,6 +200,8 @@ export async function makeSessionStore(): Promise<session.Store | undefined> {
     }
     destroy(sid: string, cb?: (err?: any) => void) {
       getCache.delete(sid);
+      lastWritten.delete(sid); // so a resurrected save is not skipped as "identical"
+      lastTouched.delete(sid);
       c.from(SESSIONS).delete().eq("sid", sid).then(({ error }) => cb?.(error || undefined), (e) => cb?.(e));
     }
     touch(sid: string, sess: any, cb?: (err?: any) => void) {

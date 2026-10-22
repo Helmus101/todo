@@ -1,4 +1,4 @@
-// THE TUTOR'S TURN, AS DATA. One model call returns {speech, board}: what Otto says (one sentence per item) and what he
+// THE TUTOR'S TURN, AS DATA. One model call returns {speech, board}: what Otto says (one sentence per item) and what it
 // writes or draws while saying it (each op carries `cue`, the sentence it belongs to). apply.ts builds the board entries.
 
 import { hideToolLeaks } from "./toolLeak.ts";

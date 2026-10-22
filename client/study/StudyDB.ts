@@ -101,3 +101,18 @@ export async function getFile(id: string): Promise<Blob | undefined> {
 export async function deleteFile(id: string): Promise<void> {
   await tx("files", "readwrite", (s) => s.delete(id));
 }
+
+
+/** Deletes the whole local Study Mode database (environments, artifacts, sessions, uploaded audio). It is not keyed by
+ *  account, so it is wiped whenever an account ends on this browser or a different account signs in. Never throws. */
+export function clearStudyDB(): Promise<void> {
+  return new Promise((resolve) => {
+    try {
+      try { _db?.close(); } catch { /* already closed */ }
+      _db = null;
+      if (typeof indexedDB === "undefined") { resolve(); return; }
+      const req = indexedDB.deleteDatabase(DB_NAME);
+      req.onsuccess = req.onerror = req.onblocked = () => resolve();
+    } catch { resolve(); }
+  });
+}

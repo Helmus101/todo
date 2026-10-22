@@ -90,7 +90,7 @@ function GapAnswer({ entry, onCheck, en }: { entry: BoardEntry; onCheck: NonNull
       {verdict === "incorrect" ? <div className="sm-inline-problem-result wrong" role="status">{"Not quite — Otto will help you check it."}</div> : null}
       {verdict === "unknown" ? <div className="sm-inline-problem-result" role="status">{"Sent to Otto to look at."}</div> : null}
       {verdict === "failed" ? <div className="sm-inline-problem-result wrong" role="alert">{"Couldn't check that just now — try again."}</div> : null}
-      {verdict === "system_error" ? <div className="sm-inline-problem-result" role="status">{"Otto can't trust this line's answer key — he'll check it with you."}</div> : null}
+      {verdict === "system_error" ? <div className="sm-inline-problem-result" role="status">{"Otto can't trust this line's answer key — it'll check it with you."}</div> : null}
     </div>
   );
 }

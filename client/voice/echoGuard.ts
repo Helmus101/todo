@@ -1,9 +1,9 @@
 // Echo discrimination for barge-in. Real interruption requires the mic to stay OPEN while Otto is
-// speaking — but then the mic also hears Otto himself through the speakers, and without discrimination
+// speaking — but then the mic also hears Otto itself through the speakers, and without discrimination
 // his own reply gets transcribed and re-sent as if the student said it (the exact feedback loop the old
 // pause-the-mic-during-TTS design existed to prevent; that pause is also what made barge-in impossible —
 // no audio reaches a dead mic). The Web Speech API gives no access to raw audio or echo-cancellation
-// constraints, so discrimination has to be TEXTUAL: Otto can only echo words he is currently speaking,
+// constraints, so discrimination has to be TEXTUAL: Otto can only echo words it is currently speaking,
 // so heard text that appears inside the reply being spoken right now is echo; anything else is the
 // student. Pure and unit-tested (tests/run.mjs) — both voice surfaces (AskOttoPanel, TaskCard) gate
 // their interim and final results through this while `synth.speaking` is true.
@@ -90,7 +90,7 @@ export function createEchoFilter(tailMs = 1500): EchoFilter {
   let speaking = false;
   let speechEndedAt = 0;
   // When the mic was CLOSED during speech there is no echo to catch, so only a short tail (the speakers' last few ms)
-  // applies and a student's answer that reuses Otto's words is never mistaken for him.
+  // applies and a student's answer that reuses Otto's words is never mistaken for it.
   let micOpen = true;
   let recentReplies: string[] = []; // Track last few replies to catch delayed echoes
   return {

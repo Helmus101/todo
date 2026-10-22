@@ -1,5 +1,6 @@
 
 import { clearLocalDecks } from "./localDecks.ts";
+import { clearStudyDB } from "./study/StudyDB.ts";
 import { clearLocalQuizzes } from "./localQuizzes.ts";
 import { clearLocalChatBoard } from "./localChatBoard.ts";
 
@@ -42,8 +43,24 @@ export function Logo({ size = 22 }: { size?: number }) {
  *  left behind, but clearing them too is the honest behavior for "delete my account" — local traces should
  *  go, not just the server row. Module-level (not inside App()) so SettingsPage's own delete-account
  *  handler can call it too, without threading it through as a prop. */
+const OWNER_KEY = "otto-owner";
+/** Which account the data in this browser belongs to. If a DIFFERENT account signs in (the last one never signed out
+ *  cleanly: an expired session, a cleared cookie, another tab), the previous owner's local data is wiped first, so
+ *  nothing one account stored here can show up under another. Same account: nothing happens. */
+export function enforceAccountOwner(user: string): void {
+  try {
+    const prev = localStorage.getItem(OWNER_KEY);
+    if (prev && prev !== user) clearAllLocalAccountData(prev);
+    localStorage.setItem(OWNER_KEY, user);
+  } catch { /* storage unavailable: nothing to protect */ }
+}
+
 export function clearAllLocalAccountData(userId: string | null): void {
-  try { ["otto-tasks", "weave-status", "otto-seen-tasks", "otto-lastgen", "otto-onboard", "otto-onboard-step", "otto-onboard-track", "otto-tours-seen"].forEach((k) => localStorage.removeItem(k)); } catch { /* ignore */ }
+  // Keys that are NOT namespaced by account. Every one is removed whenever an account ends on this browser (a leftover
+  // "skip connect" or last subject from account A would otherwise apply to account B).
+  try { ["otto-tasks", "weave-status", "otto-seen-tasks", "otto-lastgen", "otto-onboard", "otto-onboard-step", "otto-onboard-track", "otto-tours-seen",
+    "otto-skip-connect", "otto-last-subject", "otto-density-arm", "otto-autoopen-docs", "otto-error-log", "otto-local-practice", "otto.tutor.endedSessions", "otto-opened-docs", OWNER_KEY].forEach((k) => localStorage.removeItem(k)); } catch { /* ignore */ }
+  void clearStudyDB(); // Study Mode's IndexedDB is not per-account either
   clearLocalDecks(userId);
   clearLocalQuizzes(userId);
   clearLocalChatBoard(userId);

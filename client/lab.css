@@ -269,4 +269,3 @@ h1 { font-family: var(--display); font-weight: 400; letter-spacing: -0.025em; }
 .landing-detail-list dt { font-weight: 600; color: var(--ink); margin: 0 0 4px; }
 .landing-detail-list dd { margin: 0; color: var(--ink-2); line-height: 1.6; max-width: 60ch; }
 
-.landing-ask-note { margin: var(--space-3) 0 0 !important; font-size: 13px; color: var(--ink-3); }

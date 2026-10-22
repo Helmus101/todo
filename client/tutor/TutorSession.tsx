@@ -450,7 +450,7 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
     return outcome;
   }, [input, sending, task, userId, L]);
 
-  // Each answer to a board exercise goes to Otto as a short automatic message so he reacts like a person
+  // Each answer to a board exercise goes to Otto as a short automatic message so it reacts like a person
   // (the board only marks right/wrong). They must never INTERRUPT: sent the instant a reply landed, a second
   // reply would replace the one the student is still reading or hearing. So they wait until no reply is in
   // flight, Otto has stopped speaking and things have been quiet for a moment, then go out as ONE batched
@@ -1037,7 +1037,7 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
     { label: "I'm lost", text: "I'm lost — can we go smaller?" },
     { label: "Another one", text: "Got it! Give me another to try." },
   ];
-  // Gauth-style stage: ONE big canvas (Otto's lesson board with the student's ink over it) and Otto himself
+  // Gauth-style stage: ONE big canvas (Otto's lesson board with the student's ink over it) and Otto itself
   // as just an avatar docked at the bottom — no transcript. The student talks (or types) to the avatar and
   // sees only Otto's latest answer; everything worth keeping lands on the board instead of scrolling away
   // in a chat log. The full conversation is still saved with the session for the history view.
