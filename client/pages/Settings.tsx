@@ -105,6 +105,13 @@ function PreferencesFields({ profile, onChanged }: { profile: Profile | null; on
   return (
     <>
       <div className="set-row">
+        <span className="set-text"><b>{"Are you in the IB Diploma?"}</b><span className="settings-hint">{"Yes: Otto teaches to the IB, with your papers, command terms, mark schemes and each subject's syllabus. No: it stays a general tutor and ignores all IB specifics."}</span></span>
+        <div className="lang-toggle">
+          <button type="button" className={`btn xs ${track === "ib" ? "" : "ghost"}`} aria-pressed={track === "ib"} onClick={() => void saveTrack("ib")}>{"Yes"}</button>
+          <button type="button" className={`btn xs ${track && track !== "ib" ? "" : "ghost"}`} aria-pressed={!!track && track !== "ib"} onClick={() => void saveTrack(track && track !== "ib" ? track : "other")}>{"No"}</button>
+        </div>
+      </div>
+      <div className="set-row">
         <span className="set-text"><b>{"Your track"}</b><span className="settings-hint">{"Your programme, so exam practice matches it."}</span></span>
         <div className="lang-toggle">
           <button type="button" className={`btn xs ${track === "bac" ? "" : "ghost"}`} aria-pressed={track === "bac"} onClick={() => void saveTrack("bac")}>{"Bac"}</button>

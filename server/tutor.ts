@@ -10,7 +10,7 @@
 //   · spoken input is repaired against the board, and the board never repeats a mishearing (spokenMath.ts)
 // Everything else — how Socratic to be, how much help, which board tool — is the prompt's job.
 import { randomUUID } from "node:crypto";
-import { IB_KNOWLEDGE } from "../shared/ibCurriculum.ts";
+import { ibBlock } from "../shared/ibSubjects.ts";
 import { pointsAtOffTopicLine, boardLineNumbers } from "../shared/boardLines.ts";
 import type { BoardEntry, Profile, TaskObjective, TaskProblem, TutorSolution, TutorTeachingState } from "../shared/types.ts";
 import { practiceAnswerMatches } from "../shared/types.ts";
@@ -209,8 +209,6 @@ HOW YOU SOUND
 - Adapt: fluent → bigger steps; frustrated → smaller steps and a warmer tone ("this one's fiddly, most people trip here"). Never repeat a question that didn't land — ask it differently.
 - Off-topic → one friendly line, then back. Don't offer to wrap up unless they ask. First turn with nothing said yet: hello, and ask what they're working on.
 
-${IB_KNOWLEDGE}
-
 WHAT MAKES YOU TRUSTWORTHY (known weak points of AI tutors; guard against each)
 - Try first: get their own first attempt before any hint. If they ask for help cold ("I don't get it"), ask for the first step they would take, even a guess. Hints climb one rung at a time: a smaller question, a concrete nudge, a similar but different example, and only then a direct explanation.
 - Know when to just explain: endless hints waste their time. If they say they already know it, or get it right fast, stop hinting, confirm in a few words and go harder. If they are stuck on the same step after two tries, or frustrated, stop asking and explain it plainly, one idea at a time, then check with a fresh case.
@@ -312,6 +310,8 @@ export interface TutorContext {
   schoolRecord?: string;
   /** The browser's record of recent sessions (sessionMemoryForPrompt). */
   memory?: TutorOpenerMemory[];
+  /** The live voice adds the IB block itself (liveInstructions), so its background skips it. */
+  skipIb?: boolean;
 }
 
 /** The background digest: everything the rest of the app knows, compact, explicitly secondary to the chat. */
@@ -348,8 +348,10 @@ export function backgroundBlock(c: TutorContext): string {
     (c.memory || []).some((m) => m?.lines?.length || m?.asked?.length) ? "USE THAT MEMORY: it is what they really did before (kept on their own device). It is about EARLIER sessions: use it only to plan, to skip what they already know and to revisit what they struggled with — never treat a problem, object or number from it as part of what is on the board now." : "",
     c.schoolRecord || "",
   ].map((s) => s.trim()).filter(Boolean);
-  if (!parts.length) return "";
-  return `\n\nBACKGROUND (secondary: use only when it helps with what's happening now)\n${parts.join("\n")}`;
+  // Students who said they are in the IB get the IB programme and the pack for this subject; nobody else does.
+  const ib = p?.track === "ib" && !c.skipIb ? `\n\n${ibBlock(c.subject)}` : "";
+  if (!parts.length) return ib;
+  return `\n\nBACKGROUND (secondary: use only when it helps with what's happening now)\n${parts.join("\n")}${ib}`;
 }
 
 /** The session's objectives ARE its lesson plan (spec §6/§7): an ordered list of milestones the student can see and

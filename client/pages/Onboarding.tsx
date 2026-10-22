@@ -99,6 +99,9 @@ export function Onboarding({ status, onStatus, onDone, mode = "full" }: { status
   const saveYearSubjects = async () => {
     try {
       if (year.trim()) await api.setProfilePreference("yearLevel", year.trim());
+      // Picking an IB year (IB DP1 / IB DP2, or typing "DP2", "IB year 1") is the same as choosing the IB track: it turns on
+      // the IB question sources. The tutor-only flow has no separate track step, so this is how those accounts get it.
+      if (!track && /\b(ib|dp\s?[12])\b/i.test(year)) { setTrack("ib"); await api.setProfilePreference("track", "ib"); }
       if (!tutorMode) await api.setSubjects(subs);
     } catch { notify("Year/subjects didn't save — you can set them later in Settings.", "error"); }
     setStep(3);
@@ -182,6 +185,15 @@ export function Onboarding({ status, onStatus, onDone, mode = "full" }: { status
               ))}
               <button type="button" className={`btn xs ${showYearBox ? "" : "ghost"}`} onClick={() => { setYearOther(true); if (YEAR_CHIPS.includes(year)) setYear(""); }} aria-pressed={showYearBox}>{"Other"}</button>
             </div>
+            {tutorMode && (
+              <>
+                <p className="onboard-lead mt-3">{"Are you in the IB Diploma?"}</p>
+                <div className="onboard-chips">
+                  <button type="button" className={`btn xs ${track === "ib" ? "" : "ghost"}`} aria-pressed={track === "ib"} onClick={() => void saveTrack("ib")}>{"Yes"}</button>
+                  <button type="button" className={`btn xs ${track && track !== "ib" ? "" : "ghost"}`} aria-pressed={!!track && track !== "ib"} onClick={() => void saveTrack(track && track !== "ib" ? track : "other")}>{"No"}</button>
+                </div>
+              </>
+            )}
             {showYearBox && (
               <label className="field onboard-name mt-3"><span>{"Your grade or level"}</span>
                 <input className="addinput" placeholder={"e.g. Year 8, 6ème, first-year university"} value={year} maxLength={40} autoFocus

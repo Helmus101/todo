@@ -131,7 +131,7 @@ export function registerTutorRoutes(app: express.Express): void {
             if (pc) live = { homework: pc.homework };
           }
         } catch { /* the stored record below is enough */ }
-        background = backgroundBlock({ profile, subject, journal: journal.entries, journalMeta: { total: journal.total, subjects: journal.subjects }, schoolRecord: schoolRecordLine(req.session.tasks, profile, subject, live), memory } as any);
+        background = backgroundBlock({ profile, subject, journal: journal.entries, journalMeta: { total: journal.total, subjects: journal.subjects }, schoolRecord: schoolRecordLine(req.session.tasks, profile, subject, live), memory, skipIb: true } as any);
       } catch { /* memory is a bonus: the voice works without it */ }
       // Their level, from Settings: the year or grade, plus the programme (IB / AP / Bac), so every question is pitched at it.
       const trackName = ({ ib: "IB", ap: "AP", bac: "French Bac", other: "" } as Record<string, string>)[String(profile.track || "")] || "";
@@ -140,7 +140,7 @@ export function registerTutorRoutes(app: express.Express): void {
       const resumeContext = req.body?.resuming === true && Array.isArray(req.body?.resumeTail)
         ? req.body.resumeTail.filter((x: unknown) => typeof x === "string" && x.trim()).slice(-8).map((x: string) => x.replace(/\s+/g, " ").trim().slice(0, 260)).join("\n").slice(0, 2000)
         : "";
-      const instructions = liveInstructions({ subject, level: level || undefined, background, resuming: req.body?.resuming === true, resumeContext, language: language || undefined });
+      const instructions = liveInstructions({ subject, level: level || undefined, background, resuming: req.body?.resuming === true, resumeContext, language: language || undefined, ib: profile.track === "ib" });
 
       // The browser tries these in order: Gemini Live first (when GEMINI_API_KEY is set), then OpenAI Realtime (a "mini" model, over WebRTC)
       // as the fallback. LIVE_PROVIDER=gemini or =openai pins one. A provider whose credential can't be minted is simply left out.
