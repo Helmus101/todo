@@ -147,7 +147,7 @@ export function useGeminiLive(opts: LiveOptions) {
         systemInstruction: tok.instructions,
         inputAudioTranscription: {},
         outputAudioTranscription: {},
-        speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: "Aoede" } } },
+        speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: "Charon" } } },
       } as any;
       // Try the model ids in order: Google renames its live models often, so one that is refused (not found / not supported) just moves on.
       let session: any = null; const modelErrs: string[] = [];

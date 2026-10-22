@@ -168,7 +168,7 @@ export function registerTutorRoutes(app: express.Express): void {
           let got = false;
           for (const model of candidates) {
             for (const full of [true, false]) {
-              const session: any = { type: "realtime", model, instructions, output_modalities: ["audio"], audio: { output: { voice: "marin" }, ...(full ? { input: { transcription: { model: "gpt-4o-mini-transcribe" }, turn_detection: { type: "semantic_vad" } } } : {}) } };
+              const session: any = { type: "realtime", model, instructions, output_modalities: ["audio"], audio: { output: { voice: "cedar" }, ...(full ? { input: { transcription: { model: "gpt-4o-mini-transcribe" }, turn_detection: { type: "semantic_vad" } } } : {}) } };
               const r = await fetch("https://api.openai.com/v1/realtime/client_secrets", { method: "POST", headers: { Authorization: `Bearer ${openaiKey}`, "Content-Type": "application/json" }, body: JSON.stringify({ session }), signal: AbortSignal.timeout(6000) });
               if (r.ok) {
                 const j: any = await r.json();
