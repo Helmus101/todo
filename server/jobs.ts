@@ -7,6 +7,7 @@
  * (loadState → mutate → merge-with-fresh → saveState), never on an HTTP session, so a cron tick on a cold
  * serverless instance can execute a task end to end. The DB job row is the lock and the retry ledger.
  */
+import { isFullApp } from "./fullApp.ts";
 import { schoolRecordLine } from "./schoolRecord.ts";
 import type { WebTask, Profile, TaskStatus } from "../shared/types.ts";
 import { emptyProfile, canonStatus, isHandled, isInFlight, tzOf, addUsage, learnedProductiveHour } from "../shared/types.ts";
@@ -607,7 +608,7 @@ export async function cronTick(): Promise<{ users: number; enqueued: number; pro
   // One clock for the whole tick: Vercel kills the function at 300 s. Enqueueing stops at 100 s and no new job
   // starts after 150 s. Accounts are shuffled so a time-cut never starves the same ones every day.
   const tickStart = Date.now();
-  const emails = shuffle(await store.listAccountEmails(500));
+  const emails = shuffle(await store.listAccountEmails(500, { fullOnly: true }));
   let enqueued = 0;
   const now = new Date();
 
@@ -615,7 +616,7 @@ export async function cronTick(): Promise<{ users: number; enqueued: number; pro
     if (Date.now() - tickStart > 100_000) break;
     try {
       const { profile, list } = await loadUser(email);
-      if (profile.paused) continue;
+      if (profile.paused || !isFullApp(email, profile)) continue; // tutor-only accounts have no background work
 
       // (1) SWEEP FIRST — once a day, fixed at SWEEP_HOUR (16:00) local time, not a multi-times-a-day
       // cadence (see sweepDue's own doc comment). Uses the persisted lastSweepAt marker (survives

@@ -6,6 +6,7 @@ import type { Credentials } from "google-auth-library";
 import type { WebTask, Profile, StudySession, StudyProfile } from "../shared/types.ts";
 import { emptyProfile, normalizeProfile, monthKeyOf } from "../shared/types.ts";
 import { compactTasksForStorage } from "../shared/taskCompaction.ts";
+import { FULL_APP_EMAILS } from "./fullApp.ts";
 import { encryptSecret, decryptSecret } from "./crypto.ts";
 import { reportError } from "./sentry.ts";
 import { countJournalEntries } from "../shared/journalCount.ts";
@@ -728,10 +729,13 @@ export async function getStudyMetricsSummary(email: string, windowDays = 30, sub
 }
 
 /** Every account email with saved state — the cron sweeper iterates these to work while users are offline. */
-export async function listAccountEmails(limit = 200): Promise<string[]> {
+export async function listAccountEmails(limit = 200, opts?: { fullOnly?: boolean }): Promise<string[]> {
   if (!client) return [];
   try {
-    const { data, error } = await client.from(TABLE).select("email").order("updated_at", { ascending: false }).limit(limit);
+    let q = client.from(TABLE).select("email");
+    // Tutor-only accounts have nothing for the background sweep to do: leave them out of the list at the source.
+    if (opts?.fullOnly) q = q.or(`profile->>fullAccess.eq.true,email.in.(${FULL_APP_EMAILS.map((e) => `"${e.replace(/"/g, "")}"`).join(",")})`);
+    const { data, error } = await q.order("updated_at", { ascending: false }).limit(limit);
     if (error) { console.warn("[store] listAccountEmails failed:", error.message); return []; }
     return (data || []).map((r: any) => String(r.email)).filter(Boolean);
   } catch { return []; }

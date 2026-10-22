@@ -17,8 +17,7 @@ import { BRIEF_PATH } from "../shared/ottoBrief.ts";
 import { weeklyUsage } from "../shared/types.ts";
 import { shouldAutoPause } from "./autoPause.ts";
 
-/** Accounts that always see the whole app (the others get the tutor only, until they open /full). Comma-separated in FULL_APP_EMAILS. */
-const FULL_APP_EMAILS = (process.env.FULL_APP_EMAILS || "phillipe@gafsi.net").split(",").map((e) => e.trim().toLowerCase()).filter(Boolean);
+import { FULL_APP_EMAILS } from "./fullApp.ts";
 import { registerAuthRoutes } from "./routes/auth.ts";
 import { registerIntegrationRoutes } from "./routes/integrations.ts";
 import { registerTaskRoutes } from "./routes/tasks.ts";
@@ -243,7 +242,8 @@ app.get("/api/status", ah(async (req, res) => {
   // other) doubled this endpoint's latency for no reason. It's polled on every app open/focus/tab-switch
   // (see client/App.tsx's status refresh), so that add-up was a real, constant source of felt latency.
   const [googleConnected, pronoteStatus] = await Promise.all([
-    req.session.user && integrations.integrationsReady()
+    // Tutor-only accounts never use Gmail, so they skip this outside call (and its CPU/egress) on every status poll.
+    req.session.user && integrations.integrationsReady() && (typeof req.session.profile?.fullAccess === "boolean" ? req.session.profile.fullAccess : FULL_APP_EMAILS.includes(String(req.session.user).toLowerCase()))
       ? integrations.connectionStatusesCached(req.session.user, ["gmail"]).then((s) => !!s["gmail"]).catch(() => false)
       : Promise.resolve(false),
     // Otto Lycée: Pronote is now a first-class data source on its own, not just a Google add-on — a lycéen
