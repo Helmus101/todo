@@ -1,6 +1,7 @@
 import { extractPdfTextLimited } from "../study/pdfText.ts";
 import { COURSEWORK_MAX_CHARS, COURSEWORK_MAX_PAGES } from "../../shared/coursework.ts";
 import { getLanguage } from "../language.ts";
+import { useSpeechRecognition } from "../voice/useSpeechRecognition.ts";
 import { useCallback, useContext, useEffect, useRef, useState } from "react";
 import { ChevronRight, ChevronDown, Maximize2, Minimize2, MessageSquare, Mic } from "lucide-react";
 import type { WebTask, TaskProblem, BoardEntry } from "../../shared/types.ts";
@@ -553,7 +554,7 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
     onPartial: (you, otto) => {
       // Live words of whoever is talking: Otto's once it answers, otherwise the student's as they speak. When a turn
       // finishes (both empty) the student's last words stay up until the next thing is said, instead of a placeholder.
-      setCaption((prev) => (otto ? { who: "otto", text: otto } : you ? { who: "you", text: you } : prev?.who === "you" ? prev : null));
+      setCaption((prev) => (otto ? { who: "otto", text: otto } : you ? (Date.now() - heardByBrowserRef.current < 4000 && prev?.who === "you" ? prev : { who: "you", text: you }) : prev?.who === "you" ? prev : null));
       if (otto && /\b(on|onto|to) the board\b|\blet me (draw|write|sketch|show)\b|\bI'?ll (draw|write|sketch)\b/i.test(otto)) setBoardPromised(true);
     },
   });
@@ -608,6 +609,21 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
   const lastOttoRaw = [...(task?.chat || [])].reverse().find((m) => m.role === "assistant")?.text || "";
   const lastOttoText = lastOttoRaw ? lastOttoRaw.slice(0, 400) : ""; // kept as written: maths in $…$ is typeset in the caption
   const liveStatus = live.status;
+  // Instant captions: the browser's own speech recognition shows the student's words as they say them (display only, never sent to
+  // the tutor). The voice model's transcript can lag a sentence behind. Off in Safari, where a second microphone user can mute the call.
+  const heardByBrowserRef = useRef(0);
+  const showWords = useCallback((text: string) => {
+    const t = text.trim();
+    if (!t) return;
+    heardByBrowserRef.current = Date.now();
+    setCaption({ who: "you", text: t });
+  }, []);
+  const browserCaptions = useSpeechRecognition({ lang: getLanguage(), onResult: showWords, onInterim: showWords });
+  const captionsOn = liveStatus === "live" && !live.speaking && !live.muted && browserCaptions.supported && !/^((?!chrome|android).)*safari/i.test(navigator.userAgent);
+  useEffect(() => {
+    if (captionsOn) browserCaptions.start(); else browserCaptions.abort();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [captionsOn]);
   useEffect(() => {
     setVoiceState({ listening: liveStatus === "live" && !live.speaking && !live.muted, speaking: live.speaking, voiceModeOn: liveStatus === "live", interim: "" });
   }, [liveStatus, live.speaking, live.muted]);

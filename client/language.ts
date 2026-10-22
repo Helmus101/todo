@@ -49,7 +49,9 @@ function loadTable(code: LangCode) {
   try { table = JSON.parse(localStorage.getItem(CACHE + code) || "{}"); } catch { table = {}; }
 }
 function saveTable(code: LangCode) { try { localStorage.setItem(CACHE + code, JSON.stringify(table)); } catch { /* full */ } }
-const skip = (el: Element | null): boolean => !el || !!el.closest('[translate="no"], .sm-board-body, .live-caption, .tutor-dock-chat, script, style, code, pre, .katex, textarea, [contenteditable="true"], input:not([placeholder])');
+// translate="yes" marks fixed interface text inside an otherwise untouched area (the board's empty state, "Otto is writing…").
+// Buttons and placeholder fields are fixed interface text even inside the board.
+const skip = (el: Element | null): boolean => !el || (!el.closest('[translate="yes"], button') && !el.matches('input[placeholder]') && !!el.closest('[translate="no"], .sm-board-body, .live-caption, .tutor-dock-chat, script, style, code, pre, .katex, textarea, [contenteditable="true"], input:not([placeholder])'));
 const translatable = (t: string) => { const s = t.trim(); return s.length > 1 && s.length <= 240 && /\p{L}{2}/u.test(s) && !/@|https?:\/\//.test(s) && !/^[\d\s.,:;/%€$£+\-–—·•|()]+$/.test(s); };
 
 function visit(code: LangCode, root: Node) {

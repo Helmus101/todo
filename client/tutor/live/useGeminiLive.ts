@@ -35,6 +35,7 @@ export function useGeminiLive(opts: LiveOptions) {
   const micRef = useRef<Mic | null>(null);
   const playerRef = useRef<Player | null>(null);
   const youRef = useRef("");
+  const youLiveRef = useRef(""); // words of the sentence being spoken right now (OpenAI streams them before the sentence is final)
   const ottoRef = useRef("");
   const aliveRef = useRef(false);
   // OpenAI Realtime (WebRTC): the browser carries the audio itself, so there is no PCM plumbing on this side.
@@ -46,7 +47,7 @@ export function useGeminiLive(opts: LiveOptions) {
 
   const flush = useCallback(() => {
     const you = youRef.current.trim(), otto = ottoRef.current.trim();
-    youRef.current = ""; ottoRef.current = "";
+    youRef.current = ""; youLiveRef.current = ""; ottoRef.current = "";
     if (you) optsRef.current.onTurn("you", you);
     if (otto) optsRef.current.onTurn("otto", otto);
     optsRef.current.onPartial?.("", "");
@@ -115,7 +116,8 @@ export function useGeminiLive(opts: LiveOptions) {
         const handleOai = (ev: any) => {
           if (!aliveRef.current) return;
           switch (ev.type) {
-            case "conversation.item.input_audio_transcription.completed": lastHeardRef.current = Date.now(); youRef.current += (youRef.current ? " " : "") + String(ev.transcript || "").trim(); optsRef.current.onPartial?.(youRef.current, ottoRef.current); break;
+            case "conversation.item.input_audio_transcription.delta": lastHeardRef.current = Date.now(); youLiveRef.current += String(ev.delta || ""); optsRef.current.onPartial?.(`${youRef.current ? youRef.current + " " : ""}${youLiveRef.current}`.trim(), ottoRef.current); break;
+            case "conversation.item.input_audio_transcription.completed": youLiveRef.current = ""; lastHeardRef.current = Date.now(); youRef.current += (youRef.current ? " " : "") + String(ev.transcript || "").trim(); optsRef.current.onPartial?.(youRef.current, ottoRef.current); break;
             case "response.output_audio_transcript.delta": lastHeardRef.current = Date.now(); ottoRef.current += String(ev.delta || ""); optsRef.current.onPartial?.(youRef.current, ottoRef.current); break;
             case "output_audio_buffer.started": setSpeaking(true); break;
             case "output_audio_buffer.stopped": case "output_audio_buffer.cleared": setSpeaking(false); break;

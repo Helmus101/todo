@@ -65,7 +65,7 @@ export function FirstTimeHint({ id, title, body, className }: { id: string; titl
   const [isFirst, dismiss] = useFirstTime(id);
   if (!COACH_MARKS || !isFirst) return null;
   return (
-    <div className={`first-time-hint ${className || ""}`} role="note">
+    <div className={`first-time-hint ${className || ""}`} role="note" translate="yes">
       <div className="first-time-hint-body">
         <div className="first-time-hint-title">{title}</div>
         <p>{body}</p>

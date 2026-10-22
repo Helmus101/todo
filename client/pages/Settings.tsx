@@ -419,6 +419,7 @@ export function SettingsPage({ status, tasks, onSignOut, onChanged, onTasksChang
         <p className="settings-hint">{"Your tutoring sessions, boards and drawings are saved only in this browser, unless you switch on Help improve Otto below. Your account keeps a small profile and the learning notes above. What leaves your device:"}</p>
         <ul className="settings-hint" style={{ paddingLeft: 18, margin: "4px 0 8px" }}>
           <li>{"Your voice goes from the browser straight to Google (Gemini Live), or to OpenAI (Realtime) as a backup, which send back a transcript."}</li>
+          <li>{"To show your words on screen as you speak, Chrome's built-in speech recognition also listens during a call. Chrome sends that audio to Google; Otto never stores it."}</li>
           <li>{"What you type, and the lines Otto writes on the board, are handled by Google first. If Google is unavailable, DeepSeek answers instead, and DeepSeek processes data outside the EU."}</li>
           <li>{"Task preparation and interface translation use DeepSeek. Drawings and photos go to the voice provider and, when you ask Otto to look, to Google's image reading."}</li>
           <li>{"Your Pronote login is stored encrypted and deleted when you disconnect. Otto only reads from Pronote."}</li>

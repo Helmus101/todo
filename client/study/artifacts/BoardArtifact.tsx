@@ -1,3 +1,4 @@
+import { getLanguage } from "../../language.ts";
 import { MathAnswerInput } from "../MathAnswerInput.tsx";
 import { BlockBoundary } from "./BlockBoundary.tsx";
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
@@ -841,11 +842,11 @@ export function BoardArtifact({ task, onUndo, writing, onProblemResult, onWidget
         {hint}
         <div className="sm-board-header">
           <span className="sm-board-header-date">
-            {new Date().toLocaleDateString("en" === "en" ? "en-US" : "fr-FR", { weekday: "long", day: "numeric", month: "long" })}
+            {new Date().toLocaleDateString(getLanguage(), { weekday: "long", day: "numeric", month: "long" })}
           </span>
-          {task.sourceSubject ? <span className="sm-board-header-subject">{task.sourceSubject}</span> : null}
+          {task.sourceSubject ? <span className="sm-board-header-subject" translate="yes">{task.sourceSubject}</span> : null}
         </div>
-        <div className="sm-board-empty">
+        <div className="sm-board-empty" translate="yes">
           {/* The prototype's board empty state: two big serif lines with a quiet promise under them —
               the page reads as an invitation, not as an error message about missing content. */}
           <p className="sm-board-empty-line">{"Let's take it apart together."}</p>
@@ -853,9 +854,9 @@ export function BoardArtifact({ task, onUndo, writing, onProblemResult, onWidget
           <p className="sm-board-empty-sub">{"I won't give you the answer — you find it, I push. One idea at a time."}</p>
         </div>
         {writing ? (
-          <div className="sm-board-drafting" role="status" aria-live="polite">
+          <div className="sm-board-drafting" role="status" aria-live="polite" translate="yes">
             <span className="sm-typing-dots" aria-hidden="true"><i /><i /><i /></span>
-            {"en" === "en" ? "Otto is writing…" : "Otto écrit…"}
+            {"Otto is writing…"}
           </div>
         ) : null}
       </div>
@@ -1006,9 +1007,9 @@ export function BoardArtifact({ task, onUndo, writing, onProblemResult, onWidget
           sourceSubject (stamped at session start); date is today (the board is per-session). */}
       <div className="sm-board-header">
         <span className="sm-board-header-date">
-          {new Date().toLocaleDateString("en-US", { weekday: "long", day: "numeric", month: "long" })}
+          {new Date().toLocaleDateString(getLanguage(), { weekday: "long", day: "numeric", month: "long" })}
         </span>
-        {task.sourceSubject ? <span className="sm-board-header-subject">{task.sourceSubject}</span> : null}
+        {task.sourceSubject ? <span className="sm-board-header-subject" translate="yes">{task.sourceSubject}</span> : null}
         {onUndo ? (
           <button type="button" className="sm-board-undo" onClick={onUndo} title={"Undo the last board change"}>
             ↶ {"Undo"}
@@ -1074,7 +1075,7 @@ export function BoardArtifact({ task, onUndo, writing, onProblemResult, onWidget
           writing, not a swap of the page. Shown on the EMPTY board too (that's exactly when the session
           needs to feel alive, not blank). */}
       {writing ? (
-        <div className="sm-board-drafting" role="status" aria-live="polite">
+        <div className="sm-board-drafting" role="status" aria-live="polite" translate="yes">
           <span className="sm-typing-dots" aria-hidden="true"><i /><i /><i /></span>
           {"Otto is writing…"}
         </div>
