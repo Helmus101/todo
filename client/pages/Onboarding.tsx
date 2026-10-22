@@ -31,7 +31,7 @@ export function Onboarding({ status, onStatus, onDone, mode = "full" }: { status
   // Two flows. "tutor" (tutor-only accounts): name + language, grade, Pronote, done: no track, no subject list, no Google.
   // "full" (whole app): the complete flow below.
   const tutorMode = mode === "tutor";
-  const stepOrder = tutorMode ? [0, 2, 3, 4] : [0, 1, 2, 3, 4];
+  const stepOrder = tutorMode ? [0, 2, 3, 4] : [0, 1, 2, 3, 5, 4]; // 5 = "everything in Otto", full mode only
   // Every profile write below is deliberately non-blocking (a failed save shouldn't trap the student on
   // this screen — see saveTrack's own comment, and the copy already tells them everything here is
   // "changeable any time in Settings"), but non-blocking used to also mean SILENT: the catch blocks were
@@ -78,6 +78,10 @@ export function Onboarding({ status, onStatus, onDone, mode = "full" }: { status
   // Year + subjects: the last things the basic flow collects (the page guides cover everything else).
   const [year, setYear] = useState("");
   const [subs, setSubs] = useState<string[]>([]);
+  // Any grade is allowed: the chips are shortcuts, "Other" opens a free-text box (also used for a saved grade that is not a chip).
+  const YEAR_CHIPS = ["Seconde", "Première", "Terminale", "IB DP1", "IB DP2", "Grade 9", "Grade 10", "Grade 11", "Grade 12"];
+  const [yearOther, setYearOther] = useState(false);
+  const showYearBox = yearOther || (!!year && !YEAR_CHIPS.includes(year));
   // Prefill from what the account already has — matters for "Test onboarding" replays, where re-asking
   // for what's already known (and showing empty fields) would look broken.
   useEffect(() => {
@@ -173,10 +177,17 @@ export function Onboarding({ status, onStatus, onDone, mode = "full" }: { status
             <p className="onboard-lead">{tutorMode ? "Otto pitches his questions at your level." : "Otto pitches his level to you and files your coursework by subject."}</p>
             {!tutorMode && <p className="onboard-lead mt-3">{"Your year"}</p>}
             <div className="onboard-chips">
-              {["Seconde", "Première", "Terminale", "IB DP1", "IB DP2", "Grade 9", "Grade 10", "Grade 11", "Grade 12"].map((y) => (
-                <button key={y} type="button" className={`btn xs ${year === y ? "" : "ghost"}`} onClick={() => setYear(y)} aria-pressed={year === y}>{y}</button>
+              {YEAR_CHIPS.map((y) => (
+                <button key={y} type="button" className={`btn xs ${year === y ? "" : "ghost"}`} onClick={() => { setYear(y); setYearOther(false); }} aria-pressed={year === y}>{y}</button>
               ))}
+              <button type="button" className={`btn xs ${showYearBox ? "" : "ghost"}`} onClick={() => { setYearOther(true); if (YEAR_CHIPS.includes(year)) setYear(""); }} aria-pressed={showYearBox}>{"Other"}</button>
             </div>
+            {showYearBox && (
+              <label className="field onboard-name mt-3"><span>{"Your grade or level"}</span>
+                <input className="addinput" placeholder={"e.g. Year 8, 6ème, first-year university"} value={year} maxLength={40} autoFocus
+                  onChange={(e) => setYear(e.target.value)} />
+              </label>
+            )}
             {!tutorMode && <p className="onboard-lead mt-4">{"Your subjects"}</p>}
             {!tutorMode && <div className="onboard-chips">
               {COMMON_SUBJECTS.filter((x) => x !== "Other").map((x) => (
@@ -211,7 +222,7 @@ export function Onboarding({ status, onStatus, onDone, mode = "full" }: { status
             <p className="muted small">{"You can connect any of these later from Settings."}</p>
             <div className="onboard-actions onboard-actions-split">
               <button className="btn ghost" onClick={() => setStep(2)}>{"Back"}</button>
-              <button className="btn primary big" onClick={() => setStep(4)}>{pronoteConnected ? "Continue — connected ✓" : "Later"}</button>
+              <button className="btn primary big" onClick={() => setStep(tutorMode ? 4 : 5)}>{pronoteConnected ? "Continue — connected ✓" : "Later"}</button>
             </div>
           </div>
         )}
@@ -221,6 +232,29 @@ export function Onboarding({ status, onStatus, onDone, mode = "full" }: { status
             flow's whole length problem: everything a student actually needs on day one fits in one line
             each here, and the per-feature detail lives where it belongs — in the feature's own
             first-time hint (FirstTimeHint, client/ui.tsx), shown when the student actually reaches it. */}
+        {step === 5 && (
+          <div className="onboard-step">
+            <h2>{"Everything in Otto"}</h2>
+            <p className="onboard-lead">{"Six places, one plan. Each one explains itself the first time you open it."}</p>
+            <ul className="onboard-everything">
+              {([
+                ["Today", "Your plan: homework, tests and emails from your sources, ordered by what matters most, each with steps."],
+                ["Tutor", "Talk it through out loud on a shared whiteboard. Otto asks instead of telling, and explains when you're stuck."],
+                ["Journal", "One line a day about what you learned. Otto turns it into flashcards and spaced reviews."],
+                ["Coursework", "Add worksheets and chapters by subject. Otto reads them and uses them in chats and tasks."],
+                ["Mistakes", "Log precise mistakes. Otto quizzes you where you slip so you don't repeat them."],
+                ["Settings", "Your sources, level, subjects and language, and everything Otto knows about you."],
+              ] as const).map(([name, what]) => (
+                <li key={name}><b>{name}</b><span>{what}</span></li>
+              ))}
+            </ul>
+            <div className="onboard-actions onboard-actions-split">
+              <button className="btn ghost" onClick={() => setStep(3)}>{"Back"}</button>
+              <button className="btn primary big" onClick={() => setStep(4)}>{"Continue"}</button>
+            </div>
+          </div>
+        )}
+
         {step === 4 && (
           <div className="onboard-step onboard-done">
             <div className="onboard-done-mark"><Logo size={30} /></div>

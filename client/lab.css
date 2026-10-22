@@ -252,3 +252,21 @@ h1 { font-family: var(--display); font-weight: 400; letter-spacing: -0.025em; }
 .tutor-device-pill.labelled { width: auto; height: 38px; padding: 0 14px; gap: 8px; font-size: 14px; font-weight: 500; color: var(--ink); border-color: var(--ink); }
 .tutor-device-pill.labelled.is-on { background: var(--bg-2); }
 @media (max-width: 640px) { .tutor-start-device { flex-direction: column; } }
+
+/* Full-mode onboarding: the "everything in Otto" overview. */
+.onboard-everything { list-style: none; margin: var(--space-4) 0; padding: 0; display: grid; gap: 0; border-top: 2px solid var(--ink); }
+.onboard-everything li { display: grid; grid-template-columns: 110px 1fr; gap: var(--space-3); padding: var(--space-3) 0; border-bottom: 1px solid var(--line); font-size: 14px; line-height: 1.5; }
+.onboard-everything b { color: var(--ink); font-weight: 600; }
+.onboard-everything span { color: var(--ink-2); }
+@media (max-width: 520px) { .onboard-everything li { grid-template-columns: 1fr; gap: 2px; } }
+
+/* Landing: Pronote + "the hard parts answered". Bold editorial rules, same voice as the blog. */
+.landing-detail { margin-top: var(--space-8); padding-top: var(--space-5); border-top: 3px solid var(--ink); }
+.landing-detail h2 { font-family: var(--display); font-weight: 400; font-size: clamp(1.7rem, 4vw, 2.3rem); letter-spacing: -0.02em; line-height: 1.1; margin: 0 0 var(--space-3); }
+.landing-detail p { color: var(--ink-2); line-height: 1.65; max-width: 60ch; margin: 0 0 var(--space-3); }
+.landing-detail-list { margin: var(--space-4) 0 0; display: grid; gap: 0; }
+.landing-detail-list > div { padding: var(--space-4) 0; border-top: 1px solid var(--line); }
+.landing-detail-list dt { font-weight: 600; color: var(--ink); margin: 0 0 4px; }
+.landing-detail-list dd { margin: 0; color: var(--ink-2); line-height: 1.6; max-width: 60ch; }
+
+.landing-ask-note { margin: var(--space-3) 0 0 !important; font-size: 13px; color: var(--ink-3); }

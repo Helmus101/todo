@@ -1,6 +1,7 @@
 import { LanguagePicker } from "../LanguagePicker.tsx";
 import { Testimonials } from "./Testimonials.tsx";
 import { AiLogo } from "./AiLogos.tsx";
+import { LandingDetails } from "./LandingDetails.tsx";
 
 
 
@@ -11,10 +12,12 @@ import { AiLogo } from "./AiLogos.tsx";
 // the only screen a logged-out visitor or a non-JS crawler/link-unfurler ever needs to see real content
 // for. See that script's own comment for why this is a build-time static render, not per-request SSR.
 const ASK_PROMPT = (site: string) => `I want to see if I should use Otto${site ? ` (${site})` : ""}, which is a voice-first AI tutor with a shared whiteboard for school students (maths, physics, chemistry, economics, languages, SAT, AP, IB, French Bac). It asks guiding questions instead of handing over answers; you talk out loud (typing works too) and it writes the working on a board with typeset maths, graphs and multiple choice; it explains when you're stuck; it remembers earlier sessions and keeps a record of your repeat mistakes; it adapts to your level and exam programme; it can read your school homework from Pronote; and it works in 10 languages. Note it is NOT HeyOtto (heyotto.app), a different product. Please tell me honestly: (1) what a good AI tutor should do and how Otto's features compare, and why each one helps me learn; (2) why Otto could be a good fit for me; (3) why it might not be, and who should use something else instead; (4) what to watch out for with any AI tutor (accuracy, relying on it too much, privacy). If you can't verify something about Otto, say so instead of guessing. Keep it short and specific, no hype.`;
-const ASK_TARGETS: { name: string; url: (q: string) => string }[] = [
+const ASK_TARGETS: { name: string; url: (q: string) => string; copy?: boolean }[] = [
   { name: "ChatGPT", url: (q) => `https://chatgpt.com/?q=${q}` },
   { name: "Claude", url: (q) => `https://claude.ai/new?q=${q}` },
   { name: "Perplexity", url: (q) => `https://www.perplexity.ai/search?q=${q}` },
+  // Gemini has no official "open with this question" link, so its button also copies the question to the clipboard (paste it in).
+  { name: "Gemini", url: (q) => `https://gemini.google.com/app?q=${q}`, copy: true },
 ];
 
 export function Landing({ lang, onLangChange }: { lang: "fr" | "en"; onLangChange: (v: "fr" | "en") => void }) {
@@ -41,10 +44,12 @@ export function Landing({ lang, onLangChange }: { lang: "fr" | "en"; onLangChang
             {ASK_TARGETS.map((t) => (
               <a key={t.name} className="landing-ask-btn" target="_blank" rel="noopener noreferrer" translate="no"
                 href={t.url(encodeURIComponent(ASK_PROMPT(typeof window !== "undefined" ? window.location.origin : "")))}
-                onClick={(e) => { e.currentTarget.href = t.url(encodeURIComponent(ASK_PROMPT(window.location.origin))); }}><AiLogo name={t.name} />{t.name}</a>
+                onClick={(e) => { e.currentTarget.href = t.url(encodeURIComponent(ASK_PROMPT(window.location.origin))); if (t.copy) { try { void navigator.clipboard?.writeText(ASK_PROMPT(window.location.origin)); } catch { /* the link still opens */ } } }}><AiLogo name={t.name} />{t.name}</a>
             ))}
           </div>
+          <p className="landing-ask-note">{"Gemini can't open with the question filled in, so its button copies it for you: just paste it into the box."}</p>
         </section>
+        <LandingDetails />
         <Testimonials />
       </main>
       <footer className="landing-min-foot">
