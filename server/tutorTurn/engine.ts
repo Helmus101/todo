@@ -13,7 +13,8 @@ import { applyOps } from "./apply.ts";
 import { carriesWorking, checkWork } from "./check.ts";
 
 const MAX_HISTORY = 14;
-const TURN_MAX_TOKENS = 4000;
+/** A turn is a few sentences plus a few board ops; this caps a runaway reply (and its cost), not a normal one. */
+const TURN_MAX_TOKENS = 2500;
 const TURN_TIMEOUT_MS = 60_000;
 
 async function callTurn(messages: any[], tokens: TutorTurnResult["tokens"]): Promise<{ turn: TurnOutput | null; raw: string }> {
@@ -32,6 +33,16 @@ const WRITING_CLAIM = /\b(?:(?:let(?:'s| us)|let me|i(?:'ll| will)|i'm going to|
 const ASKS_BOARD = /\b(?:on|onto|to) the (?:board|whiteboard|paper)\b|\bwrite (?:it|that|this|everything|the)\b|\bput (?:it|that|this) (?:up|down|on)\b/i;
 const POINTS_AT_BOARD = /\b(?:here(?:'s| is| are)|we have|we got|this|these|that|the following|look at|see)\b[^.?!]{0,40}\b(?:equation|expression|formula|identity|figure|graph|diagram|curve|triangle|step|line|inequality|function)\b/i;
 
+/** The start of a long sitting, kept for free (no model call): only the last MAX_HISTORY messages are sent, so the first thing the student
+ *  asked for and a few of their older messages ride along as one short block. Empty while the whole conversation still fits. */
+export function earlierInSitting(history: { role: "user" | "assistant"; text: string }[]): string {
+  if (history.length <= MAX_HISTORY) return "";
+  const older = history.slice(0, history.length - MAX_HISTORY).filter((h) => h.role === "user" && h.text?.trim());
+  if (!older.length) return "";
+  const pick = [older[0], ...older.slice(1).filter((_, i, a) => i >= a.length - 4)];
+  return `\n\nEARLIER IN THIS SITTING (older messages are not repeated; their first request was the goal, keep it in mind): ${pick.map((h) => `"${h.text.replace(/\s+/g, " ").slice(0, 140)}"`).join(" · ")}`;
+}
+
 export async function runTutorTurn(input: TutorTurnInput): Promise<TutorTurnResult & { turn?: { speech: string[]; ms: number } }> {
   const t0 = Date.now();
   const { message, history, board, problems, context } = input;
@@ -47,6 +58,7 @@ export async function runTutorTurn(input: TutorTurnInput): Promise<TutorTurnResu
     + backgroundBlock(context)
     + `\n\nToday is ${new Date().toLocaleDateString("en-US", { weekday: "long", year: "numeric", month: "long", day: "numeric" })}.`
     + `\n\nTHE BOARD (margin numbers #n are what you point at)${boardSurfaceBlock(board, problems) || ": empty."}`
+    + earlierInSitting(history)
     + (checked ? `\n\nCHECKED BY CODE-LIKE RECOMPUTATION (trust this over your own quick reading of their message): ${checked}` : "")
     + (input.spoken && spokenRepair ? voiceInputBlock(message, input.spoken.alternatives, spokenRepair) : "")
     + `\n\nReply in English unless the student writes in another language. Return ONLY the JSON object.`;
@@ -85,6 +97,7 @@ export async function runTutorTurn(input: TutorTurnInput): Promise<TutorTurnResu
     cur = again.turn; applied = next;
   }
   result.board = applied.board;
+  console.log(`[tutor] turn ${Date.now() - t0}ms tokens in=${result.tokens.in} out=${result.tokens.out} cached=${result.tokens.cachedIn} board=${applied.board.length}`); // (counts only: never the text)
   result.reply = cur.speech.join(" ");
   result.turn = { speech: cur.speech, ms: Date.now() - t0 };
   return result;

@@ -97,6 +97,10 @@ export async function runTutorTurnSim(check, section) {
       const r = applyOps(t.board, { board: [], problems: [], theirWords: [] });
       check("a choice becomes a board entry with tappable options and never records which one is right; the same question is not added twice", r.board.length === 1 && r.board[0].kind === "choice" && r.board[0].options.length === 3 && !("correct" in r.board[0]) && !("expectedAnswer" in r.board[0]) && applyOps(t.board, { board: r.board, problems: [], theirWords: [] }).board.length === 0); }
 
+    { const { earlierInSitting } = await import("../server/tutorTurn/engine.ts");
+      const long = Array.from({ length: 30 }, (_, i) => ({ role: i % 2 ? "assistant" : "user", text: i === 0 ? "I want to master quadratics before Friday" : `message ${i}` }));
+      check("a long sitting keeps the student's first request in the prompt; a short one adds nothing", /quadratics before Friday/.test(earlierInSitting(long)) && earlierInSitting(long.slice(0, 10)) === ""); }
+
     section("Tutor turn — never a dead end");
     calls.length = 0;
     script = (b, i) => (i === 0 ? "not json at all" : { speech: ["Back on track — what did you get?"], board: [] });
