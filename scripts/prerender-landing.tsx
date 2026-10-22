@@ -21,6 +21,7 @@ import { PAGE_META, ORIGIN, headFor } from "../shared/seo.ts";
 import { POSTS, postPath } from "../shared/blog.ts";
 import { BlogIndexPage, BlogPostPage } from "../client/pages/Blog.tsx";
 import { mkdirSync } from "node:fs";
+import { BRIEF_PATH, ottoBriefHtml } from "../shared/ottoBrief.ts";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const distIndexPath = resolve(__dirname, "../dist/index.html");
@@ -87,6 +88,13 @@ for (const post of POSTS) {
   writeFileSync(resolve(__dirname, `../dist/blog/${post.slug}.html`), page, "utf-8");
 }
 console.log(`[prerender] blog/*.html — ${POSTS.length} posts`);
+
+// ── The unlisted in-depth brief: a standalone static page at an unguessable route (not linked, not in the sitemap, noindex). ──
+{
+  const brief = ottoBriefHtml();
+  writeFileSync(resolve(__dirname, `../dist${BRIEF_PATH}.html`), brief, "utf-8");
+  console.log(`[prerender] ${BRIEF_PATH}.html (unlisted) — ${(brief.length / 1024).toFixed(1)}kb`);
+}
 
 // ── Sitemap: every public page, with the build date (replaces a hand-edited file that went stale) ──
 {

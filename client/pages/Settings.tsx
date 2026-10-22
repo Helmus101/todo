@@ -779,6 +779,9 @@ function ConceptsPanel({ profile }: { profile: Profile | null }) {
   const bySubject = new Map<string, typeof concepts>();
   for (const c of concepts) bySubject.set(c.subject || "Other", [...(bySubject.get(c.subject || "Other") || []), c]);
   const level = (p: number) => (p >= 0.75 ? "Solid" : p >= 0.45 ? "Getting there" : "Needs work");
+  // The honest denominators behind the bars: how often it was done ALONE versus after a hint or an explanation, and how
+  // often a method held up in a new context. A finished session is not the same as learning, so this is shown plainly.
+  const tot = concepts.reduce((a, c) => ({ attempts: a.attempts + (c.attempts || 0), unaided: a.unaided + (c.unaided || 0), tAtt: a.tAtt + (c.transferAttempts || 0), tWin: a.tWin + (c.transferWins || 0) }), { attempts: 0, unaided: 0, tAtt: 0, tWin: 0 });
   const when = (iso?: string) => { const d = Date.parse(iso || ""); if (!d) return ""; const days = Math.round((d - Date.now()) / 86_400_000); return days <= 0 ? "review now" : days === 1 ? "review tomorrow" : `review in ${days} days`; };
   return (
     <section className="settings-sec reveal">
@@ -791,6 +794,9 @@ function ConceptsPanel({ profile }: { profile: Profile | null }) {
           {!concepts.length ? <p className="settings-hint">{"Nothing tracked yet. Talk to Otto and the ideas you work on show up here, with how solid each one is."}</p> : (
             <>
               <p className="settings-hint">{"Built from your sessions, only on your account. Otto uses it to pick what to ask next."}</p>
+              {tot.attempts >= 3 ? (
+                <p className="settings-hint"><b>{`Solved on your own: ${tot.unaided} of ${tot.attempts} attempts (${Math.round((100 * tot.unaided) / tot.attempts)}%).`}</b>{tot.tAtt ? ` Held up in a new context: ${tot.tWin} of ${tot.tAtt}.` : ""}{" This is the number that matters, not how many sessions you finished."}</p>
+              ) : null}
               {[...bySubject.entries()].map(([subject, list]) => (
                 <div key={subject} className="concept-group">
                   <div className="concept-subject">{subject}</div>

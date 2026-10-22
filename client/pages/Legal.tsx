@@ -55,9 +55,9 @@ export function PrivacyBody() {
       <h2>{"Service providers"}</h2>
       <p>{"Otto shares data with the processors needed to run the service. What you send them is handled under their own terms:"}</p>
       <ul>
-        <li><b>Google</b> — {"Gemini Live (voice), image reading, and, if you connect them, the Google apps above."}</li>
+        <li><b>Google</b> — {"Gemini Live (voice), the model that answers the tutor's typed messages and writes the board (first choice), image reading, and, if you connect them, the Google apps above."}</li>
         <li><b>OpenAI</b> — {"Realtime voice, used as a fallback when the first voice service is unavailable."}</li>
-        <li><b>DeepSeek</b> — {"the AI model that writes the board and answers typed messages."}</li>
+        <li><b>DeepSeek</b> — {"the AI model that prepares tasks and homework help and translates the interface, and the fallback that answers typed tutor messages and writes the board when Google is unavailable. DeepSeek processes data outside the EU."}</li>
         <li><b>Supabase</b> — {"stores your account and profile."}</li>
         <li><b>Composio</b> — {"brokers the connections to the optional integrations."}</li>
         <li><b>Vercel</b> — {"hosts the app and measures anonymous page views (no advertising, no cross-site tracking)."}</li>

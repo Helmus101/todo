@@ -28,6 +28,7 @@
     { "source": "/llms.txt", "destination": "/llms.txt" },
     { "source": "/og-image.png", "destination": "/og-image.png" },
     { "source": "/.well-known/:path*", "destination": "/.well-known/:path*" },
+    { "source": "/otto-in-depth-7k3q", "destination": "/otto-in-depth-7k3q.html" },
     { "source": "/research", "destination": "/research.html" },
     { "source": "/blog", "destination": "/blog.html" },
     { "source": "/blog/:slug", "destination": "/blog/:slug.html" },

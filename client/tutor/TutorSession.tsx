@@ -1148,6 +1148,7 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
             onHistory={() => setChatDrawer((v) => !v)} historyCount={task.chat?.length || 0}
             onAttach={(f) => attachRef.current(f)} attaching={attaching}
           />
+          <p className="live-disclaimer">{"Otto can be wrong, even when the board looks tidy. Check anything important against your course."}</p>
       </div>
     </main>
   );

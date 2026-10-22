@@ -227,7 +227,10 @@ export async function createTutorChat(params: any, fast: boolean, opts?: { deadl
   // `deepseekOnly`: everything that is NOT a live tutor session (task chat, UI translation) stays on DeepSeek;
   // Gemini is only for the tutor.
   const all = tutorProviders();
-  const providers = opts?.deepseekOnly ? all.filter((p) => p.name !== "gemini") : all;
+  // TUTOR_NO_DEEPSEEK_FALLBACK=1: a live tutor turn is answered by Gemini only and never falls back to DeepSeek (which processes
+  // outside the EU). Off by default because the tutor then has no fallback when Gemini is down; ignored without a Gemini key.
+  const geminiOnly = process.env.TUTOR_NO_DEEPSEEK_FALLBACK === "1" && all.some((p) => p.name === "gemini");
+  const providers = opts?.deepseekOnly ? all.filter((p) => p.name !== "gemini") : geminiOnly ? all.filter((p) => p.name === "gemini") : all;
   if (!providers.length) throw new Error("Set GEMINI_API_KEY or DEEPSEEK_API_KEY in web/.env.");
   let lastErr: any;
   for (let i = 0; i < providers.length; i++) {

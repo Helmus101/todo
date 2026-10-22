@@ -58,6 +58,9 @@ const PACKS: Pack[] = [
 - Habits: match the text type (blog, speech, letter, article...) and register, answer the task fully, organise with connectors, and correct recurring grammar errors by questioning, not by rewriting.` },
 ];
 
+/** Every pack, for documentation (the unlisted brief page quotes them verbatim so it can never drift from what the tutor is told). */
+export function ibPacks(): { title: string; text: string }[] { return PACKS.map((p) => ({ title: p.title, text: p.text })); }
+
 /** The subject pack for a session subject ("Physics", "Math AA", "English"...), or "" when there is none. */
 export function ibSubjectPack(subject?: string): string {
   const s = String(subject || "").trim();

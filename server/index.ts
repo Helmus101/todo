@@ -13,6 +13,7 @@ import { loadState, cloudEnabled, makeSessionStore } from "./store.ts";
 import * as integrations from "./integrations.ts";
 import * as pronoteSvc from "./pronote.ts";
 import { PROD, ah, commit, isAdmin, scheduler, weeklyCap } from "./http.ts";
+import { BRIEF_PATH } from "../shared/ottoBrief.ts";
 import { weeklyUsage } from "../shared/types.ts";
 import { shouldAutoPause } from "./autoPause.ts";
 
@@ -307,6 +308,8 @@ if (PROD && !process.env.VERCEL) {
   // Hashed build assets never change, so they cache for a year; everything else (index.html, the public pages) revalidates.
   app.use(express.static(dist, { setHeaders: (res, file) => { res.setHeader("Cache-Control", /[\\/]assets[\\/]/.test(file) ? "public, max-age=31536000, immutable" : "no-cache"); } }));
   // The public pages have their own prerendered HTML (own title / canonical / content) — see scripts/prerender-landing.tsx.
+  // The unlisted in-depth brief (shared/ottoBrief.ts BRIEF_PATH): reachable only by its address.
+  app.get(BRIEF_PATH, (_req, res) => { res.sendFile(path.join(dist, `${BRIEF_PATH}.html`)); });
   for (const page of ["research", "privacy", "terms"]) app.get(`/${page}`, (_req, res) => { res.sendFile(path.join(dist, `${page}.html`)); });
   app.get("/blog", (_req, res) => { res.sendFile(path.join(dist, "blog.html")); });
   app.get("/blog/:slug", (req, res) => {
