@@ -7,7 +7,7 @@ import { extractJsonObject, normalizeTurn, salvageTurn } from "../../shared/tuto
 import { boardSurfaceBlock } from "../boardEvents.ts";
 import { createTutorChat, usageOf } from "../claude.ts";
 import { applyOps } from "./apply.ts";
-import { boardLineIsWrong } from "../boardMath.ts";
+import { boardLineIsWrong, stripUnaskedUnit } from "../boardMath.ts";
 import { DRAW_REFERENCE, TURN_PROMPT } from "./prompt.ts";
 
 const OPS = TURN_PROMPT.slice(TURN_PROMPT.indexOf("BOARD OPS"), TURN_PROMPT.indexOf("RETURN ONLY"));
@@ -33,6 +33,7 @@ PACING (the board must never run ahead of the student): the board shows only wha
 - A number, value or result goes on the board ONLY if it appears in a Student line of this exchange (or is already on the board). If you can compute it but the student has not said it, do not write it, even if the tutor hinted at it or asked about it.
 - Write at most the ONE step the student has just completed correctly. Never write the steps after it, and never a whole calculation chain (for example "$f(0) = \\frac{8}{-1/3} = -24$") unless the student said every part of it.
 - If the tutor is correcting them or pushing back ("check that again", "look at that numerator", "let's re-examine"), or the student's latest value is wrong, write NOTHING for that part: no corrected version, no right answer.
+- Write a result EXACTLY as the student said it. Do not add a unit, a sign, a degree sign, "approximately", a rounding or a label they did not say. If the tutor's last question asks for exactly that missing piece (the unit, the sign, the direction, the name of the quantity), it must NOT be on the board yet: the student says the number "833", the board shows "833" and the tutor then asks "what unit?".
 - A "worked example" means a DIFFERENT, simpler example the tutor used to teach an idea. It never means the student's own problem solved for them.
 
 HOW MUCH: the board is the whole lesson on paper, so an exchange that teaches or confirms something usually adds one to three lines: the rule or definition, the worked example, the result the student reached (when the tutor confirms it is right), the final answer once THEY reached it. An empty list is right only for greetings, small talk, a question that adds nothing new, or an answer that was wrong.
@@ -111,7 +112,12 @@ export async function writeBoard(input: { exchange: string; board: BoardEntry[];
       if (wrong) { applied.dropped.push(`line: its arithmetic does not hold, not written: ${String(e.text).slice(0, 80)}`); console.warn(`[live] board line dropped, arithmetic does not hold: ${String(e.text).slice(0, 120)}`); }
       return !wrong;
     });
-    return { board, dropped: applied.dropped, concepts };
+    // The tutor is asking about the unit: a unit the student has not said must not already be on the board.
+    const askedUnit = /\bunits?\b/i.test(openQuestion);
+    const finalBoard = askedUnit
+      ? board.map((e) => (typeof e.text === "string" && ["result", "formula", "step", "given"].includes(String(e.kind)) ? { ...e, text: stripUnaskedUnit(e.text, studentWords.join(" ")) } : e))
+      : board;
+    return { board: finalBoard, dropped: applied.dropped, concepts };
   };
   let out = await once();
   // The board has to match the lesson. Two things are always checked, and one more call fixes both: (1) the tutor explained something and

@@ -136,3 +136,26 @@ export function boardLineIsWrong(text: string): boolean {
   }
   return false;
 }
+
+// ---- Units the student has not said ---------------------------------------------------------------------------------
+// When the tutor's open question is about the unit ("what units would you include?"), a result line that already
+// carries it ("833 N") has answered the question on the board before the student did. This removes a trailing unit from
+// a line, but only when the student has not said it themselves. Pure; exported for tests.
+const UNIT_NAMES: Record<string, RegExp> = {
+  N: /newtons?/i, J: /joules?/i, W: /watts?/i, Pa: /pascals?/i, Hz: /hertz/i, V: /volts?/i, kg: /kilograms?|kilos?/i,
+  mol: /moles?/i, eV: /electron.?volts?/i, "m/s": /meters? per second|metres? per second|m\/s/i,
+};
+const escapeRe = (x: string) => x.replace(/[.*+?^${}()|[\]\\\/]/g, "\\$&");
+
+export function stripUnaskedUnit(text: string, studentText: string): string {
+  const said = String(studentText || "");
+  const re = /(\d)((?:\s|\\,|\;|\\:|\\ |~)*)(?:\\text\{\s*([^}]+?)\s*\}|\\mathrm\{\s*([^}]+?)\s*\}|\b(N|J|W|Pa|Hz|V|kg|mol|eV|m\/s)\b)(?=\s*(?:\$|$|[.,;)]))/g;
+  return String(text || "").replace(re, (m, digit: string, _gap: string, t1?: string, t2?: string, bare?: string) => {
+    const u = String(t1 || t2 || bare || "").trim();
+    if (!u) return m;
+    const sym = new RegExp(`(^|[^A-Za-z])${escapeRe(u)}($|[^A-Za-z])`);
+    const name = UNIT_NAMES[u];
+    if (sym.test(said) || (name && name.test(said))) return m; // the student said the unit: it is theirs to keep
+    return digit;
+  });
+}
