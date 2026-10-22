@@ -534,7 +534,9 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
     onTurn: onLiveTurn,
     onTurnComplete: onLiveTurnComplete,
     onPartial: (you, otto) => {
-      setCaption(otto ? { who: "otto", text: otto } : you ? { who: "you", text: you } : null);
+      // Live words of whoever is talking: Otto's once it answers, otherwise the student's as they speak. When a turn
+      // finishes (both empty) the student's last words stay up until the next thing is said, instead of a placeholder.
+      setCaption((prev) => (otto ? { who: "otto", text: otto } : you ? { who: "you", text: you } : prev?.who === "you" ? prev : null));
       if (otto && /\b(on|onto|to) the board\b|\blet me (draw|write|sketch|show)\b|\bI'?ll (draw|write|sketch)\b/i.test(otto)) setBoardPromised(true);
     },
   });

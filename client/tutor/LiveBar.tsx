@@ -36,9 +36,11 @@ export function LiveBar(p: {
   const mood = p.thinking || p.sending ? "thinking" : p.speaking ? "speaking" : live && !p.muted ? "listening" : "idle";
   const line = p.error ? p.error
     : connecting ? "Connecting…"
+    // What the student is saying comes first, live as they speak, and stays on screen while Otto works it out.
+    : p.caption?.who === "you" && p.caption.text ? `“${p.caption.text.slice(-200)}”`
     : p.thinking || p.sending ? "Working it out…"
-    : p.caption?.text ? (p.caption.who === "you" ? `“${p.caption.text.slice(-200)}”` : p.caption.text.slice(-240))
-    : live ? (p.muted ? "Muted" : "Go ahead. I'm listening.")
+    : p.caption?.text ? p.caption.text.slice(-240)
+    : live ? (p.muted ? "Muted" : "…")
     : p.status === "unavailable" ? "Type to Otto below, or try the voice again"
     : "Tap the mic. Say it out loud.";
   const submit = () => { const t = text.trim(); if (!t) return; setText(""); setTyping(false); p.onType(t); };
@@ -46,7 +48,7 @@ export function LiveBar(p: {
     <div className="live-bar" data-state={mood}>
       <div className="live-bar-main">
         <span className="live-orb" aria-hidden="true"><OttoAvatar mood={mood} size={live || connecting ? 72 : 56} /></span>
-        <p className={`live-caption${p.error ? " is-error" : ""}${p.caption?.who === "you" && !p.thinking ? " is-you" : ""}`} role="status" aria-live="polite">{!p.error && !connecting && !p.sending && p.caption?.who === "otto" && /\$/.test(p.caption.text) ? <MathText text={p.caption.text.slice(-320)} /> : line}</p>
+        <p className={`live-caption${p.error ? " is-error" : ""}${p.caption?.who === "you" ? " is-you" : ""}`} role="status" aria-live="polite">{!p.error && !connecting && !p.sending && p.caption?.who === "otto" && /\$/.test(p.caption.text) ? <MathText text={p.caption.text.slice(-320)} /> : line}</p>
       </div>
       {typing ? (
         <div className="live-type">
