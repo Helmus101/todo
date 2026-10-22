@@ -6,7 +6,7 @@ import { useEffect, useState, useCallback, useRef } from "react";
 import type { WebTask, ConnectionStatus, Profile } from "../../shared/types.ts";
 import { api, type IntegrationItem, type ConnectedAccount } from "../api.ts";
 import { useLang, useNotify, ErrorNote } from "../ui.tsx";
-import { clearAllLocalAccountData } from "../appShared.tsx";
+import { clearAllLocalAccountData, LEGAL_EMAIL } from "../appShared.tsx";
 
 /** Scroll-reveal: any element with className "reveal" inside this component fades/rises into place the
  *  first time it enters the viewport (CSS does the actual animation — see `.reveal`/`.reveal.in` in
@@ -105,7 +105,7 @@ function PreferencesFields({ profile, onChanged }: { profile: Profile | null; on
   return (
     <>
       <div className="set-row">
-        <span className="set-text"><b>{"Are you in the IB Diploma?"}</b><span className="settings-hint">{"Yes: Otto teaches to the IB, with your papers, command terms, mark schemes and each subject's syllabus. No: it stays a general tutor and ignores all IB specifics."}</span></span>
+        <span className="set-text"><b>{"Are you in the IB Diploma?"}</b><span className="settings-hint">{"Yes: Otto teaches to the IB, with your papers, command terms, mark schemes and each subject's syllabus. No: it stays a general tutor and ignores all IB specifics. The IB material follows one school's 2026 to 2028 course outlines and covers Maths, Physics, Chemistry, Biology, Economics, History, Geography, Computer Science, TOK, English A and Languages; other courses get the general IB knowledge only. Put your exact courses and levels (for example Maths AA HL) under Courses in \u201CWhat Otto knows about you\u201D."}</span></span>
         <div className="lang-toggle">
           <button type="button" className={`btn xs ${track === "ib" ? "" : "ghost"}`} aria-pressed={track === "ib"} onClick={() => void saveTrack("ib")}>{"Yes"}</button>
           <button type="button" className={`btn xs ${track && track !== "ib" ? "" : "ghost"}`} aria-pressed={!!track && track !== "ib"} onClick={() => void saveTrack(track && track !== "ib" ? track : "other")}>{"No"}</button>
@@ -411,6 +411,18 @@ export function SettingsPage({ status, tasks, onSignOut, onChanged, onTasksChang
             ) : <p className="settings-hint">{"Not enough activity yet."}</p>}
           </div>
         )}
+      </section>
+
+      <section className="settings-sec reveal">
+        <h3>{"Where your data goes"}</h3>
+        <p className="settings-hint">{"Your tutoring sessions, boards and drawings are saved only in this browser. Your account keeps a small profile and the learning notes above. What leaves your device:"}</p>
+        <ul className="settings-hint" style={{ paddingLeft: 18, margin: "4px 0 8px" }}>
+          <li>{"Your voice goes from the browser straight to Google (Gemini Live), or to OpenAI (Realtime) as a backup, which send back a transcript."}</li>
+          <li>{"What you type, and the lines Otto writes on the board, are handled by Google first. If Google is unavailable, DeepSeek answers instead, and DeepSeek processes data outside the EU."}</li>
+          <li>{"Task preparation and interface translation use DeepSeek. Drawings and photos go to the voice provider and, when you ask Otto to look, to Google's image reading."}</li>
+          <li>{"Your Pronote login is stored encrypted and deleted when you disconnect. Otto only reads from Pronote."}</li>
+        </ul>
+        <p className="settings-hint">{"Those providers keep data under their own terms, which Otto does not control. Deleting your account erases your profile, learning notes and connections from Otto; it cannot erase what a provider holds. To have the tutor restricted to Google only, or for anything about your data, write to "}<a href={`mailto:${LEGAL_EMAIL}`}>{LEGAL_EMAIL}</a>{". Full details: "}<a href="/privacy">{"privacy policy"}</a>{" and "}<a href="/terms">{"terms"}</a>{"."}</p>
       </section>
 
       {status.isAdmin ? <AdminTools /> : null}
@@ -781,7 +793,7 @@ function ConceptsPanel({ profile }: { profile: Profile | null }) {
   const level = (p: number) => (p >= 0.75 ? "Solid" : p >= 0.45 ? "Getting there" : "Needs work");
   // The honest denominators behind the bars: how often it was done ALONE versus after a hint or an explanation, and how
   // often a method held up in a new context. A finished session is not the same as learning, so this is shown plainly.
-  const tot = concepts.reduce((a, c) => ({ attempts: a.attempts + (c.attempts || 0), unaided: a.unaided + (c.unaided || 0), tAtt: a.tAtt + (c.transferAttempts || 0), tWin: a.tWin + (c.transferWins || 0) }), { attempts: 0, unaided: 0, tAtt: 0, tWin: 0 });
+  const tot = concepts.reduce((a, c) => ({ attempts: a.attempts + (c.attempts || 0), unaided: a.unaided + (c.unaided || 0), tAtt: a.tAtt + (c.transferAttempts || 0), tWin: a.tWin + (c.transferWins || 0), rec: a.rec + (c.recalls || 0), recWin: a.recWin + (c.recallWins || 0) }), { attempts: 0, unaided: 0, tAtt: 0, tWin: 0, rec: 0, recWin: 0 });
   const when = (iso?: string) => { const d = Date.parse(iso || ""); if (!d) return ""; const days = Math.round((d - Date.now()) / 86_400_000); return days <= 0 ? "review now" : days === 1 ? "review tomorrow" : `review in ${days} days`; };
   return (
     <section className="settings-sec reveal">
@@ -795,8 +807,13 @@ function ConceptsPanel({ profile }: { profile: Profile | null }) {
             <>
               <p className="settings-hint">{"Built from your sessions, only on your account. Otto uses it to pick what to ask next."}</p>
               {tot.attempts >= 3 ? (
-                <p className="settings-hint"><b>{`Solved on your own: ${tot.unaided} of ${tot.attempts} attempts (${Math.round((100 * tot.unaided) / tot.attempts)}%).`}</b>{tot.tAtt ? ` Held up in a new context: ${tot.tWin} of ${tot.tAtt}.` : ""}{" This is the number that matters, not how many sessions you finished."}</p>
+                <p className="settings-hint"><b>{`Solved on your own: ${tot.unaided} of ${tot.attempts} attempts (${Math.round((100 * tot.unaided) / tot.attempts)}%).`}</b>{tot.tAtt ? ` Held up in a new context: ${tot.tWin} of ${tot.tAtt}.` : ""}{tot.rec ? ` Remembered when asked again later: ${tot.recWin} of ${tot.rec}.` : ""}{" These are the numbers that matter, not how many sessions you finished."}</p>
               ) : null}
+              <details className="settings-hint">
+                <summary>{"How this is worked out"}</summary>
+                <p>{"Every time you work on an idea, Otto records how it went: on your own, after a hint, after an explanation, a mistake, a misunderstanding, remembering it later, or using it in a new context. Doing it alone counts for much more than doing it after a hint or an explanation, and using it in a new context counts most. A mistake pulls the score down, so one lucky answer or one guided session can't make an idea \u201Csolid\u201D."}</p>
+                <p>{"Once an idea looks reasonably known, Otto sets a quick check for when you are likely to start forgetting it; it is cleared when you recall it or solve it alone again. This is a simple estimate, not an exam result, and it can be wrong. If an entry looks wrong to you, reset what Otto knows about you below."}</p>
+              </details>
               {[...bySubject.entries()].map(([subject, list]) => (
                 <div key={subject} className="concept-group">
                   <div className="concept-subject">{subject}</div>

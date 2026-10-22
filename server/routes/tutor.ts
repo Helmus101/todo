@@ -223,7 +223,7 @@ export function registerTutorRoutes(app: express.Express): void {
         if (changed) { profile.conceptModel = m; req.session.profile = profile; }
       } catch { /* tracking is a bonus */ }
       await commit(req);
-      res.json({ board: out.board });
+      res.json({ board: out.board, ...(out.flags?.length ? { flags: out.flags } : {}) });
     } catch (e: any) {
       console.warn(`[live] board writer failed: ${String(e?.message || e).slice(0, 120)}`);
       res.status(502).json({ error: "The board couldn't be updated just now.", board: [] });

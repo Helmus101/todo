@@ -55,6 +55,47 @@ Also return "concepts": what this exchange shows about the STUDENT, as at most 3
 
 Return ONLY JSON: {"notes":["rule: …","result: …"],"board":[…ops…],"concepts":[…]}. Every op carries "cue":0. Inside strings write every LaTeX backslash TWICE.`;
 
+// ── Second opinion on a confirmed step ──────────────────────────────────────────────────────────────────────────────────
+// The tutor model sometimes says "yep, that's right" to a wrong numeric step (reproduced in the regression suite). Prompt rules
+// alone do not stop it, so this is a check that does not depend on the tutor's mental arithmetic: a model only TRANSCRIBES what
+// the student claimed into a LaTeX equality (an easy, reliable job), and the arithmetic itself is evaluated in code
+// (boardMath.boardLineIsWrong). Only runs when the student made a numeric claim AND the tutor agreed with it.
+const TUTOR_CONFIRMS = /^\s*(yes|yep|yeah|exactly|correct|right|that'?s (right|correct|it|good)|spot on|perfect|great|good|nice|that works|precisely|absolutely|you'?re right)\b/i;
+const MATHISH = /\d|\b(over|times|plus|minus|squared|cubed|root|divided|equals|point|half|third|quarter)\b/i;
+
+/** Pure: does this finished exchange end with the tutor agreeing to a numeric claim by the student? Exported for tests. */
+export function confirmedClaimIn(exchange: string): { student: string; tutor: string } | null {
+  const lines = String(exchange || "").split("\n").map((l) => l.trim()).filter(Boolean);
+  for (let i = lines.length - 2; i >= 0; i--) {
+    if (!/^Student:/i.test(lines[i])) continue;
+    const student = lines[i].replace(/^Student:\s*/i, "");
+    const next = lines.slice(i + 1).find((l) => /^Tutor:/i.test(l));
+    if (!next) return null;
+    const tutor = next.replace(/^Tutor:\s*/i, "");
+    return MATHISH.test(student) && TUTOR_CONFIRMS.test(tutor) ? { student, tutor } : null;
+  }
+  return null;
+}
+
+/** The student claims (as numeric LaTeX equalities) that are arithmetically false although the tutor agreed. [] when fine or unreadable. */
+export async function checkStudentClaims(exchange: string, tokens: { in: number; out: number; cachedIn: number }): Promise<string[]> {
+  const hit = confirmedClaimIn(exchange);
+  if (!hit) return [];
+  try {
+    const res = await createTutorChat({
+      max_tokens: 400, temperature: 0, response_format: { type: "json_object" },
+      messages: [
+        { role: "system", content: `You transcribe, you never solve or correct. Given one sentence a student said aloud in a maths lesson, write each numeric claim they made as a LaTeX equality using numbers only (fractions, roots, powers, products), EXACTLY as they stated it, even if it is wrong. Skip anything with a variable or letter, anything that is not a claim, and anything you are unsure they said. Return JSON {"claims":["\\sqrt{\\frac{72}{56}} = \\sqrt{\\frac{9}{14}}"]} with at most 3 claims, or {"claims":[]}. Write every LaTeX backslash twice.` },
+        { role: "user", content: `Student said: ${hit.student.slice(0, 600)}` },
+      ],
+    }, true);
+    const u = usageOf(res); tokens.in += u.in; tokens.out += u.out; tokens.cachedIn += u.cachedIn;
+    const parsed: any = extractJsonObject(String(res?.choices?.[0]?.message?.content || ""));
+    const claims: string[] = Array.isArray(parsed?.claims) ? parsed.claims.filter((c: unknown) => typeof c === "string").slice(0, 3) : [];
+    return claims.filter((c) => boardLineIsWrong(c));
+  } catch { return []; }
+}
+
 /** Someone mentioned graphing, plotting, a curve, a shape or a diagram (or the tutor offered to graph it): a figure belongs on the board. Pure. */
 export function wantsPicture(exchange: string): boolean {
   return /\b(?:graph(?:ing|ed)?|plot(?:ting|ted)?|sketch|draw(?:ing)?|curve|parabola|diagram|picture|visuali[sz]e|number line|timeline|triangle|circle|cycle|flow ?chart)\b/i.test(exchange);
@@ -87,7 +128,9 @@ export function tutorExplained(exchange: string): boolean {
   return /\b(?:for example|for instance|means|is the (?:opposite|inverse|same)|opposite of|equals?|is called|defined as|the rule|formula|because|so that|therefore|works like|think of)\b/i.test(tutor) && (/\d|\$|=|\bsquared|\bpower\b|\bbase\b|\bderivative\b|\bintegral\b/i.test(tutor) || tutor.split(/\s+/).length > 30);
 }
 
-export async function writeBoard(input: { exchange: string; board: BoardEntry[]; subject?: string; history?: string; language?: string }, tokens: { in: number; out: number; cachedIn: number }): Promise<{ board: BoardEntry[]; dropped: string[]; concepts: any[] }> {
+export async function writeBoard(input: { exchange: string; board: BoardEntry[]; subject?: string; history?: string; language?: string }, tokens: { in: number; out: number; cachedIn: number }): Promise<{ board: BoardEntry[]; dropped: string[]; concepts: any[]; flags: string[] }> {
+  // Runs alongside the board call, so it adds no waiting: wrong numeric claims the tutor just agreed to (see checkStudentClaims).
+  const flagsP = checkStudentClaims(input.exchange, tokens).catch((): string[] => []);
   const canDraw = true; // Unlimited visual artifact capabilities across all subjects
   const system = BOARD_WRITER_PROMPT + (input.language ? `\n\nLANGUAGE: the student works in ${input.language}. Write every board line, heading, option and label in ${input.language} (maths stays LaTeX). Op names and kinds stay as specified.` : "") + (canDraw ? DRAW_REFERENCE : "") + `\n\nTHE BOARD (margin numbers #n are what you point at)${boardSurfaceBlock(input.board, []) || ": empty."}`;
   // The tutor's closing question is still UNANSWERED: it is shown to the writer separately, so the working for it is never mistaken for something the student reached.
@@ -136,5 +179,5 @@ export async function writeBoard(input: { exchange: string; board: BoardEntry[];
     if (second.board.length) { const all = [...out.board, ...second.board]; out = { board: [...all.filter((e) => e.kind === "focus"), ...all.filter((e) => e.kind !== "focus")], dropped: out.dropped, concepts: out.concepts.length ? out.concepts : second.concepts }; }
     else console.warn(`[live] board writer still wrote nothing (${(second.dropped.length ? second.dropped : out.dropped).slice(0, 2).join("; ") || "no ops"})`);
   }
-  return out;
+  return { ...out, flags: await flagsP };
 }

@@ -304,7 +304,7 @@ export const api = {
   /** A short-lived credential for the live voice (Gemini Live) plus the tutor's instructions with what Otto knows about the student. 503/502 means live voice is unavailable: the classic voice takes over. */
   liveToken: (body: { lang?: string; subject?: string; pastSessions?: unknown[]; resuming?: boolean; resumeTail?: string[] }): Promise<{ provider?: "gemini" | "openai"; token: string; model: string; models?: string[]; instructions: string; providers?: Array<{ provider: "gemini" | "openai"; token: string; model: string; models?: string[]; instructions: string }> }> => post("/api/tutor/live/token", body),
   /** After each spoken exchange: what should go on the paper (entries to merge into the board). */
-  liveBoard: (exchange: string, board: unknown[], subject?: string, history?: string, lang?: string): Promise<{ board: any[] }> => post("/api/tutor/live/board", { exchange, board, subject, history, lang }),
+  liveBoard: (exchange: string, board: unknown[], subject?: string, history?: string, lang?: string): Promise<{ board: any[]; flags?: string[] }> => post("/api/tutor/live/board", { exchange, board, subject, history, lang }),
   readWhiteboard: (image: string, context?: string): Promise<{ description: string }> => post("/api/tutor/read-whiteboard", { image, context }),
   uploadCoursework: (body: { subject: string; name: string; text: string; pages: number; totalPages?: number; truncated?: boolean }): Promise<{ doc: CourseworkDoc; tasks: { id: string; title: string }[]; profile: Profile; aiSummarized: boolean }> =>
     post("/api/coursework", body).then((r: any) => ({ ...r, profile: normalizeProfile(r.profile) })),

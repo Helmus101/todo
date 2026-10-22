@@ -23,6 +23,7 @@ import { useGeminiLive } from "./live/useGeminiLive.ts";
 import { exchangeText } from "../../shared/liveTutor.ts";
 import { toSpeakableText } from "../voice/useSpeechSynthesis.ts";
 import { buttonMessage, deviceStateOf } from "../../shared/deviceProtocol.ts";
+import { EXPLAIN_NOW_NOTE, isOnlyAQuestion, nextStuckCount } from "../../shared/stuck.ts";
 import { PageTour } from "../PageTour.tsx";
 import { TOURS } from "../tours.ts";
 import { COMMON_SUBJECTS } from "../../shared/coursework.ts";
@@ -473,6 +474,8 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
   sendRef.current = send;
   // The optional USB companion (Arduino): its buttons are the same asks the student could type, and its lights follow the tutor's state.
   const sendingRef = useRef(false);
+  const stuckRef = useRef(0); // consecutive "I don't know" turns from the student (shared/stuck.ts)
+  const flaggedClaimsRef = useRef<Set<string>>(new Set()); // numeric claims already corrected with the voice, so a note is sent once
   sendingRef.current = sending;
   // LIVE VOICE (Gemini Live): the voice model only talks; every thought goes to Otto's engine through `ask`, and what Otto answers is
   // what it says. If live voice can't start (no key on the server, daily limit, blocked mic) the classic voice dock takes over.
@@ -492,6 +495,10 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
     const t = taskRef.current;
     if (!t || !text.trim()) return;
     turnsRef.current.push({ who, text });
+    // Backstop for "two failed tries means explain": after two "I don't know" turns, if the tutor still only asks a guiding
+    // question, nudge it (privately) to explain. Sent once per streak.
+    if (who === "you") stuckRef.current = nextStuckCount(stuckRef.current, text);
+    else if (stuckRef.current >= 2 && isOnlyAQuestion(text) && liveRef.current.status === "live") { stuckRef.current = 0; liveRef.current.sendText(EXPLAIN_NOW_NOTE); }
     const chat = setLocalChat(t.id, [...(t.chat || []), { role: who === "you" ? "user" : "assistant", text, at: new Date().toISOString() } as any], userId);
     taskRef.current = { ...t, chat };
     setTask((prev) => (prev ? { ...prev, chat } : prev));
@@ -511,6 +518,13 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
         // A slow board call must never hold up the ones behind it: after 40 s it is given up on.
         const r = await Promise.race([api.liveBoard(exchangeText(turns), lean, t.sourceSubject, exchangeText((t.chat || []).slice(-14, Math.max(0, (t.chat || []).length - turns.length)).map((m) => ({ who: m.role === "user" ? "you" as const : "otto" as const, text: String(m.text || "").slice(0, 400) }))), getLanguage()), new Promise<{ board: any[] }>((_, rej) => setTimeout(() => rej(new Error("board timeout")), 40_000))]);
         setBoardNote(null);
+        // Second opinion: the tutor just agreed to a numeric step that does not hold (checked in code). Tell it privately so it
+        // walks the agreement back, once per claim.
+        for (const claim of (("flags" in r && r.flags) || []).slice(0, 2)) {
+          if (flaggedClaimsRef.current.has(claim) || liveRef.current.status !== "live") continue;
+          flaggedClaimsRef.current.add(claim);
+          liveRef.current.sendText(`(Private note for you, not from the student: you just agreed with a step that is wrong. As numbers it does not hold: ${claim}. Say plainly that you were wrong to agree, and ask them to recheck that exact step. Do not give them the corrected value.)`);
+        }
         if (!r.board?.length) return;
         const cur = sessionTask();
         if (!cur) return;
