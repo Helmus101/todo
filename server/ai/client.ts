@@ -148,8 +148,12 @@ export async function retryRequest<T>(fn: () => Promise<T>, retries = 3, delayMs
     } catch (e: any) {
       lastErr = e;
       if (!isTransient(e) || i === retries - 1) throw e;
-      console.warn(`[ai] request failed (${e?.message || e}), retrying in ${delayMs}ms... (attempt ${i + 1}/${retries})`);
-      await new Promise((resolve) => setTimeout(resolve, delayMs));
+      // Honour the provider's own Retry-After (capped), else back off with jitter so many instances hitting one provider-wide 429 don't retry in lockstep.
+      const hdr = e?.headers?.get?.("retry-after") ?? e?.headers?.["retry-after"];
+      const asked = Number(hdr) > 0 ? Math.min(Number(hdr) * 1000, 8000) : 0;
+      const wait = asked || Math.round(delayMs * (0.6 + Math.random() * 0.8));
+      console.warn(`[ai] request failed (${e?.message || e}), retrying in ${wait}ms... (attempt ${i + 1}/${retries})`);
+      await new Promise((resolve) => setTimeout(resolve, wait));
       delayMs *= 2;
     }
   }
@@ -223,7 +227,29 @@ const geminiBreaker = { fails: 0, openUntil: 0 };
  *  quota, an unsupported param) hands the SAME turn to the next provider instead of failing the reply —
  *  which is what makes "Gemini, falling back to DeepSeek" real rather than nominal. Usage/cost accounting
  *  downstream is provider-agnostic (usageOf reads the OpenAI-shaped fields both return). */
+// A per-instance cap on simultaneous tutor provider calls: a burst of students queues briefly here instead of all hitting the provider at once
+// (and all failing together on its rate limit). A caller whose deadline passes while waiting gets a timeout, not an unbounded wait.
+const TUTOR_MAX_CONCURRENT = Math.max(1, Number(process.env.TUTOR_MAX_CONCURRENT) || 24);
+let tutorActive = 0;
+const tutorWaiters: (() => void)[] = [];
+async function withTutorSlot<T>(deadline: number | undefined, fn: () => Promise<T>): Promise<T> {
+  if (tutorActive >= TUTOR_MAX_CONCURRENT) {
+    await new Promise<void>((resolve, reject) => {
+      const t = deadline ? setTimeout(() => { const i = tutorWaiters.indexOf(go); if (i >= 0) tutorWaiters.splice(i, 1); reject(Object.assign(new Error("Request timed out waiting for a free model slot."), { code: "ETIMEDOUT" })); }, Math.max(0, deadline - Date.now())) : undefined;
+      const go = () => { if (t) clearTimeout(t); resolve(); };
+      tutorWaiters.push(go);
+    });
+  }
+  tutorActive++;
+  try { return await fn(); } finally { tutorActive--; tutorWaiters.shift()?.(); }
+}
+export const tutorLoad = () => ({ active: tutorActive, waiting: tutorWaiters.length });
+
 export async function createTutorChat(params: any, fast: boolean, opts?: { deadline?: number; deepseekOnly?: boolean }): Promise<any> {
+  return withTutorSlot(opts?.deadline, () => createTutorChatInner(params, fast, opts));
+}
+
+async function createTutorChatInner(params: any, fast: boolean, opts?: { deadline?: number; deepseekOnly?: boolean }): Promise<any> {
   // `deepseekOnly`: everything that is NOT a live tutor session (task chat, UI translation) stays on DeepSeek;
   // Gemini is only for the tutor.
   const all = tutorProviders();

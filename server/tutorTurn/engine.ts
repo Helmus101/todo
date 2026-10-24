@@ -1,5 +1,5 @@
-// ONE TUTOR TURN: the prompt (who Otto is + the board as it stands) and the conversation go to the model once; it answers
-// {speech, board}; the board ops become board entries (apply.ts). No checks, no repair calls, no fixed replies: every word
+// ONE TUTOR TURN (plus rare, time-boxed extras: a working check, a JSON re-ask, a board nudge): the prompt (who Otto is + the board as it stands) and the conversation go to the model once; it answers
+// {speech, board}; the board ops become board entries (apply.ts). No fixed replies and no repair of the model's wording: every word
 // the student reads is the model's own. The only code between is removing what must never be shown (empty replies, tool-call text).
 import type { BoardEntry, TaskObjective, TaskProblem } from "../../shared/types.ts";
 import { normalizeTurn, extractJsonObject, salvageTurn, type TurnOutput } from "../../shared/tutorTurn.ts";
@@ -17,10 +17,12 @@ import { makeBoardEntry } from "../claude.ts";
 const MAX_HISTORY = 14;
 /** A turn is a few sentences plus a few board ops; this caps a runaway reply (and its cost), not a normal one. */
 const TURN_MAX_TOKENS = 2500;
-const TURN_TIMEOUT_MS = 60_000;
+/** One deadline for the WHOLE turn (check + reply + any retries), not per call: a turn can never outlive the one-turn-at-a-time lock (110 s)
+ *  or a serverless function. After the soft budget only the reply itself is attempted — no extra checks, JSON re-asks or board nudges. */
+const TURN_HARD_MS = Number(process.env.TUTOR_TURN_HARD_MS) || 55_000;
+const TURN_SOFT_MS = Number(process.env.TUTOR_TURN_SOFT_MS) || 30_000;
 
-async function callTurn(messages: any[], tokens: TutorTurnResult["tokens"]): Promise<{ turn: TurnOutput | null; raw: string }> {
-  const deadline = Date.now() + TURN_TIMEOUT_MS;
+async function callTurn(messages: any[], tokens: TutorTurnResult["tokens"], deadline: number): Promise<{ turn: TurnOutput | null; raw: string }> {
   const ask = (json: boolean) => retryRequest(() => createTutorChat({ max_tokens: TURN_MAX_TOKENS, temperature: 0.5, messages, ...(json ? { response_format: { type: "json_object" } } : {}) }, true, { deadline }), 2, 400);
   let res: any;
   // JSON mode first; a provider that rejects the parameter gets the same request without it (the prompt asks for JSON anyway).
@@ -47,12 +49,14 @@ export function earlierInSitting(history: { role: "user" | "assistant"; text: st
 
 export async function runTutorTurn(input: TutorTurnInput): Promise<TutorTurnResult & { turn?: { speech: string[]; ms: number } }> {
   const t0 = Date.now();
+  const deadline = t0 + TURN_HARD_MS;
+  const soft = () => Date.now() < t0 + TURN_SOFT_MS;
   const { message, history, board, problems, context } = input;
   const result: TutorTurnResult & { turn?: { speech: string[]; ms: number } } = { reply: "", board: [], problems: [], tokens: { in: 0, out: 0, cachedIn: 0 }, guardrailTripped: false };
 
   const spokenRepair: SpokenRepair | null = input.spoken ? repairSpokenMath(message, spokenContextFrom([context.subject || "", ...board.map((b) => b.text || "")])) : null;
   // Real working in the message: a second reader recomputes it before the tutor answers (so it neither praises a slip nor asks them to redo a step).
-  const checked = carriesWorking(message) ? await checkWork(message, board.map((b) => b.text || "").filter(Boolean), result.tokens) : null;
+  const checked = carriesWorking(message) && soft() ? await checkWork(message, board.map((b) => b.text || "").filter(Boolean), result.tokens) : null;
   const canDraw = true; // Unlimited visual artifact drawing capabilities across all subjects
   const system = TURN_PROMPT
     + (canDraw ? DRAW_REFERENCE : "")
@@ -73,8 +77,8 @@ export async function runTutorTurn(input: TutorTurnInput): Promise<TutorTurnResu
 
   let turn: TurnOutput | null = null, raw = "";
   try {
-    ({ turn, raw } = await callTurn(messages, result.tokens));
-    if (!turn) ({ turn } = await callTurn([...messages, { role: "assistant", content: raw.slice(0, 2000) }, { role: "user", content: "(That wasn't the JSON object. Send the same turn again as ONLY the JSON object described above.)" }], result.tokens));
+    ({ turn, raw } = await callTurn(messages, result.tokens, deadline));
+    if (!turn && soft()) ({ turn } = await callTurn([...messages, { role: "assistant", content: raw.slice(0, 2000) }, { role: "user", content: "(That wasn't the JSON object. Send the same turn again as ONLY the JSON object described above.)" }], result.tokens, deadline));
   } catch (e: any) {
     result.errorKind = classifyProviderError(e);
     console.error(`[tutor] model request failed: ${result.errorKind}${e?.status ? ` ${e.status}` : ""}`); // (kind and status only: provider error bodies can echo prompt text)
@@ -90,10 +94,12 @@ export async function runTutorTurn(input: TutorTurnInput): Promise<TutorTurnResu
   const askedForBoard = ASKS_BOARD.test(message);
   const mathsFromStudent = /[\d=]/.test(message) && message.length > 2;
   let applied = applyOps(cur.board, { board, problems, theirWords: [message] });
-  for (let attempt = 0; attempt < 2 && !applied.board.length && (askedForBoard || claimsWriting(cur) || mathsFromStudent); attempt++) {
+  // Ops the app dropped only because the line is ALREADY on the board mean the board is covered: no nudge (it would cost two more model calls for nothing).
+  const coveredAlready = (a: { dropped: string[] }) => a.dropped.length > 0 && a.dropped.every((d) => /already on the board|already marked|already|near-duplicate/.test(d));
+  for (let attempt = 0; attempt < 2 && soft() && !applied.board.length && !coveredAlready(applied) && (askedForBoard || claimsWriting(cur) || mathsFromStudent); attempt++) {
     const why = applied.dropped.length ? ` The app rejected these ops: ${applied.dropped.slice(0, 4).join("; ")}.` : "";
     const ask = askedForBoard ? " They asked for it on the board: write the most recent equation or step you and they reached, in full, as a step op." : "";
-    const again: { turn: TurnOutput | null } | null = await callTurn([...messages, { role: "assistant", content: JSON.stringify(cur) }, { role: "user", content: `(Nothing new reached the board.${why}${ask} Check: a step they reached, the rule or reason, a figure or table that would help, a mark on a mistake. Anything you say you wrote must be written now. Send the same turn again with the board ops that belong, each with its cue, as ONLY the JSON object. If the line is already on the board, mark it instead and say so.)` }], result.tokens).catch(() => null);
+    const again: { turn: TurnOutput | null } | null = await callTurn([...messages, { role: "assistant", content: JSON.stringify(cur) }, { role: "user", content: `(Nothing new reached the board.${why}${ask} Check: a step they reached, the rule or reason, a figure or table that would help, a mark on a mistake. Anything you say you wrote must be written now. Send the same turn again with the board ops that belong, each with its cue, as ONLY the JSON object. If the line is already on the board, mark it instead and say so.)` }], result.tokens, deadline).catch(() => null);
     if (!again?.turn) break;
     const next = applyOps(again.turn.board, { board, problems, theirWords: [message] });
     if (next.board.length) { cur = again.turn; applied = next; break; }
