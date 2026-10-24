@@ -28,7 +28,9 @@ export function registerAuthRoutes(app: express.Express): void {
     const challenge = createHash("sha256").update(verifier).digest("base64url");
     (req.session as any).googleVerifier = verifier;
     await saveSession(req);
-    res.redirect(googleAuthorizeUrl(`${publicBase(req)}/auth/google/callback`, challenge));
+    const redirectTo = `${publicBase(req)}/auth/google/callback`;
+    if (!PROD) console.log(`[auth] Google sign-in redirects back to ${redirectTo} — add this exact URL to Supabase → Authentication → URL Configuration → Redirect URLs (otherwise Supabase sends the browser to its Site URL).`);
+    res.redirect(googleAuthorizeUrl(redirectTo, challenge));
   }));
   app.get("/auth/google/callback", rateLimit(30, 60 * 60_000), ah(async (req, res) => {
     const code = typeof req.query.code === "string" ? req.query.code.slice(0, 400) : "";

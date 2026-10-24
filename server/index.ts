@@ -217,7 +217,10 @@ app.use(session({
 app.use(async (req, _res, next) => {
   try {
     if (req.session.user && (req.session.tasks === undefined || req.session.profile === undefined)) {
-      const st = await loadState(req.session.user);
+      // The task LIST must never come from a stale copy: another instance may have just marked a task done, and a read from this
+      // instance's 5-minute cache would show it open again ("it completes, then reopens"). The version check is ~120 bytes and
+      // only downloads the row when it really changed. Everything else keeps the cheap cached read.
+      const st = await loadState(req.session.user, req.method === "GET" && req.path === "/api/tasks" ? { bypassCache: true } : undefined);
       if (req.session.tasks === undefined) req.session.tasks = st.tasks;
       if (req.session.profile === undefined) req.session.profile = st.profile;
     }

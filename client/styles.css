@@ -5117,3 +5117,12 @@ html[data-i18n="loading"] body { opacity: 0; }
   input, select, textarea { font-size: 16px; }
   .live-bar { padding-bottom: calc(var(--space-3) + env(safe-area-inset-bottom)); }
 }
+
+/* "Continue with Google": the standard white button with the four-colour G, full width, same height as the primary button.
+   Deliberately not a .btn: the flat theme hides svgs inside .btn and makes every button transparent. */
+a.google-btn { display: flex; align-items: center; justify-content: center; gap: 10px; width: 100%; min-height: 48px; box-sizing: border-box; background: #fff; color: #1f1f1f; border: 1px solid #dadce0; border-radius: var(--radius, 10px); font-weight: 600; font-size: 15px; text-decoration: none; cursor: pointer; margin-top: var(--space-3, 12px); }
+a.google-btn:hover { background: #f8f9fa; border-color: #c6c9cc; }
+a.google-btn:focus-visible { outline: 2px solid var(--focus-ring, #1a73e8); outline-offset: 2px; }
+a.google-btn svg { display: block !important; flex: none; width: 18px; height: 18px; }
+.login-or { display: flex; align-items: center; gap: 12px; color: var(--ink-3, #888); font-size: 13px; margin: var(--space-3, 12px) 0 0; }
+.login-or::before, .login-or::after { content: ""; flex: 1; height: 1px; background: var(--line, #e4e0da); }

@@ -4,6 +4,13 @@ import { Analytics } from "@vercel/analytics/react";
 import * as Sentry from "@sentry/react";
 import { App } from "./App.tsx";
 import { startTranslator } from "./language.ts";
+
+// Google sign-in: if Supabase sends the browser back to the site root with its one-time code (its redirect list did not include
+// /auth/google/callback), hand the code to the real callback. The server checks it against this browser's own login attempt.
+try {
+  const q = new URLSearchParams(window.location.search);
+  if (window.location.pathname === "/" && /^[0-9a-f-]{36}$/i.test(q.get("code") || "")) window.location.replace(`/auth/google/callback?code=${q.get("code")}`);
+} catch { /* ignore */ }
 import "katex/dist/katex.min.css";
 // Fonts are served from our own origin (bundled by Vite), NOT from Google Fonts: loading them from fonts.googleapis.com
 // sends every visitor's IP address to Google before they have agreed to anything, which German and EU regulators

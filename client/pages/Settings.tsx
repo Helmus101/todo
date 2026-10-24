@@ -353,7 +353,7 @@ export function SettingsPage({ status, tasks, onSignOut, onChanged, onTasksChang
             <LanguagePicker />
           </label>
           {status.fullApp ? <label className="set-row">
-            <span className="set-text"><b>{"Pause Otto"}</b><span className="settings-hint">{"Stops all AI activity. Your tasks stay as they are."}</span></span>
+            <span className="set-text"><b>{"Pause Otto"}</b><span className="settings-hint">{"Stops the AI task work: sweeps, task preparation and auto-runs. The tutor keeps working, and your tasks stay as they are."}</span></span>
             <span className="switch"><input type="checkbox" checked={paused} onChange={(e) => {
               const v = e.target.checked;
               setPausedLocal(v);

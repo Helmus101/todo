@@ -31,7 +31,7 @@ import * as tasks from "../tasks.ts";
 import * as jobs from "../jobs.ts";
 import * as integrations from "../integrations.ts";
 import * as pronoteSvc from "../pronote.ts";
-import { M, PROD, ah, commit, dailyTurnCap, isPaused, mergeProfiles, mergeTasks, oneTurnAtATime, outgoingTasks, rateLimit, requireAuth, saveSession, scheduler, tasksPayload, toolsFor } from "../http.ts";
+import { M, PROD, ah, commit, dailyTurnCap, isPaused, isTutorBlocked, mergeProfiles, mergeTasks, oneTurnAtATime, outgoingTasks, rateLimit, requireAuth, saveSession, scheduler, tasksPayload, toolsFor } from "../http.ts";
 
 /** Response-only slimming of the task list (never persisted): a finished/dismissed tutor session keeps its
  *  whole chat + board + events in the account row, but the client keeps its own session history locally and
@@ -778,7 +778,8 @@ export function registerTaskRoutes(app: express.Express): void {
   });
 
   app.post("/api/tasks/:id/chat", requireAuth, rateLimit(10, 60_000), dailyTurnCap(), oneTurnAtATime, async (req, res) => {
-    if (isPaused(req)) { res.status(403).json({ error: "AI is paused — resume it in Settings to chat." }); return; }
+    // "Pause Otto" stops AI task work, not the tutor: a tutor turn (primer) is only held back by the weekly allowance.
+    if (req.body?.primer === true ? isTutorBlocked(req) : isPaused(req)) { res.status(403).json({ error: "AI is paused — resume it in Settings to chat." }); return; }
     if (!aiReady()) { res.status(503).json({ error: "AI isn't configured." }); return; }
     
     const message = String(req.body?.message || "").trim().slice(0, 2000);

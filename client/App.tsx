@@ -1148,7 +1148,7 @@ export function App() {
             <div className="intro paused-banner">
               <div className="intro-body">
                 <div className="intro-title">{"Otto is paused"}</div>
-                <p>{"Turn it back on in Settings whenever you're ready — nothing's been lost."}</p>
+                <p>{"Task AI is off; the tutor still works. Turn it back on in Settings whenever you're ready — nothing's been lost."}</p>
               </div>
               <button className="btn xs ghost" onClick={() => navigate("settings")}>{"Settings"}</button>
             </div>

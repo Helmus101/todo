@@ -6,7 +6,7 @@ import { parsePolicy, summarize as summarizePolicy } from "../tutorPolicy.ts";
 import { schoolRecordLine } from "../schoolRecord.ts";
 import { aiReady, visionReady, describeWhiteboard, describeUploadedPhoto, synthesizeSpeech, TTS_MAX_TEXT, tutorOpener } from "../claude.ts";
 import { recordEvent, loadBanditState, saveBanditState, saveTutorArchive, archiveEnabled, scrubArchiveText } from "../store.ts";
-import { M, ah, commit, dailyCap, isAdmin, isPaused, overWeeklyCap, rateLimit, requireAuth } from "../http.ts";
+import { M, ah, commit, dailyCap, isAdmin, isTutorBlocked, overWeeklyCap, rateLimit, requireAuth } from "../http.ts";
 import { backgroundBlock } from "../tutor.ts";
 import { selectJournal } from "../journal.ts";
 import { writeBoard } from "../tutorTurn/boardWriter.ts";
@@ -69,7 +69,7 @@ export function registerTutorRoutes(app: express.Express): void {
   // degrades to that line instead of an empty greeting — which is why a failure is a 502 the client quietly
   // ignores rather than an error the student sees.
   app.post("/api/tutor/opener", requireAuth, rateLimit(30, 60_000), ah(async (req, res) => {
-    if (isPaused(req)) { res.status(403).json({ error: "AI is paused — resume it in Settings to chat." }); return; }
+    if (isTutorBlocked(req)) { res.status(429).json({ error: "This week's AI allowance is used up. Ask for more usage and it comes back as soon as it's approved.", code: "weekly_cap" }); return; }
     if (!aiReady()) { res.status(503).json({ error: "AI isn't configured." }); return; }
     const subject = typeof req.body?.subject === "string" ? req.body.subject.trim().slice(0, 80) : "";
     // Client-controlled input, so every field is capped here (the prompt builder does no capping of its own).
@@ -106,7 +106,7 @@ export function registerTutorRoutes(app: express.Express): void {
   // student (profile, past sessions kept on their device, journal, school record), so the voice has Otto's memory. Capped per day.
   app.post("/api/tutor/live/token", requireAuth, rateLimit(6, 60_000), dailyCap("live", Number(process.env.TUTOR_DAILY_LIVE) || 20), ah(async (req, res) => {
     if (overWeeklyCap(req)) { res.status(429).json({ error: "This week's AI allowance is used up. Ask for more usage and it comes back as soon as it's approved.", code: "weekly_cap" }); return; }
-    if (isPaused(req)) { res.status(403).json({ error: "AI is paused — resume it in Settings to chat." }); return; }
+    if (isTutorBlocked(req)) { res.status(429).json({ error: "This week's AI allowance is used up. Ask for more usage and it comes back as soon as it's approved.", code: "weekly_cap" }); return; }
     const geminiKey = process.env.GEMINI_API_KEY;
     const openaiKey = process.env.OPENAI_API_KEY;
     if (!geminiKey && !openaiKey) { res.status(503).json({ error: "Live voice isn't set up on this server.", code: "live_unavailable" }); return; }
@@ -200,7 +200,7 @@ export function registerTutorRoutes(app: express.Express): void {
   // what goes on the paper (the problem, the student's correct steps as Otto's own lines, a takeaway of what was explained, figures).
   app.post("/api/tutor/live/board", requireAuth, rateLimit(30, 60_000), dailyCap("live-board", Number(process.env.TUTOR_DAILY_LIVE_BOARD) || 400), ah(async (req, res) => {
     if (overWeeklyCap(req)) { res.status(429).json({ error: "This week's AI allowance is used up. Ask for more usage and it comes back as soon as it's approved.", code: "weekly_cap" }); return; }
-    if (isPaused(req)) { res.status(403).json({ error: "AI is paused — resume it in Settings to chat." }); return; }
+    if (isTutorBlocked(req)) { res.status(429).json({ error: "This week's AI allowance is used up. Ask for more usage and it comes back as soon as it's approved.", code: "weekly_cap" }); return; }
     if (!aiReady()) { res.status(503).json({ error: "AI isn't configured." }); return; }
     const exchange = typeof req.body?.exchange === "string" ? req.body.exchange.slice(0, 4000) : "";
     if (!exchange.trim()) { res.json({ board: [] }); return; }
@@ -264,7 +264,7 @@ export function registerTutorRoutes(app: express.Express): void {
 
   app.post("/api/tutor/read-whiteboard", requireAuth, rateLimit(15, 60_000), express.json({ limit: "8mb" }), ah(async (req, res) => {
     if (!visionReady()) { res.status(503).json({ error: "Whiteboard reading isn't configured on this server." }); return; }
-    if (isPaused(req)) { res.status(403).json({ error: "AI is paused — resume it in Settings to continue." }); return; }
+    if (isTutorBlocked(req)) { res.status(429).json({ error: "This week's AI allowance is used up. Ask for more usage and it comes back as soon as it's approved.", code: "weekly_cap" }); return; }
     const image = String(req.body?.image || "");
     if (!image) { res.status(400).json({ error: "No drawing received." }); return; }
     // The vision helper composes its own (diagnostic, sometimes upstream-detail-bearing) message, so it
@@ -282,7 +282,7 @@ export function registerTutorRoutes(app: express.Express): void {
   // specifically for the case neither of those cover: a phone-camera photo with no text layer at all.
   app.post("/api/tutor/read-photo", requireAuth, rateLimit(15, 60_000), express.json({ limit: "8mb" }), ah(async (req, res) => {
     if (!visionReady()) { res.status(503).json({ error: "Image reading isn't configured on this server." }); return; }
-    if (isPaused(req)) { res.status(403).json({ error: "AI is paused — resume it in Settings to continue." }); return; }
+    if (isTutorBlocked(req)) { res.status(429).json({ error: "This week's AI allowance is used up. Ask for more usage and it comes back as soon as it's approved.", code: "weekly_cap" }); return; }
     const image = String(req.body?.image || "");
     if (!image) { res.status(400).json({ error: "No image received." }); return; }
     const r = await describeUploadedPhoto(image, (fr, en) => en);

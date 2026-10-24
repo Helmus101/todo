@@ -2252,7 +2252,8 @@ section("Weekly AI allowance: $5 a week, extra only by grant, admin-only grants"
   check("every AI route honours the cap through isPaused, and the admin is exempt", /isPaused = \(req[^)]*\)[^=]*=> !!req\.session\.profile\?\.paused \|\| overWeeklyCap\(req\)/.test(http) && /overWeeklyCap = \(req[^)]*\)[^=]*=> !isAdmin\(req\) &&/.test(http));
   check("only tjong.willem@gmail.com is admin by default", /ADMIN_EMAILS \|\| "tjong\.willem@gmail\.com"/.test(http));
   check("granting and listing requests are admin-only, and a grant clears the request", /"\/api\/admin\/grant-usage"[\s\S]{0,200}if \(!isAdmin\(req\)\)/.test(prof) && /"\/api\/admin\/usage-requests"[\s\S]{0,200}if \(!isAdmin\(req\)\)/.test(prof));
-  check("the voice token and board routes stop at the cap with a clear message", (tut.match(/code: "weekly_cap"/g) || []).length === 2);
+  check("the voice token and board routes stop at the cap with a clear message", (tut.match(/code: "weekly_cap"/g) || []).length >= 2 && !/isPaused\(req\)/.test(tut));
+  check("Pause Otto stops AI task work but not the tutor: tutor routes only stop at the weekly allowance", /isTutorBlocked = \(req: express\.Request\): boolean => overWeeklyCap\(req\)/.test(readFileSync(new URL("../server/http.ts", import.meta.url), "utf8")) && /req\.body\?\.primer === true \? isTutorBlocked\(req\) : isPaused\(req\)/.test(readFileSync(new URL("../server/routes/tasks.ts", import.meta.url), "utf8")));
 }
 
 section("The voice tutor is Socratic: the rule is in the prompt, nothing contradicts it, and the board never gives the answer away");
@@ -7180,6 +7181,7 @@ section("Safety, prompt-injection hardening and metering (unit + source pins)");
   check("voice is metered by the server's clock (liveOpenAt) and an unreported call is charged at the next mint", /liveOpenAt/.test(tut) && /Math\.min\(35 \* 60/.test(tut));
   check("deleting an account erases the tutor archive; the archive is keyed (HMAC) and off without a pepper", /deleteTutorArchive\(email\)/.test(stor) && /createHmac\("sha256", process\.env\.ARCHIVE_PEPPER/.test(stor) && /archiveEnabled/.test(tut));
   check("the rate limiter uses one atomic database function when it exists, and retries a failed probe later", /rpc\("otto_rate_limit"/.test(stor) && /ratelimitsDownAt/.test(stor) && /otto_rate_limit/.test(rdx("../supabase.sql")));
+  check("the task list is never read from a stale per-instance copy (a finished task must not reopen)", /req\.path === "\/api\/tasks" \? \{ bypassCache: true \}/.test(rdx("../server/index.ts")));
   check("the cron secret is compared in constant time", /timingSafeEqual\(want, got\)/.test(rdx("../server/routes/tasks.ts")));
   check("Google sign-in goes through Supabase with PKCE and only trusts a confirmed email", /\/auth\/google\/callback/.test(auth) && /code_challenge_method/.test(stor) && /email_confirmed_at/.test(stor) && /href="\/auth\/google"/.test(rdx("../client/pages/Login.tsx")));
 }

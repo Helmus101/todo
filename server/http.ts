@@ -327,6 +327,9 @@ export function M(req: express.Request, fr: string, en: string): string { return
 
 // "Pause all AI usage" — the ONE toggle that stops generation and task runs. Enforced server-side
 // (isPaused, used below) so it holds even if a stale client tab tries to call one of those routes anyway.
+/** The "Pause Otto" switch stops the AI TASK work (sweeps, task preparation, auto-runs, task chats). The tutor is not part of it: a student
+ *  who paused task AI can still study. The tutor is only stopped by the weekly allowance being used up. */
+export const isTutorBlocked = (req: express.Request): boolean => overWeeklyCap(req);
 export const isPaused = (req: express.Request): boolean => !!req.session.profile?.paused || overWeeklyCap(req);
 /** This week's AI allowance (default $5, WEEKLY_AI_CAP_USD overrides, plus whatever the admin granted) is used up. Every AI route refuses through isPaused. */
 export const weeklyCap = (): number => { const n = Number(process.env.WEEKLY_AI_CAP_USD); return Number.isFinite(n) && n > 0 ? n : WEEKLY_CAP_USD; };
