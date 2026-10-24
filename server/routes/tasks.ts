@@ -3,20 +3,16 @@ import "../env.ts";
 import { reportError } from "../sentry.ts";
 import express from "express";
 import { randomUUID, createHash, timingSafeEqual } from "node:crypto";
-import { gapTarget, verifyStepAgainstGap } from "../../shared/mathEquiv.ts";
+import { gapTarget } from "../../shared/mathEquiv.ts";
 import { normalizeTable, normalizeSource } from "../../shared/boardTable.ts";
 import { gradeGapAnswer, gradeExerciseAnswer, verifyPolynomialDivision } from "../../shared/exerciseVerification.ts";
-import { repairSpokenMath, spokenContextFrom } from "../../shared/spokenMath.ts";
 import { sealOutgoing, unsealKey } from "../tutorTurn/keySeal.ts";
 import { checkProblemAnswer } from "../tutorTurn/problemCheck.ts";
-import { nextTeachingState, learningPrefsFrom, mergePrefs, evidenceKindFor, reachedSolutionSteps, resolveGapKey, rehydrateProblemKey } from "../tutor.ts";
-import { solveProblem, focusKeyOf, isNewProblem } from "../solver.ts";
-import { studentProblemStatement } from "../tutorAdapt.ts";
-import { recordConceptEvidence, normalizeStudentModel, emptyStudentModel } from "../studentModel.ts";
+import { resolveGapKey, rehydrateProblemKey } from "../tutor.ts";
 import { detectSubject, computedGapKey, solvedGapKey } from "../tutor.ts";
 import { runTutorTurn } from "../tutorTurn/engine.ts";
 import { researchTopic, worthGating } from "../tutorTurn/research.ts";
-import { logAssistance, settleRetest, buildRecap, dueRetests, sessionMemoryNote } from "../tutorTurn/ledger.ts";
+import { buildRecap, dueRetests, sessionMemoryNote } from "../tutorTurn/ledger.ts";
 import { selectJournal } from "../journal.ts";
 import type { TutorOpenerMemory } from "../claude.ts";
 import type { WebTask, Profile, BoardEntry, TaskObjective, TaskProblem } from "../../shared/types.ts";
@@ -31,7 +27,7 @@ import * as tasks from "../tasks.ts";
 import * as jobs from "../jobs.ts";
 import * as integrations from "../integrations.ts";
 import * as pronoteSvc from "../pronote.ts";
-import { M, PROD, ah, commit, dailyTurnCap, isPaused, isTutorBlocked, mergeProfiles, mergeTasks, oneTurnAtATime, outgoingTasks, rateLimit, requireAuth, saveSession, scheduler, tasksPayload, toolsFor } from "../http.ts";
+import { PROD, ah, commit, dailyTurnCap, isPaused, isTutorBlocked, mergeProfiles, mergeTasks, oneTurnAtATime, outgoingTasks, rateLimit, requireAuth, saveSession, scheduler, tasksPayload, toolsFor } from "../http.ts";
 
 /** Response-only slimming of the task list (never persisted): a finished/dismissed tutor session keeps its
  *  whole chat + board + events in the account row, but the client keeps its own session history locally and
@@ -156,6 +152,51 @@ function memoryFromBody(raw: unknown): TutorOpenerMemory[] {
   return raw.slice(0, 3).filter((m) => m && typeof m === "object").map((m: any) => ({ when: str(m.when, 40), subject: str(m.subject, 60), lines: strs(m.lines), asked: strs(m.asked), done: strs(m.done) }));
 }
 
+/** The exercises the browser sent back with this turn, with their answer keys restored: from the server's own stored copy when it has one,
+ *  else from the sealed key token the browser holds (tutor problems are local-only; the browser never sees a key in the clear). Older
+ *  boards only; the tutor no longer creates exercises. */
+function openExercises(req: express.Request, t: WebTask): TaskProblem[] {
+  const sent = Array.isArray(req.body?.problems) ? req.body.problems : [];
+  return sent
+    .filter((p: any) => p && typeof p.question === "string" && p.question.trim())
+    .slice(-12)
+    .map((p: any) => {
+      const known = (t.problems || []).find((x) => x.question === p.question);
+      const opened = typeof p.keyToken === "string" ? unsealKey(p.keyToken, String(req.session.user), String(p.id || "")) : null;
+      return rehydrateProblemKey(opened ? { ...p, answer: opened.answer, value: opened.value, correct: opened.correct, rubric: opened.rubric, why: opened.why } : p, known);
+    });
+}
+
+/** Research at the start of a sitting (tutorTurn/research.ts): once, on one of the first student messages, and only when the gate says the
+ *  topic is one a tutor may not know. The result is saved on the teaching state. Returns true when new research was just done this turn. */
+async function researchIfUnfamiliar(t: WebTask, c: { message: string; history: { role: string; text: string }[]; profile: Profile }): Promise<boolean> {
+  const studentMessages = c.history.filter((h) => h.role === "user").length;
+  const state = t.tutorState;
+  if (state?.research || state?.researchTried || studentMessages >= 3 || !worthGating(c.message) || process.env.TUTOR_RESEARCH === "off") return false;
+  const tokens = { in: 0, out: 0, cachedIn: 0 };
+  const { research, needed, decided } = await researchTopic({ message: c.message, subject: t.sourceSubject, tokens });
+  addUsage(c.profile, tokens, "chat");
+  // "Tried" is remembered once the gate answered or research ran. A provider hiccup (no verdict) tries again on the next message, but not past the second.
+  const settled = !!research || needed || decided || studentMessages >= 2;
+  t.tutorState = { helpLevel: 0, stuckStreak: 0, turns: 0, ...(state || {}), ...(research ? { research } : {}), ...(settled ? { researchTried: true } : {}) };
+  return !!research;
+}
+
+/** The model could not produce a reply: a provider problem (down, out of credit, rate-limited, too slow) is "try again shortly" (503 + Retry-After), anything else a 500. */
+function replyWithModelFailure(req: express.Request, res: express.Response, out: { error?: boolean; errorKind?: string }): void {
+  void recordMetric(req.session.user!, "chat_error", 1);
+  const kind = String(out.errorKind || "other");
+  if (out.error && kind !== "other") {
+    void recordMetric(req.session.user!, `chat_provider_${kind}`, 1);
+    if (kind === "balance" || kind === "auth") reportError("tutor-provider", new Error(`tutor provider ${kind}`), { kind });
+    const wait = kind === "rate" ? 20 : 30;
+    res.setHeader("Retry-After", String(wait));
+    res.status(503).json({ error: "Otto is briefly unavailable — your message is kept, so try again in a minute (or keep working on the board meanwhile).", code: "tutor_unavailable", retryAfter: wait });
+    return;
+  }
+  res.status(500).json({ error: "Otto couldn't reply just now — try again in a moment." });
+}
+
 /** One tutor turn: what the student said → server/tutor.ts → the board, problems and reply, persisted on the
  *  session's task. The step verdict (code-checked against the open gap) and the problems' answer keys come
  *  from the SERVER's own copy of the board, never from the request. */
@@ -164,39 +205,14 @@ async function tutorTurn(
   c: { message: string; history: { role: "user" | "assistant"; text: string }[]; currentBoard: BoardEntry[]; currentObjectives: TaskObjective[]; recentJournal: { date: string; text: string; subjects?: string[] }[]; journalMeta?: { total: number; subjects: Record<string, number> }; profile: Profile },
 ): Promise<void> {
   const { message, history, currentBoard, currentObjectives, profile } = c;
-  const turnStart = new Date().toISOString(); // the student's verified step is stamped here, so it sits ABOVE Otto's new lines
   // The session opens with one open question — no subject picker — so the subject is read from what they say.
   if (!t.sourceSubject) {
     const subject = detectSubject([message, ...history.filter((h) => h.role === "user").map((h) => h.text)].join("\n"));
     if (subject) { t.sourceSubject = subject; t.title = `${subject} session`; }
   }
-  // Problems on the board WITH their answer keys (the client only sends question/options/solved).
-  const sent = Array.isArray(req.body?.problems) ? req.body.problems : [];
-  const problems: TaskProblem[] = sent
-    .filter((p: any) => p && typeof p.question === "string" && p.question.trim())
-    .slice(-12)
-    .map((p: any) => {
-      // Answer keys for the exercises in play: the server's own stored copy when it still has one, else the
-      // key the browser sent back (see rehydrateProblemKey — tutor problems are local-only now). Without this
-      // the leak guard couldn't tell whether a reply gave an answer away, and a mis-graded answer box had
-      // nothing to be checked against.
-      const known = (t.problems || []).find((x) => x.question === p.question);
-      // A sealed key token (the browser never holds the key itself) is opened here for the engine; plain keys from an older stored board still work.
-      const opened = typeof p.keyToken === "string" ? unsealKey(p.keyToken, String(req.session.user), String(p.id || "")) : null;
-      return rehydrateProblemKey(opened ? { ...p, answer: opened.answer, value: opened.value, correct: opened.correct, rubric: opened.rubric, why: opened.why } : p, known);
-    });
+  const problems = openExercises(req, t);
   const spoken = spokenFromBody(req.body?.spoken);
-  // Research at the start of the sitting (once, only when the topic is unfamiliar): see tutorTurn/research.ts.
-  let researchFresh = false;
-  const earlyOpening = history.filter((h) => h.role === "user").length < 3;
-  if (!t.tutorState?.research && !t.tutorState?.researchTried && earlyOpening && worthGating(message) && process.env.TUTOR_RESEARCH !== "off") {
-    const tokens = { in: 0, out: 0, cachedIn: 0 };
-    const { research, needed, decided } = await researchTopic({ message, subject: t.sourceSubject, tokens });
-    addUsage(profile, tokens, "chat");
-    // Tried is remembered once the gate said "no" or the research ran; a provider hiccup (needed:false with no verdict) retries next message, at most twice more.
-    t.tutorState = { helpLevel: 0, stuckStreak: 0, turns: 0, ...(t.tutorState || {}), ...(research ? { research } : {}), researchTried: research || needed || decided || history.filter((h) => h.role === "user").length >= 2 ? true : undefined };
-    researchFresh = !!research;
-  }
+  const researchFresh = await researchIfUnfamiliar(t, { message, history, profile });
   const out = await runTutorTurn({
     message, history, board: currentBoard, problems, objectives: currentObjectives, lang: "en",
     research: t.tutorState?.research || null, researchFresh,
@@ -207,21 +223,7 @@ async function tutorTurn(
   bumpActivityHour(profile, new Date(), t.sourceSubject);
   profile.lastTutorActivityAt = new Date().toISOString();
   void recordMetric(req.session.user!, "chat_message_sent", 1);
-  if (out.error || !out.reply.trim()) {
-    void recordMetric(req.session.user!, "chat_error", 1);
-    const kind = String(out.errorKind || "other");
-    if (out.error && kind !== "other") {
-      // The model provider is down, out of credit, rate-limited or too slow: that is "try again shortly" (503 + Retry-After), not a bug (500).
-      void recordMetric(req.session.user!, `chat_provider_${kind}`, 1);
-      if (kind === "balance" || kind === "auth") reportError("tutor-provider", new Error(`tutor provider ${kind}`), { kind });
-      const wait = kind === "rate" ? 20 : 30;
-      res.setHeader("Retry-After", String(wait));
-      res.status(503).json({ error: "Otto is briefly unavailable — your message is kept, so try again in a minute (or keep working on the board meanwhile).", code: "tutor_unavailable", retryAfter: wait });
-      return;
-    }
-    res.status(500).json({ error: "Otto couldn't reply just now — try again in a moment." });
-    return;
-  }
+  if (out.error || !out.reply.trim()) { replyWithModelFailure(req, res, out); return; }
   if (out.guardrailTripped) void recordMetric(req.session.user!, "chat_guardrail_tripped", 1, "freestudy");
   const now = new Date().toISOString();
   const newChat = [
