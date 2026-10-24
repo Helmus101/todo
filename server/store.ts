@@ -79,7 +79,13 @@ const url = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL;
 const key = process.env.SUPABASE_SERVICE_KEY || process.env.SUPABASE_ANON_KEY || process.env.VITE_SUPABASE_ANON_KEY;
 const TABLE = "weave_web_state";
 
-const client: SupabaseClient | null = url && key ? createClient(url, key, { auth: { persistSession: false } }) : null;
+// Tests only: TEST_FAKE_SUPABASE=1 swaps in an in-memory stand-in (server/testSupabase.ts). It is refused outright in production.
+// It is refused on a real Vercel deployment (VERCEL_ENV is set there) and next to a real Supabase URL; the load test runs it with NODE_ENV=production
+// on purpose, to exercise the production-only CSRF enforcement.
+if (process.env.TEST_FAKE_SUPABASE === "1" && (process.env.VERCEL_ENV || /supabase\.co/i.test(process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || ""))) throw new Error("[store] TEST_FAKE_SUPABASE must never be set on a real deployment.");
+const fake = process.env.TEST_FAKE_SUPABASE === "1" ? (await import("./testSupabase.ts")).createFakeSupabase() : null;
+export const fakeSupabase = fake;
+const client: SupabaseClient | null = fake ? fake.client : url && key ? createClient(url, key, { auth: { persistSession: false } }) : null;
 // Dedicated anon key for password VERIFICATION ONLY (signInWithPassword) — kept separate from `key` above
 // (which prefers the service key for every other table read/write) because signInWithPassword is a
 // stateful auth call, never run on the shared, long-lived `client` above (see verifyAuthPassword below for
@@ -132,7 +138,14 @@ export async function makeSessionStore(): Promise<session.Store | undefined> {
   const c = client;
   // Probe the table first — if it doesn't exist yet (user hasn't run the latest supabase.sql), fall back to
   // the default in-memory store so login still works, with a clear warning. Never break auth on a missing table.
-  const { error: probe } = await c.from(SESSIONS).select("sid").limit(1);
+  let { error: probe } = await c.from(SESSIONS).select("sid").limit(1);
+  // In production a missing sessions/rate-limit table must NOT silently degrade to per-instance memory (on serverless that means logins that
+  // vanish between requests and rate limits multiplied by the instance count). Retry through a network blip, then refuse to boot with a clear fix.
+  if (process.env.NODE_ENV === "production") {
+    for (let i = 0; probe && i < 2; i++) { await new Promise((r) => setTimeout(r, 400 * (i + 1))); ({ error: probe } = await c.from(SESSIONS).select("sid").limit(1)); }
+    const { error: rl } = await c.from(RATELIMITS).select("key").limit(1);
+    if (probe || rl) throw new Error(`[store] production needs the shared tables: ${probe ? `'${SESSIONS}' (${probe.message}) ` : ""}${rl ? `'${RATELIMITS}' (${rl.message}) ` : ""}— run supabase.sql against this database.`);
+  }
   if (probe) { console.warn(`[store] persistent sessions OFF — run web/supabase.sql to create '${SESSIONS}' (${probe.message}). Using in-memory sessions (lost on restart).`); return undefined; }
   const ttlMs = (sess: any) => (sess?.cookie?.maxAge ?? 30 * 24 * 3600 * 1000);
   const expiry = (sess: any) => new Date(Date.now() + ttlMs(sess)).toISOString();
@@ -269,7 +282,7 @@ export async function createAuthUser(email: string, password: string): Promise<b
 export async function verifyAuthPassword(email: string, password: string): Promise<boolean> {
   if (!url || !authKey) return false;
   try {
-    const throwaway = createClient(url, authKey, { auth: { persistSession: false, autoRefreshToken: false } });
+    const throwaway = fake ? fake.client : createClient(url, authKey, { auth: { persistSession: false, autoRefreshToken: false } });
     const { error } = await throwaway.auth.signInWithPassword({ email, password });
     return !error;
   } catch (e) { console.warn("[store] verifyAuthPassword threw:", (e as any)?.message || e); return false; }
@@ -406,6 +419,9 @@ function cacheSetState(email: string, state: AccountState, ver?: string) {
  *  serverless deploy — the "flashcards saved but not showing" bug). Used sparingly and only on routes that
  *  are inherently low-frequency (a page-level nav, not a per-keystroke or poll call) so the extra egress is
  *  bounded; every other call site keeps the cached read this function defaults to. */
+/** The row version (updated_at) of the copy loadState last returned for this account on this instance, for saveState's compare-and-set. */
+export const knownVersion = (email: string): string | undefined => stateCache.get(email)?.ver;
+
 export async function loadState(email?: string, opts?: { bypassCache?: boolean }): Promise<AccountState> {
   if (!client || !email) return { profile: emptyProfile(), tasks: [] };
   const held = stateCache.get(email);
@@ -483,7 +499,7 @@ export function connectionColumnUpdates(state: AccountState): Record<string, unk
 
 /** Persist an account's profile + tasks + Google/Pronote connection (best-effort; never throws into the
  *  request path). Transient network failures are retried so a blip doesn't silently drop a write. */
-export async function saveState(email: string | undefined, state: AccountState, opts?: { throwOnError?: boolean }): Promise<void> {
+export async function saveState(email: string | undefined, state: AccountState, opts?: { throwOnError?: boolean; ifVersion?: string }): Promise<"conflict" | void> {
   if (!client || !email) return;
   // Finished work is compacted on EVERY write (shared/taskCompaction.ts): every later read downloads the whole row,
   // so what an ended tutor session or a done task carries is paid for again on each read, all day.
@@ -496,8 +512,17 @@ export async function saveState(email: string | undefined, state: AccountState, 
   // cheap and safe compared to reconstructing the merged shape by hand.
   const heldBefore = stateCache.get(email);
   stateCache.delete(email);
-  const { error } = await withRetry("save", async () =>
-    client!.from(TABLE).upsert(row, { onConflict: "email" }).then((r) => ({ data: null, error: r.error })));
+  // Compare-and-set: when the caller read the row at version `ifVersion`, only write if nobody else wrote since (the row's updated_at is
+  // still that value). A losing writer gets "conflict" and must re-read and re-merge — this is what stops two tabs, or a tutor turn
+  // plus a poll, from silently overwriting each other's tasks and spend counters.
+  const { error, data: written } = await withRetry<any>("save", async () => {
+    if (opts?.ifVersion) {
+      const { email: _e, ...patch } = row;
+      return client!.from(TABLE).update(patch).eq("email", email).eq("updated_at", opts.ifVersion).select("email").then((r) => ({ data: r.data, error: r.error }));
+    }
+    return client!.from(TABLE).upsert(row, { onConflict: "email" }).then((r) => ({ data: null, error: r.error }));
+  });
+  if (!error && opts?.ifVersion && !(Array.isArray(written) && written.length)) return "conflict";
   // Write-through: we know exactly what we just wrote and its updated_at, so the next read doesn't have to download the
   // row again. Columns this save didn't touch (an undefined connection) keep the values we already held.
   if (!error && heldBefore?.ver) {

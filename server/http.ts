@@ -9,7 +9,7 @@ import type { WebTask, Profile } from "../shared/types.ts";
 import { emptyProfile, isHandled, WEEKLY_CAP_USD, weeklyUsage } from "../shared/types.ts";
 import { buildTasksPayload } from "./taskDelta.ts";
 import { makeSyncScheduler } from "./syncScheduler.ts";
-import { loadState, saveState, checkRateLimit, peekSessionCsrfToken } from "./store.ts";
+import { loadState, saveState, knownVersion, checkRateLimit, peekSessionCsrfToken } from "./store.ts";
 import * as tasks from "./tasks.ts";
 import * as integrations from "./integrations.ts";
 import { setBounded } from "./lru.ts";
@@ -76,10 +76,20 @@ async function writeAccount(email: string, localTasks: WebTask[], localProfile: 
     // ALWAYS a validated read (a ~60-byte version check; the full row only when it changed): this merge is followed by a WRITE of the
     // merged row, and merging into a stale cached copy silently overwrote tasks another process had just added (the daily sweep's
     // "2 new tasks" email arrived but the tasks were gone from the list).
+    // Compare-and-set: if another writer saved between our read and our write, re-read and re-merge (their changes plus ours), up to 3 times.
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const current = await loadState(email, { bypassCache: true });
+      const ver = knownVersion(email);
+      const mergedTasks = mergeTasks(current.tasks || [], localTasks);
+      const mergedProfile = mergeProfiles(current.profile || emptyProfile(), localProfile);
+      const r = await saveState(email, { profile: mergedProfile, tasks: mergedTasks.map(forCloud) }, { throwOnError, ...(ver ? { ifVersion: ver } : {}) });
+      if (r !== "conflict") return;
+      console.warn(`[store] account write conflict for a user (attempt ${attempt + 1}/3), re-merging`);
+    }
+    // Still contended after 3 tries: last writer wins on the freshest merge (same as before this guard existed), rather than dropping the write.
     const current = await loadState(email, { bypassCache: true });
-    const mergedTasks = mergeTasks(current.tasks || [], localTasks);
-    const mergedProfile = mergeProfiles(current.profile || emptyProfile(), localProfile);
-    await saveState(email, { profile: mergedProfile, tasks: mergedTasks.map(forCloud) }, { throwOnError });
+    await saveState(email, { profile: mergeProfiles(current.profile || emptyProfile(), localProfile), tasks: mergeTasks(current.tasks || [], localTasks).map(forCloud) }, { throwOnError });
+    return;
   } catch (e) {
     reportError("commit-sync-cloud-merge", e);
     // Fallback write on merge failure — same throwOnError contract, so an awaiting caller still finds out if this ALSO fails.
@@ -256,7 +266,7 @@ export const rateLimit = (max: number, windowMs: number): RequestHandler => asyn
 
 /** A per-account DAILY cap on tutor turns (one turn can cost 5-20 model calls, and the per-minute limit alone allows ~600 a day).
  *  Only `primer` (tutor) requests count. Shared across serverless instances through the rate-limit table; falls back to per-process. */
-export const TUTOR_DAILY_TURNS = Number(process.env.TUTOR_DAILY_TURNS) || 150;
+export const TUTOR_DAILY_TURNS = Number(process.env.TUTOR_DAILY_TURNS) || 80;
 export const dailyTurnCap = (max = TUTOR_DAILY_TURNS): RequestHandler => async (req, res, next) => {
   if (req.body?.primer !== true) { next(); return; }
   const day = new Date().toISOString().slice(0, 10);
@@ -288,13 +298,15 @@ export const dailyCap = (name: string, max: number): RequestHandler => async (re
 
 /** One tutor turn at a time per account and task: a double click, two tabs or a voice flush must not run (and bill) the same turn twice.
  *  Per instance, with a TTL so a crashed request can never lock a student out. */
+/** Longer than the tutor engine's hard turn deadline (55 s) plus the route's own work, so a running turn is never re-entered. */
+const TURN_LOCK_MS = 110_000;
 const turnsInFlight = new Map<string, number>();
 export const oneTurnAtATime: RequestHandler = (req, res, next) => {
   if (req.body?.primer !== true) { next(); return; }
   const key = `${req.session.user || req.ip}:${String(req.params?.id || "")}`;
   const now = Date.now();
   const started = turnsInFlight.get(key);
-  if (started && now - started < 110_000) {
+  if (started && now - started < TURN_LOCK_MS) {
     res.status(409).json({ error: "Otto is still answering your previous message — one moment.", code: "turn_in_flight" });
     return;
   }
@@ -302,7 +314,7 @@ export const oneTurnAtATime: RequestHandler = (req, res, next) => {
   let released = false;
   const release = () => { if (!released) { released = true; if (turnsInFlight.get(key) === now) turnsInFlight.delete(key); } };
   res.on("finish", release); res.on("close", release);
-  if (turnsInFlight.size > 2000) for (const [k, t] of turnsInFlight) if (now - t > 110_000) turnsInFlight.delete(k);
+  if (turnsInFlight.size > 2000) for (const [k, t] of turnsInFlight) if (now - t > TURN_LOCK_MS) turnsInFlight.delete(k);
   next();
 };
 

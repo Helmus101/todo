@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "A to-do list that executes itself — connects Google (Gmail + Calendar), generates tasks, and runs the reversible ones.",
+  "description": "A to-do list that executes itself \u2014 connects Google (Gmail + Calendar), generates tasks, and runs the reversible ones.",
   "license": "MIT",
   "author": "Willem Tjong",
   "engines": {
@@ -18,6 +18,7 @@
     "typecheck": "tsc --noEmit",
     "test": "tsx tests/run.mjs",
     "tutor:eval": "tsx scripts/tutor-eval.mjs",
+    "test:load": "tsx tests/load-sim.mjs",
     "test:smoke": "tsx tests/smoke.mjs",
     "eval:tutor": "tsx scripts/tutor-eval.ts"
   },
@@ -62,5 +63,8 @@
     "typescript": "^5.7.2",
     "vite": "^6.0.5",
     "wait-on": "^8.0.1"
+  },
+  "overrides": {
+    "zod": "^4.6.7"
   }
 }
