@@ -73,6 +73,10 @@ if (PROD) {
   if (!process.env.PUBLIC_URL) {
     throw new Error("PUBLIC_URL must be set in production — required for OAuth callbacks.");
   }
+  // Not fatal (a hard failure here once took production down), but loud: each of these silently weakens a protection.
+  for (const [name, why] of [["CREDENTIAL_ENCRYPTION_KEY", "Pronote logins cannot be stored encrypted"], ["CRON_SECRET", "the daily background job is refused"], ["ADMIN_EMAILS", "the built-in default admin list is in use"]] as const) {
+    if (!process.env[name]) console.warn(`[boot] ${name} is not set: ${why}.`);
+  }
   // Serverless instances share nothing in memory: without the cloud store, sessions, CSRF tokens and rate limits would differ per instance
   // (students logged out at random, limits that don't hold). A single long-lived process may run without it.
   if (process.env.VERCEL && !(process.env.SUPABASE_URL && process.env.SUPABASE_SERVICE_KEY)) {

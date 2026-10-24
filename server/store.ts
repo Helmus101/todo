@@ -772,6 +772,8 @@ const RATELIMITS = "weave_web_ratelimits";
 // failed `select` on literally every rate-limited request forever; one probe per boot is enough, mirroring
 // makeSessionStore's own probe-then-remember pattern above.
 let ratelimitsTableOk: boolean | null = null;
+let ratelimitsDownAt = 0; // a failed probe is retried after 5 minutes instead of disabling shared limits for the life of the instance
+let ratelimitRpcOk: boolean | null = null; // the atomic function (supabase.sql otto_rate_limit) exists
 
 /** Cross-instance rate-limit check backed by Supabase — see `weave_web_ratelimits` in supabase.sql. Returns
  *  `null` (not `{allowed:false}`) when the table is unreachable, so the caller can fall back to its
@@ -781,11 +783,20 @@ let ratelimitsTableOk: boolean | null = null;
  *  abuse mitigation (not a hard security limit); an RPC/stored-procedure version would close that gap at
  *  the cost of a schema migration most deployments of this app don't need. */
 export async function checkRateLimit(key: string, max: number, windowMs: number): Promise<{ allowed: boolean; retryAfterMs: number } | null> {
+  if (ratelimitsTableOk === false && Date.now() - ratelimitsDownAt > 300_000) ratelimitsTableOk = null;
   if (!client || ratelimitsTableOk === false) return null;
   const now = Date.now();
+  // Preferred: one atomic call (no read-then-write race, and the write can't be dropped when the function freezes).
+  if (ratelimitRpcOk !== false) {
+    try {
+      const { data, error } = await client.rpc("otto_rate_limit", { p_key: key, p_max: max, p_window_ms: windowMs });
+      if (!error && data && typeof (data as any).allowed === "boolean") { ratelimitRpcOk = true; ratelimitsTableOk = true; return { allowed: (data as any).allowed, retryAfterMs: Number((data as any).retry_ms) || 0 }; }
+      if (error && /function|does not exist|PGRST202|42883/i.test(`${error.code || ""} ${error.message || ""}`)) ratelimitRpcOk = false;
+    } catch { /* fall through to the table path */ }
+  }
   try {
     const { data, error } = await client.from(RATELIMITS).select("hits").eq("key", key).maybeSingle();
-    if (error) { if (ratelimitsTableOk === null) { ratelimitsTableOk = false; console.warn(`[store] rate-limit table unreachable (${error.message}) — falling back to per-process limiting.`); } return null; }
+    if (error) { if (ratelimitsTableOk === null) { ratelimitsTableOk = false; ratelimitsDownAt = Date.now(); console.warn(`[store] rate-limit table unreachable (${error.message}) — falling back to per-process limiting.`); } return null; }
     ratelimitsTableOk = true;
     const prior: number[] = Array.isArray((data as any)?.hits) ? (data as any).hits : [];
     const hits = prior.filter((t) => now - t < windowMs);
@@ -796,8 +807,8 @@ export async function checkRateLimit(key: string, max: number, windowMs: number)
     // Cap the stored array itself (not just the window filter above) so a key that's ALWAYS at/near the
     // cap never accumulates more than `max` entries in the jsonb column — bounded storage, not just
     // bounded logical count.
-    void client.from(RATELIMITS).upsert({ key, hits: hits.slice(-max), updated_at: new Date().toISOString() }, { onConflict: "key" })
-      .then(({ error: e2 }) => { if (e2) reportError("ratelimit-write", e2, { key }); });
+    const { error: e2 } = await client.from(RATELIMITS).upsert({ key, hits: hits.slice(-max), updated_at: new Date().toISOString() }, { onConflict: "key" });
+    if (e2) reportError("ratelimit-write", e2, { key });
     return { allowed: true, retryAfterMs: 0 };
   } catch (e) {
     reportError("ratelimit-check", e, { key });

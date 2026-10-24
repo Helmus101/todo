@@ -2,7 +2,7 @@
 import "../env.ts";
 import { reportError } from "../sentry.ts";
 import express from "express";
-import { randomUUID, createHash } from "node:crypto";
+import { randomUUID, createHash, timingSafeEqual } from "node:crypto";
 import { gapTarget, verifyStepAgainstGap } from "../../shared/mathEquiv.ts";
 import { normalizeTable, normalizeSource } from "../../shared/boardTable.ts";
 import { gradeGapAnswer, gradeExerciseAnswer, verifyPolynomialDivision } from "../../shared/exerciseVerification.ts";
@@ -1603,7 +1603,10 @@ export function registerTaskRoutes(app: express.Express): void {
   app.get("/api/cron/drain", async (req, res) => {
     const secret = process.env.CRON_SECRET;
     const auth = String(req.headers.authorization || "");
-    if (secret && auth !== `Bearer ${secret}`) { res.status(401).json({ error: "unauthorized" }); return; }
+    if (secret) {
+      const want = Buffer.from(`Bearer ${secret}`), got = Buffer.from(auth);
+      if (want.length !== got.length || !timingSafeEqual(want, got)) { res.status(401).json({ error: "unauthorized" }); return; }
+    }
     if (!secret && PROD) { res.status(503).json({ error: "CRON_SECRET not configured" }); return; }
     try {
       const out = await jobs.cronTick();

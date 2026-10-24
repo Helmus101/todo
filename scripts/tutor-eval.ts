@@ -19,7 +19,7 @@ if (!process.env.GEMINI_API_KEY && !process.env.DEEPSEEK_API_KEY) { console.erro
 
 async function once(s: Scenario): Promise<{ output: string; failed: string[] }> {
   if (s.kind === "tutor") {
-    const system = liveInstructions({ subject: s.subject, level: s.level, ib: s.ib });
+    const system = liveInstructions({ subject: s.subject, level: s.level, ib: s.ib, language: s.language, background: s.background });
     const messages = [{ role: "system", content: system }, ...s.history.map((t) => ({ role: t.role, content: t.text }))];
     const res: any = await createTutorChat({ messages, temperature: 0.6, max_tokens: 500 }, true);
     const reply = String(res?.choices?.[0]?.message?.content || "").trim();

@@ -253,6 +253,7 @@ export function useGeminiLive(opts: LiveOptions) {
   useEffect(() => {
     if (status !== "live") return;
     const t = window.setInterval(() => {
+      if (aliveRef.current && liveSinceRef.current && Date.now() - liveSinceRef.current > 25 * 60_000) { setError("That was a long call, so it stopped to keep things light. Tap Voice mode to start a fresh one."); teardown("ended"); return; }
       if (aliveRef.current && Date.now() - lastHeardRef.current > 60_000) { setError("Stopped listening after a minute of silence. Tap Voice mode to continue."); teardown("ended"); }
     }, 5000);
     return () => window.clearInterval(t);

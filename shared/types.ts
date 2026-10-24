@@ -290,6 +290,7 @@ export interface Profile {
   toursSeen?: string[];
   // Opt-in: the student agreed that their tutor transcripts and boards (pseudonymised) may be kept to improve Otto. Off unless they turn it on.
   trainingShare?: boolean;
+  liveOpenAt?: string; // when the current/last live voice call was minted: the server meters the call from this, not from what the browser reports
   trainingShareAt?: string; // when it was last changed (the newest setting wins when devices merge)
   // The subjects this student takes (picked in onboarding): ordered first wherever a subject is chosen.
   subjects?: string[];
@@ -545,6 +546,7 @@ export function normalizeProfile(p: any): Profile {
       : undefined,
     onboardedAt: typeof p?.onboardedAt === "string" ? p.onboardedAt : undefined,
     trainingShare: p?.trainingShare === true ? true : undefined,
+    liveOpenAt: typeof p?.liveOpenAt === "string" ? p.liveOpenAt.slice(0, 40) : undefined,
     trainingShareAt: typeof p?.trainingShareAt === "string" ? p.trainingShareAt.slice(0, 40) : undefined,
     toursSeen: Array.isArray(p?.toursSeen) ? [...new Set<string>(p.toursSeen.map((t: any) => String(t).slice(0, 40)).filter(Boolean))].slice(0, 40) : undefined,
     subjects: Array.isArray(p?.subjects) ? [...new Set<string>(p.subjects.map((t: any) => String(t).trim().slice(0, 60)).filter(Boolean))].slice(0, 14) : undefined,

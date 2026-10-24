@@ -184,7 +184,10 @@ export function registerTutorRoutes(app: express.Express): void {
         } catch (e: any) { detail += `openai ${String(e?.message || e).slice(0, 60)}; `; }
       }
       if (!providers.length) { console.warn(`[live] no live voice credential could be minted (${detail.trim()})`); res.status(502).json({ error: `Live voice couldn't start: no credential could be created (${detail.trim().slice(0, 160) || "no details"}).`, code: "live_unavailable", detail: detail.trim().slice(0, 160) }); return; }
-      addWeeklyCost(profile, 0.05); // a call has started (the report of its length adds the rest)
+      // A call that never reported its end (closed tab, crash, a hacked client) is charged for the time it could have run, up to the token's life.
+      if (profile.liveOpenAt) { const secs = Math.min(35 * 60, Math.max(0, (Date.now() - Date.parse(profile.liveOpenAt)) / 1000)); if (secs > 5) addWeeklyCost(profile, (secs / 60) * LIVE_VOICE_USD_PER_MIN); }
+      profile.liveOpenAt = new Date().toISOString();
+      addWeeklyCost(profile, 0.05); // a call has started (its length is added when it ends)
       await commit(req);
       res.json({ ...providers[0], providers });
     } catch (e: any) {
@@ -246,8 +249,13 @@ export function registerTutorRoutes(app: express.Express): void {
 
   // The browser reports how long a voice call lasted; it is metered at the estimated voice price (plus a small charge when a call starts, so a missing report is not free).
   app.post("/api/tutor/live/usage", requireAuth, rateLimit(30, 60_000), ah(async (req, res) => {
-    const seconds = Math.max(0, Math.min(3 * 3600, Number(req.body?.seconds) || 0));
     const profile = (req.session.profile ||= emptyProfile());
+    // The server's own clock is the meter: the call ran from when its credential was minted until now. The browser's number is only
+    // used when there is no mint on record, and never lets a call be charged for less than it ran.
+    const sinceMint = profile.liveOpenAt ? Math.min(35 * 60, Math.max(0, (Date.now() - Date.parse(profile.liveOpenAt)) / 1000)) : 0;
+    const reported = Math.max(0, Math.min(3 * 3600, Number(req.body?.seconds) || 0));
+    const seconds = sinceMint ? Math.max(sinceMint - 5, Math.min(reported, sinceMint + 30)) : reported;
+    profile.liveOpenAt = undefined;
     addWeeklyCost(profile, (seconds / 60) * LIVE_VOICE_USD_PER_MIN);
     if (seconds >= 5) profile.liveStats = { count: (profile.liveStats?.count || 0) + 1, seconds: (profile.liveStats?.seconds || 0) + Math.round(seconds), lastAt: new Date().toISOString() };
     await commit(req);

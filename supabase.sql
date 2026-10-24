@@ -232,3 +232,28 @@ create table if not exists weave_web_tutor_archive (
   primary key (user_hash, session_id)
 );
 alter table weave_web_tutor_archive enable row level security;
+
+-- Atomic rate limit: one statement per check, so concurrent requests cannot both slip under the limit.
+-- Returns {allowed, retry_ms}. Used by server/store.ts checkRateLimit (falls back to the table path if this does not exist).
+create or replace function otto_rate_limit(p_key text, p_max int, p_window_ms bigint)
+returns jsonb language plpgsql security definer set search_path = public as $$
+declare
+  now_ms bigint := (extract(epoch from clock_timestamp()) * 1000)::bigint;
+  kept jsonb;
+  oldest bigint;
+begin
+  insert into weave_web_ratelimits (key, hits, updated_at) values (p_key, '[]'::jsonb, now())
+    on conflict (key) do nothing;
+  select coalesce(jsonb_agg(h), '[]'::jsonb) into kept
+    from (select h from jsonb_array_elements(
+            (select hits from weave_web_ratelimits where key = p_key for update)) h
+          where (h #>> '{}')::bigint > now_ms - p_window_ms) t;
+  if jsonb_array_length(kept) >= p_max then
+    select min((h #>> '{}')::bigint) into oldest from jsonb_array_elements(kept) h;
+    update weave_web_ratelimits set hits = kept, updated_at = now() where key = p_key;
+    return jsonb_build_object('allowed', false, 'retry_ms', greatest(0, p_window_ms - (now_ms - oldest)));
+  end if;
+  update weave_web_ratelimits set hits = kept || to_jsonb(now_ms), updated_at = now() where key = p_key;
+  return jsonb_build_object('allowed', true, 'retry_ms', 0);
+end $$;
+revoke all on function otto_rate_limit(text, int, bigint) from public, anon, authenticated;
