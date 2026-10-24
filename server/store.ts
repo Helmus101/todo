@@ -281,6 +281,10 @@ export async function verifyAuthPassword(email: string, password: string): Promi
 export const googleAuthConfigured = (): boolean => !!(url && authKey);
 export function googleAuthorizeUrl(redirectTo: string, challenge: string): string {
   const q = new URLSearchParams({ provider: "google", redirect_to: redirectTo, code_challenge: challenge, code_challenge_method: "s256" });
+  // Supabase's gateway wants the project's PUBLIC (anon) key on this browser redirect ("No API key found in request" otherwise).
+  // Only the anon key ever goes in a URL; the service key never does.
+  const anon = process.env.SUPABASE_ANON_KEY || process.env.VITE_SUPABASE_ANON_KEY;
+  if (anon) q.set("apikey", anon);
   return `${url}/auth/v1/authorize?${q}`;
 }
 export async function exchangeGoogleCode(code: string, verifier: string): Promise<{ email: string } | null> {
