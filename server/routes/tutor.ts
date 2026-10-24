@@ -5,13 +5,14 @@ import { emptyProfile, addUsage, addWeeklyCost, bumpActivityHour, LIVE_VOICE_USD
 import { parsePolicy, summarize as summarizePolicy } from "../tutorPolicy.ts";
 import { schoolRecordLine } from "../schoolRecord.ts";
 import { aiReady, visionReady, describeWhiteboard, describeUploadedPhoto, synthesizeSpeech, TTS_MAX_TEXT, tutorOpener } from "../claude.ts";
-import { recordEvent, loadBanditState, saveBanditState, saveTutorArchive } from "../store.ts";
+import { recordEvent, loadBanditState, saveBanditState, saveTutorArchive, archiveEnabled, scrubArchiveText } from "../store.ts";
 import { M, ah, commit, dailyCap, isAdmin, isPaused, overWeeklyCap, rateLimit, requireAuth } from "../http.ts";
 import { backgroundBlock } from "../tutor.ts";
 import { selectJournal } from "../journal.ts";
 import { writeBoard } from "../tutorTurn/boardWriter.ts";
 import { normalizeStudentModel, emptyStudentModel, recordConceptEvidence } from "../studentModel.ts";
 import * as pronoteSvc from "../pronote.ts";
+import { validNoteTag } from "../../shared/noteTag.ts";
 import { liveInstructions } from "../../shared/liveTutor.ts";
 import { isLangCode, languageName } from "../../shared/languages.ts";
 import { createTutorChat, usageOf } from "../claude.ts";
@@ -140,7 +141,7 @@ export function registerTutorRoutes(app: express.Express): void {
       const resumeContext = req.body?.resuming === true && Array.isArray(req.body?.resumeTail)
         ? req.body.resumeTail.filter((x: unknown) => typeof x === "string" && x.trim()).slice(-8).map((x: string) => x.replace(/\s+/g, " ").trim().slice(0, 260)).join("\n").slice(0, 2000)
         : "";
-      const instructions = liveInstructions({ subject, level: level || undefined, background, resuming: req.body?.resuming === true, resumeContext, language: language || undefined, ib: profile.track === "ib" });
+      const instructions = liveInstructions({ subject, level: level || undefined, background, resuming: req.body?.resuming === true, resumeContext, language: language || undefined, ib: profile.track === "ib", noteTag: validNoteTag(req.body?.noteTag) });
 
       // The browser tries these in order: Gemini Live first (when GEMINI_API_KEY is set), then OpenAI Realtime (a "mini" model, over WebRTC)
       // as the fallback. LIVE_PROVIDER=gemini or =openai pins one. A provider whose credential can't be minted is simply left out.
@@ -200,7 +201,7 @@ export function registerTutorRoutes(app: express.Express): void {
     if (!aiReady()) { res.status(503).json({ error: "AI isn't configured." }); return; }
     const exchange = typeof req.body?.exchange === "string" ? req.body.exchange.slice(0, 4000) : "";
     if (!exchange.trim()) { res.json({ board: [] }); return; }
-    const board = (Array.isArray(req.body?.board) ? req.body.board : []).slice(-40).filter((e: any) => e && typeof e.id === "string" && typeof e.kind === "string");
+    const board = (Array.isArray(req.body?.board) ? req.body.board : []).slice(-40).filter((e: any) => e && typeof e.id === "string" && typeof e.kind === "string" && (e.text === undefined || typeof e.text === "string"));
     const subject = typeof req.body?.subject === "string" ? req.body.subject.trim().slice(0, 80) : "";
     const tokens = { in: 0, out: 0, cachedIn: 0 };
     try {
@@ -235,9 +236,11 @@ export function registerTutorRoutes(app: express.Express): void {
     if (!req.session.profile?.trainingShare) { res.json({ ok: false, skipped: "not opted in" }); return; }
     const sessionId = String(req.body?.sessionId || "").replace(/[^\w-]/g, "").slice(0, 80);
     if (!sessionId) { res.status(400).json({ error: "sessionId required" }); return; }
-    const chat = (Array.isArray(req.body?.chat) ? req.body.chat : []).slice(-400).map((m: any) => ({ role: m?.role === "user" ? "user" : "assistant", text: String(m?.text || "").slice(0, 4000), at: typeof m?.at === "string" ? m.at.slice(0, 40) : undefined }));
-    const board = (Array.isArray(req.body?.board) ? req.body.board : []).slice(-200).map((e: any) => (JSON.stringify(e).length > 8000 ? { ...e, svg: undefined } : e));
-    const ok = await saveTutorArchive(req.session.user!, { sessionId, subject: typeof req.body?.subject === "string" ? req.body.subject : undefined, chat, board });
+    if (!archiveEnabled()) { res.json({ ok: false, skipped: "archive not configured" }); return; }
+    const chat = (Array.isArray(req.body?.chat) ? req.body.chat : []).slice(-400).map((m: any) => ({ role: m?.role === "user" ? "user" : "assistant", text: scrubArchiveText(String(m?.text || "").slice(0, 4000)), at: typeof m?.at === "string" ? m.at.slice(0, 40) : undefined }));
+    // Only the fields the board actually has; text is scrubbed, drawings and anything unknown are left out.
+    const board = (Array.isArray(req.body?.board) ? req.body.board : []).slice(-200).filter((e: any) => e && typeof e === "object").map((e: any) => ({ id: typeof e.id === "string" ? e.id.slice(0, 60) : undefined, kind: typeof e.kind === "string" ? e.kind.slice(0, 30) : undefined, title: typeof e.title === "string" ? scrubArchiveText(e.title.slice(0, 200)) : undefined, text: typeof e.text === "string" ? scrubArchiveText(e.text.slice(0, 2000)) : undefined, at: typeof e.at === "string" ? e.at.slice(0, 40) : undefined }));
+    const ok = await saveTutorArchive(req.session.user!, { sessionId, subject: typeof req.body?.subject === "string" ? req.body.subject.slice(0, 80) : undefined, chat, board });
     res.json({ ok });
   }));
 

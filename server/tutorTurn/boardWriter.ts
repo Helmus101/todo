@@ -60,8 +60,8 @@ Return ONLY JSON: {"notes":["rule: …","result: …"],"board":[…ops…],"conc
 // alone do not stop it, so this is a check that does not depend on the tutor's mental arithmetic: a model only TRANSCRIBES what
 // the student claimed into a LaTeX equality (an easy, reliable job), and the arithmetic itself is evaluated in code
 // (boardMath.boardLineIsWrong). Only runs when the student made a numeric claim AND the tutor agreed with it.
-const TUTOR_CONFIRMS = /^\s*(yes|yep|yeah|exactly|correct|right|that'?s (right|correct|it|good)|spot on|perfect|great|good|nice|that works|precisely|absolutely|you'?re right)\b/i;
-const MATHISH = /\d|\b(over|times|plus|minus|squared|cubed|root|divided|equals|point|half|third|quarter)\b/i;
+const TUTOR_CONFIRMS = /^\s*(yes|yep|yeah|exactly|correct|right|that'?s (right|correct|it|good)|spot on|perfect|great|good|nice|that works|precisely|absolutely|you'?re right|oui|ouais|exact|exactement|c'?est (ça|ca|bon|juste|correct|exact)|tout à fait|tout a fait|parfait|bien joué|voilà|voila|s[ií]|correcto|exacto|perfecto|ja|genau|richtig|stimmt|perfekt)\b/i;
+const MATHISH = /\d|\b(over|times|plus|minus|squared|cubed|root|divided|equals|point|half|third|quarter|fois|plus|moins|carré|racine|divisé|égal|vaut|moitié|tiers|quart|veces|más|menos|mal|geteilt|gleich)\b/i;
 
 /** Pure: does this finished exchange end with the tutor agreeing to a numeric claim by the student? Exported for tests. */
 export function confirmedClaimIn(exchange: string): { student: string; tutor: string } | null {

@@ -188,7 +188,7 @@ app.use((req, res, next) => {
 // larger per-route limit was dead code the whole time, not a real override. Keeping the global default
 // tight (1mb is plenty for every other route — profile edits, chat messages, preferences) is deliberate:
 // only the specific routes that genuinely need more get it, not every endpoint by default.
-const LARGE_BODY_ROUTES = new Set(["/api/account/import", "/api/tutor/read-whiteboard", "/api/tutor/read-photo"]);
+const LARGE_BODY_ROUTES = new Set(["/api/account/import", "/api/tutor/read-whiteboard", "/api/tutor/read-photo", "/api/tutor/archive"]);
 app.use((req, res, next) => {
   if (LARGE_BODY_ROUTES.has(req.path)) return next();
   express.json({ limit: "1mb" })(req, res, next);

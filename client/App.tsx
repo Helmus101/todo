@@ -161,7 +161,9 @@ const saveSeenTasks = (s: Set<string>) => {
 };
 
 export function App() {
-  const [status, setStatus] = useState<ConnectionStatus | null>(CACHED_STATUS);
+  // FAST FIRST PAINT: a visitor with no signed-in history is shown the public page at once instead of a spinner while /api/status
+  // answers; the real status replaces it a moment later (and a signed-in visitor on a fresh browser is switched over then).
+  const [status, setStatus] = useState<ConnectionStatus | null>(CACHED_STATUS ?? ({ loggedIn: false } as ConnectionStatus));
   const statusRef = useRef<ConnectionStatus | null>(status);
   statusRef.current = status;
   // index.html hardcodes lang="fr" (the app's actual default), but the EN toggle never followed it — an
@@ -426,7 +428,7 @@ export function App() {
     try { localStorage.setItem("otto-tasks", JSON.stringify(tasks.slice(0, 60))); } catch { /* ignore */ }
   }, [tasks]);
 
-  const [initialStatusChecked, setInitialStatusChecked] = useState(false);
+  const [initialStatusChecked, setInitialStatusChecked] = useState(!CACHED_STATUS?.loggedIn);
   // Retry status until the backend is reachable (tsx dev-server boot race) — don't get stuck on the spinner.
   // After the retries are exhausted, surface a real "can't reach the server" screen instead of a forever-spinner.
   useEffect(() => {
@@ -622,7 +624,7 @@ export function App() {
     const flushOnHide = () => { if (document.visibilityState === "hidden" && !signedOutRef.current && statusRef.current?.writeBehind !== false) void api.flushSync(); };
     document.addEventListener("visibilitychange", flushOnHide);
     window.addEventListener("pagehide", flushOnHide);
-    const syncTick = setInterval(() => { if (!document.hidden && !signedOutRef.current) { void syncTasks(); void loadStatus(); } }, 20 * 60_000);
+    const syncTick = setInterval(() => { if (!document.hidden && !signedOutRef.current) { void syncTasks(); void loadStatus(); } }, 30 * 60_000);
     const fullTick = setInterval(on, 30 * 60_000); // periodic Pronote keepalive heartbeat — was also a budget/sweep refresh before that got removed above
     return () => { document.removeEventListener("visibilitychange", on); window.removeEventListener("focus", on); document.removeEventListener("visibilitychange", flushOnHide); window.removeEventListener("pagehide", flushOnHide); clearInterval(syncTick); clearInterval(fullTick); };
   }, [connected, syncTasks, loadStatus, status?.pronoteConnected]);

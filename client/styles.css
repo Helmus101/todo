@@ -5109,3 +5109,11 @@ html[data-i18n="loading"] body { opacity: 0; }
 .landing-quotes figure { margin: 0; padding: 12px 16px; border-left: 3px solid var(--line); }
 .landing-quotes blockquote { margin: 0 0 6px; line-height: 1.5; }
 .landing-quotes figcaption { font-size: 13px; color: var(--ink-3, var(--ink-2)); }
+
+/* Phones: nav buttons keep a clean border-less look and a comfortable tap size; inputs stay at 16px so iOS does not zoom the page. */
+@media (max-width: 640px) {
+  .topnav .topnav-link { min-height: 44px; display: inline-flex; align-items: center; white-space: nowrap; }
+  .topnav button.topnav-link { border: 0 !important; outline: none; background: transparent !important; box-shadow: none !important; }
+  input, select, textarea { font-size: 16px; }
+  .live-bar { padding-bottom: calc(var(--space-3) + env(safe-area-inset-bottom)); }
+}

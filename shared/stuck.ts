@@ -1,8 +1,9 @@
+import { classifySafety } from "./safety.ts";
 // "Two failed tries means explain" is a rule the tutor model follows only some of the time (measured in the regression suite),
 // so it is backed by this code: the page counts how many times in a row the student has said they don't know, and if the
 // tutor's reply is still only a guiding question, it sends the tutor a private note to explain. Pure, so it can be tested.
 
-const STUCK = /\b(i don'?t know|i do not know|no idea|i'?m lost|i am lost|i don'?t get (it|this|that)|don'?t understand|do not understand|i have no clue|no clue|idk|i'?m confused|i give up|i can'?t do (it|this))\b/i;
+const STUCK = /\b(i don'?t know|i do not know|no idea|i'?m lost|i am lost|i don'?t get (it|this|that)|don'?t understand|do not understand|i have no clue|no clue|idk|i'?m confused|i give up|i can'?t do (it|this)|je (ne )?sais pas|aucune id[ée]e|j'?ai pas compris|je (ne )?comprends pas|je suis perdu[e]?|j'?y comprends rien|j'?abandonne|no s[eé]|ni idea|no entiendo|estoy perdid[oa]|ich wei(?:ß|ss) nicht|keine ahnung|ich verstehe (?:es |das )?nicht)\b/i;
 
 /** The student's turn is mainly "I don't know" (short, and not an attempt). */
 export function isStuckTurn(text: string): boolean {
@@ -12,6 +13,8 @@ export function isStuckTurn(text: string): boolean {
 
 /** Consecutive stuck turns: reset by any turn that is an actual attempt. */
 export function nextStuckCount(prev: number, studentText: string): number {
+  // A student in distress is not "stuck on the maths": never push an explanation at them.
+  if (classifySafety(studentText)?.kind === "crisis") return 0;
   return isStuckTurn(studentText) ? prev + 1 : 0;
 }
 

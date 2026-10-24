@@ -2,10 +2,10 @@
 import "../env.ts";
 import { reportError } from "../sentry.ts";
 import express from "express";
-import { randomBytes } from "node:crypto";
+import { randomBytes, createHash } from "node:crypto";
 import type { WebTask } from "../../shared/types.ts";
 import { emptyProfile, normalizeProfile } from "../../shared/types.ts";
-import { listFeedbackFor, loadState, saveState, cloudEnabled, findAuthUserByEmail, createAuthUser, verifyAuthPassword, setAuthPassword, setResetToken, consumeResetToken, destroySessionsForUser, deleteAccount, exportJobsAndEvents, recordEvent } from "../store.ts";
+import { listFeedbackFor, loadState, saveState, cloudEnabled, findAuthUserByEmail, createAuthUser, verifyAuthPassword, setAuthPassword, setResetToken, consumeResetToken, destroySessionsForUser, deleteAccount, exportJobsAndEvents, recordEvent, googleAuthConfigured, googleAuthorizeUrl, exchangeGoogleCode } from "../store.ts";
 import { sendTransactionalEmail } from "../mailer.ts";
 import * as tasks from "../tasks.ts";
 import * as integrations from "../integrations.ts";
@@ -19,6 +19,38 @@ const normEmail = (s: unknown) => String(s || "").trim().toLowerCase();
 const validEmail = (e: string) => /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(e);
 
 export function registerAuthRoutes(app: express.Express): void {
+  // Sign in with Google, through Supabase Auth (PKCE). Step 1 sends the browser to Google via Supabase; step 2 receives the code,
+  // exchanges it for the verified email, and starts the same kind of session a password login does.
+  const publicBase = (req: express.Request) => (process.env.PUBLIC_URL || `${req.protocol}://${req.get("host")}`).replace(/\/+$/, "");
+  app.get("/auth/google", rateLimit(20, 60 * 60_000), ah(async (req, res) => {
+    if (!googleAuthConfigured() || !cloudEnabled()) { res.redirect("/login?error=google"); return; }
+    const verifier = randomBytes(48).toString("base64url");
+    const challenge = createHash("sha256").update(verifier).digest("base64url");
+    (req.session as any).googleVerifier = verifier;
+    await saveSession(req);
+    res.redirect(googleAuthorizeUrl(`${publicBase(req)}/auth/google/callback`, challenge));
+  }));
+  app.get("/auth/google/callback", rateLimit(30, 60 * 60_000), ah(async (req, res) => {
+    const code = typeof req.query.code === "string" ? req.query.code.slice(0, 400) : "";
+    const verifier = (req.session as any).googleVerifier as string | undefined;
+    if (!code || !verifier) { res.redirect("/login?error=google"); return; }
+    const who = await exchangeGoogleCode(code, verifier);
+    if (!who || !validEmail(who.email)) { res.redirect("/login?error=google"); return; }
+    const email = who.email;
+    req.session.regenerate(async (err) => {
+      if (err) { res.redirect("/login?error=google"); return; }
+      req.session.user = email;
+      const restored = await loadState(email);
+      const isNew = !restored.profile?.ageConsentAt && !(restored.profile?.name || restored.profile?.onboardedAt) && !(restored.tasks || []).length;
+      req.session.profile = isNew ? { ...emptyProfile(), ageConsentAt: new Date().toISOString() } : restored.profile; // the login screen states the 15+ / parent confirmation
+      req.session.tasks = restored.tasks;
+      req.session.csrfToken = randomBytes(24).toString("hex");
+      void recordEvent(email, isNew ? "signup_google" : "login_google", {});
+      await saveSession(req);
+      res.redirect("/");
+    });
+  }));
+
   app.post("/api/auth/signup", rateLimit(6, 60 * 60_000), ah(async (req, res) => {
     const email = normEmail(req.body?.email);
     const password = String(req.body?.password || "");

@@ -3,6 +3,8 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "../../api.ts";
 import { startMic, Player, type Mic } from "./audio.ts";
 
+import { makeNoteTag } from "../../../shared/noteTag.ts";
+export const sessionNoteTag = makeNoteTag(); // per page load; the server puts it in the instructions
 export type LiveStatus = "idle" | "connecting" | "live" | "ended" | "unavailable";
 
 export interface LiveOptions {
@@ -96,7 +98,7 @@ export function useGeminiLive(opts: LiveOptions) {
     };
     try {
       const o = optsRef.current;
-      const [{ GoogleGenAI, Modality }, tok] = await Promise.all([import("@google/genai"), api.liveToken({ lang: getLanguage(), subject: o.subject, pastSessions: o.pastSessions, resuming: o.resuming, resumeTail: o.resumeTail })]);
+      const [{ GoogleGenAI, Modality }, tok] = await Promise.all([import("@google/genai"), api.liveToken({ lang: getLanguage(), subject: o.subject, pastSessions: o.pastSessions, resuming: o.resuming, resumeTail: o.resumeTail, noteTag: sessionNoteTag })]);
       if (!aliveRef.current) return;
       // Each provider is a function that either gets a live call going or throws (cleaning up after itself); they are tried in order below.
       type Cred = { token: string; model: string; models?: string[]; instructions: string };

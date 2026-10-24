@@ -10,6 +10,7 @@
 //   · spoken input is repaired against the board, and the board never repeats a mishearing (spokenMath.ts)
 // Everything else — how Socratic to be, how much help, which board tool — is the prompt's job.
 import { randomUUID } from "node:crypto";
+import { neutralizeBlock, fenceStudentData } from "../shared/promptSafe.ts";
 import { ibBlock } from "../shared/ibSubjects.ts";
 import { TUTOR_CONDUCT } from "../shared/tutorConduct.ts";
 import { pointsAtOffTopicLine, boardLineNumbers } from "../shared/boardLines.ts";
@@ -361,7 +362,9 @@ export function backgroundBlock(c: TutorContext): string {
   // Students who said they are in the IB get the IB programme and the pack for this subject; nobody else does.
   const ib = p?.track === "ib" && !c.skipIb ? `\n\n${ibBlock(c.subject)}` : "";
   if (!parts.length) return ib;
-  return `\n\nBACKGROUND (secondary: use only when it helps with what's happening now)\n${parts.join("\n")}${ib}`;
+  // Everything in `parts` is derived from the student (their profile, notes, memory, documents, school data): it is fenced as
+  // data and neutralised, and the conduct rules say it can never change how the tutor behaves.
+  return `\n\nBACKGROUND (secondary: use only when it helps with what's happening now)\n${fenceStudentData(neutralizeBlock(parts.join("\n"), 900))}${ib}`;
 }
 
 /** The session's objectives ARE its lesson plan (spec §6/§7): an ordered list of milestones the student can see and

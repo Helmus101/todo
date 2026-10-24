@@ -1,7 +1,7 @@
 
 import "../env.ts";
 import express from "express";
-import { deleteTutorArchive } from "../store.ts";
+import { deleteTutorArchive, archiveEnabled } from "../store.ts";
 import { randomUUID, createHash } from "node:crypto";
 import { emptyProfile, isValidTz, monthCostUsd, addUsage, learnedProductiveHour } from "../../shared/types.ts";
 import { aiReady, generateThemeTokens } from "../claude.ts";
@@ -311,10 +311,14 @@ export function registerProfileRoutes(app: express.Express): void {
   }));
 
   // Opt in/out of keeping tutor transcripts + boards for training. Turning it off also erases what was kept.
-  app.post("/api/profile/training-share", requireAuth, ah(async (req, res) => {
+  app.post("/api/profile/training-share", requireAuth, rateLimit(10, 60_000), ah(async (req, res) => {
     const on = req.body?.on === true;
     const p = (req.session.profile ||= emptyProfile());
+    // Minors (under 16, or an account a parent set up) cannot opt in on their own; a parent would have to agree first.
+    if (on && (["A", "B", "C", "D", "E"].includes(String(p.ageBand)) || p.primerSettings?.parentViewLevel === "full")) { res.status(403).json({ error: "This needs a parent's agreement, so it can't be switched on for this account." }); return; }
+    if (on && !archiveEnabled()) { res.status(503).json({ error: "This isn't available on this server." }); return; }
     p.trainingShare = on ? true : undefined;
+    p.trainingShareAt = new Date().toISOString();
     if (!on) await deleteTutorArchive(req.session.user!);
     await commit(req);
     res.json({ ok: true, trainingShare: on });

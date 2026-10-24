@@ -30,7 +30,7 @@ export function PrivacyBody() {
       </ul>
 
       <h2>{"What stays on your device"}</h2>
-      <p>{"Your tutoring sessions — the conversation, the board, your drawings and the session summaries — are saved only in this browser (local storage). They are not copied to our servers and do not follow you to another device. Clearing this site's data, or using private browsing, erases them. You can delete any past session from the sessions list at any time."}</p>
+      <p>{"Your tutoring sessions — the conversation, the board, your drawings and the session summaries — are saved only in this browser (local storage). They are not copied to our servers, unless you switch on Help improve Otto in Settings (off by default, and not available to under-16 accounts): then the transcript and board of each finished session are kept under a coded ID instead of your email, for at most 90 days, and are deleted when you switch it off or delete your account. Otherwise they do not follow you to another device. Clearing this site's data, or using private browsing, erases them. You can delete any past session from the sessions list at any time."}</p>
 
       <h2>{"What we store on our servers"}</h2>
       <ul>
@@ -131,7 +131,7 @@ export function TermsBody() {
       <p>{`To the fullest extent permitted by applicable law, ${LEGAL_ENTITY} and anyone involved in providing Otto shall not be liable for any indirect, incidental, special, consequential, exemplary, or punitive damages, nor for any loss of data (including tutoring sessions saved only in your browser), grades, profits, or opportunities arising from your use of, or inability to use, the service. Nothing in these terms limits liability that cannot be limited by law.`}</p>
 
       <h2>{"Your data"}</h2>
-      <p>{"How your data is handled is described in the Privacy Policy. In short: your voice goes to the voice provider during a call and is not stored by us; your sessions stay in your browser; we do not sell your data or use it to train foundation models."}</p>
+      <p>{"How your data is handled is described in the Privacy Policy. In short: your voice goes to the voice provider during a call and is not stored by us; your sessions stay in your browser unless you opt in to Help improve Otto; we do not sell your data or use it to train foundation models."}</p>
 
       <h2>{"Availability & changes"}</h2>
       <p>{"Otto is an independent tool and is not endorsed by or affiliated with Google, OpenAI, DeepSeek or any other provider it uses. We may change, suspend, limit (including through daily usage limits) or discontinue any part of the service at any time without liability."}</p>

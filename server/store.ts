@@ -1,7 +1,7 @@
 import { makeEgressMeter, DEFAULT_EGRESS_BUDGET_BYTES } from "./egress.ts";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import session from "express-session";
-import { createHash } from "node:crypto";
+import { createHash, createHmac } from "node:crypto";
 import type { Credentials } from "google-auth-library";
 import type { WebTask, Profile, StudySession, StudyProfile } from "../shared/types.ts";
 import { emptyProfile, normalizeProfile, monthKeyOf } from "../shared/types.ts";
@@ -275,6 +275,30 @@ export async function verifyAuthPassword(email: string, password: string): Promi
   } catch (e) { console.warn("[store] verifyAuthPassword threw:", (e as any)?.message || e); return false; }
 }
 
+/** Google sign-in through Supabase Auth (PKCE). `googleAuthorizeUrl` is where the browser goes; `exchangeGoogleCode` turns the
+ *  one-time code Supabase sends back into the verified Google email. The provider must be switched on in the Supabase dashboard
+ *  (Authentication → Providers → Google) and the callback URL added to its redirect allow-list. */
+export const googleAuthConfigured = (): boolean => !!(url && authKey);
+export function googleAuthorizeUrl(redirectTo: string, challenge: string): string {
+  const q = new URLSearchParams({ provider: "google", redirect_to: redirectTo, code_challenge: challenge, code_challenge_method: "s256" });
+  return `${url}/auth/v1/authorize?${q}`;
+}
+export async function exchangeGoogleCode(code: string, verifier: string): Promise<{ email: string } | null> {
+  if (!url || !authKey) return null;
+  try {
+    const r = await fetch(`${url}/auth/v1/token?grant_type=pkce`, {
+      method: "POST", headers: { apikey: authKey, "Content-Type": "application/json" },
+      body: JSON.stringify({ auth_code: code, code_verifier: verifier }), signal: AbortSignal.timeout(8000),
+    });
+    if (!r.ok) return null;
+    const j: any = await r.json();
+    const u = j?.user;
+    // Only a Google-verified address counts as proof of who this is.
+    if (!u?.email || !(u.email_confirmed_at || u.confirmed_at)) return null;
+    return { email: String(u.email).trim().toLowerCase() };
+  } catch { return null; }
+}
+
 /** Set a new password on an already-identified Supabase Auth user (by id, from
  *  findAuthUserByEmail) — the password-reset confirm step's final action. */
 export async function setAuthPassword(userId: string, password: string): Promise<boolean> {
@@ -436,7 +460,8 @@ export async function loadState(email?: string, opts?: { bypassCache?: boolean }
   }
   if (error) { console.warn("[store] load failed:", error.message); reportError("load-state", error, { email }); return { profile: emptyProfile(), tasks: [] }; }
   const d = data as any;
-  if (d) { const before = egress.used(email), after = egress.note(email, JSON.stringify(d).length); if (before < egress.budget && after >= egress.budget) console.warn(`[store] ${email} reached its daily PostgREST read budget (${Math.round(egress.budget / 1048576)} MB) — serving cached state for the rest of the day`); }
+  // The row size is estimated: stringifying the whole row just to measure it cost CPU on every cold read.
+  if (d) { const before = egress.used(email), after = egress.note(email, 2000 + (Array.isArray(d.tasks) ? d.tasks.length * 1500 : 0) + (Array.isArray(d.studySessions) ? d.studySessions.length * 300 : 0)); if (before < egress.budget && after >= egress.budget) console.warn(`[store] ${email} reached its daily PostgREST read budget (${Math.round(egress.budget / 1048576)} MB) — serving cached state for the rest of the day`); }
   const google = d?.google && d.google.tokens ? (d.google as StoredGoogle) : undefined;
   const pronote = d?.pronote && d.pronote.token
     ? { ...(d.pronote as StoredPronote), token: decryptSecret(d.pronote.token), ...(d.pronote.password ? { password: decryptSecret(d.pronote.password) } : {}) }
@@ -576,6 +601,7 @@ export async function pruneOldData(): Promise<Record<string, string>> {
   await run("sessions", c.from(SESSIONS).delete().lt("expire", new Date().toISOString()));
   await run("ratelimits", c.from(RATELIMITS).delete().lt("updated_at", iso(2)));
   await run("job_events", c.from(EVENTS).delete().lt("at", iso(30)));
+  await run("tutor_archive", c.from("weave_web_tutor_archive").delete().lt("updated_at", iso(90)));
   await run("jobs", c.from(JOBS).delete().in("status", ["succeeded", "failed_terminal", "cancelled"]).lt("created_at", iso(30)));
   return out;
 }
@@ -796,6 +822,7 @@ export async function deleteAccount(email: string): Promise<{ ok: boolean; error
       if (error) errors.push(`${table}: ${error.message}`);
     } catch (e: any) { errors.push(`${table}: ${e?.message || e}`); }
   }
+  try { await deleteTutorArchive(email); } catch (e: any) { errors.push(`tutor archive: ${e?.message || e}`); }
   await deleteAllFeedbackFor(email); // feedback and any public quote go with the account
   await destroySessionsForUser(email);
   await deleteAuthUser(email); // the actual credential erasure now, not a mirror cleanup — best-effort, never blocks the rest
@@ -1361,15 +1388,24 @@ export async function listPublicTestimonials(limit = 6): Promise<{ name: string;
 // Only written for accounts that switched "Help improve Otto" on. Keyed by a one-way hash of the email (never the
 // email itself), write-only from the app: nothing in the product reads it back, so it costs no read egress.
 const ARCHIVE = "weave_web_tutor_archive";
-const archiveUser = (email: string) => createHash("sha256").update(`otto-archive:${email.toLowerCase()}`).digest("hex").slice(0, 32);
+// Keyed hash (HMAC with ARCHIVE_PEPPER), so rows can't be re-identified by hashing a list of emails. Without the pepper the archive is OFF.
+export const archiveEnabled = (): boolean => !!process.env.ARCHIVE_PEPPER;
+const archiveUser = (email: string) => createHmac("sha256", process.env.ARCHIVE_PEPPER || "").update(email.toLowerCase()).digest("hex").slice(0, 32);
+/** Strip what must never be kept: emails, phone-like numbers, long digit runs, "password is …". */
+export function scrubArchiveText(s: string): string {
+  return String(s)
+    .replace(/[\w.+-]+@[\w-]+\.[\w.-]+/g, "[email]")
+    .replace(/\b(?:pass(?:word|e)?|mot de passe|mdp|code)\s*(?:is|est|:|=)?\s*\S+/gi, "[secret]")
+    .replace(/(?:\+?\d[\s.-]?){9,}/g, "[number]");
+}
 export async function saveTutorArchive(email: string, a: { sessionId: string; subject?: string; chat: unknown[]; board: unknown[] }): Promise<boolean> {
-  if (!client) return false;
+  if (!client || !archiveEnabled()) return false;
   const { error } = await client.from(ARCHIVE).upsert({ user_hash: archiveUser(email), session_id: a.sessionId.slice(0, 80), subject: a.subject?.slice(0, 80) ?? null, chat: a.chat, board: a.board, updated_at: new Date().toISOString() }, { onConflict: "user_hash,session_id" });
   if (error) { reportError("save-tutor-archive", error); return false; }
   return true;
 }
 export async function deleteTutorArchive(email: string): Promise<void> {
-  if (!client) return;
+  if (!client || !archiveEnabled()) return;
   const { error } = await client.from(ARCHIVE).delete().eq("user_hash", archiveUser(email));
   if (error) reportError("delete-tutor-archive", error);
 }
