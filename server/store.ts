@@ -275,34 +275,6 @@ export async function verifyAuthPassword(email: string, password: string): Promi
   } catch (e) { console.warn("[store] verifyAuthPassword threw:", (e as any)?.message || e); return false; }
 }
 
-/** Google sign-in through Supabase Auth (PKCE). `googleAuthorizeUrl` is where the browser goes; `exchangeGoogleCode` turns the
- *  one-time code Supabase sends back into the verified Google email. The provider must be switched on in the Supabase dashboard
- *  (Authentication → Providers → Google) and the callback URL added to its redirect allow-list. */
-export const googleAuthConfigured = (): boolean => !!(url && authKey);
-export function googleAuthorizeUrl(redirectTo: string, challenge: string): string {
-  const q = new URLSearchParams({ provider: "google", redirect_to: redirectTo, code_challenge: challenge, code_challenge_method: "s256" });
-  // Supabase's gateway wants the project's PUBLIC (anon) key on this browser redirect ("No API key found in request" otherwise).
-  // Only the anon key ever goes in a URL; the service key never does.
-  const anon = process.env.SUPABASE_ANON_KEY || process.env.VITE_SUPABASE_ANON_KEY;
-  if (anon) q.set("apikey", anon);
-  return `${url}/auth/v1/authorize?${q}`;
-}
-export async function exchangeGoogleCode(code: string, verifier: string): Promise<{ email: string } | null> {
-  if (!url || !authKey) return null;
-  try {
-    const r = await fetch(`${url}/auth/v1/token?grant_type=pkce`, {
-      method: "POST", headers: { apikey: authKey, "Content-Type": "application/json" },
-      body: JSON.stringify({ auth_code: code, code_verifier: verifier }), signal: AbortSignal.timeout(8000),
-    });
-    if (!r.ok) return null;
-    const j: any = await r.json();
-    const u = j?.user;
-    // Only a Google-verified address counts as proof of who this is.
-    if (!u?.email || !(u.email_confirmed_at || u.confirmed_at)) return null;
-    return { email: String(u.email).trim().toLowerCase() };
-  } catch { return null; }
-}
-
 /** Set a new password on an already-identified Supabase Auth user (by id, from
  *  findAuthUserByEmail) — the password-reset confirm step's final action. */
 export async function setAuthPassword(userId: string, password: string): Promise<boolean> {

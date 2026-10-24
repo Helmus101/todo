@@ -7183,7 +7183,6 @@ section("Safety, prompt-injection hardening and metering (unit + source pins)");
   check("the rate limiter uses one atomic database function when it exists, and retries a failed probe later", /rpc\("otto_rate_limit"/.test(stor) && /ratelimitsDownAt/.test(stor) && /otto_rate_limit/.test(rdx("../supabase.sql")));
   check("the task list is never read from a stale per-instance copy (a finished task must not reopen)", /req\.path === "\/api\/tasks" \? \{ bypassCache: true \}/.test(rdx("../server/index.ts")));
   check("the cron secret is compared in constant time", /timingSafeEqual\(want, got\)/.test(rdx("../server/routes/tasks.ts")));
-  check("Google sign-in goes through Supabase with PKCE and only trusts a confirmed email", /\/auth\/google\/callback/.test(auth) && /code_challenge_method/.test(stor) && /email_confirmed_at/.test(stor) && /href="\/auth\/google"/.test(rdx("../client/pages/Login.tsx")));
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);
