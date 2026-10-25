@@ -133,7 +133,36 @@ export async function peekSessionCsrfToken(sid: string): Promise<string | null> 
  * the default in-memory store is wiped on every restart, forcing re-login and making changes look "lost".
  * Returns undefined when cloud is unconfigured (express-session then falls back to its MemoryStore).
  */
+/** The database itself being unreachable (project deleted or paused, DNS, network, quota) as opposed to a missing table. */
+const storeUnreachable = (e: any) => /fetch failed|ENOTFOUND|ECONN|ETIMEDOUT|EAI_AGAIN|getaddrinfo|network|timed? ?out|NXDOMAIN|exceed/i.test(String(e?.message || e));
+
+/** Production must not crash on boot just because the database is unreachable: every route would answer 500, including the ones that
+ *  could explain what is wrong. This store serves everyone as signed out, and re-probes the database every 20 s; the moment it is back
+ *  it hands over to the real store. A missing table (a real misconfiguration) still refuses to boot. */
+class RetryingSessionStore extends session.Store {
+  private real: session.Store | undefined; private last = Date.now(); private trying = false;
+  constructor(private build: () => Promise<session.Store | undefined>) { super(); }
+  private async ensure(): Promise<void> {
+    if (this.real || this.trying || Date.now() - this.last < 20_000) return;
+    this.trying = true; this.last = Date.now();
+    try { this.real = await this.build(); if (this.real) console.warn("[store] database reachable again — persistent sessions restored."); } catch { /* still down */ } finally { this.trying = false; }
+  }
+  get(sid: string, cb: (err: any, sess?: any) => void) { if (this.real) return this.real.get(sid, cb); void this.ensure().then(() => (this.real ? this.real.get(sid, cb) : cb(null, null))); }
+  set(sid: string, sess: any, cb?: (err?: any) => void) { if (this.real) return this.real.set(sid, sess, cb); cb?.(); }
+  destroy(sid: string, cb?: (err?: any) => void) { if (this.real) return this.real.destroy(sid, cb); cb?.(); }
+  touch(sid: string, sess: any, cb?: (err?: any) => void) { if (this.real) return (this.real as any).touch(sid, sess, cb); cb?.(); }
+}
+
 export async function makeSessionStore(): Promise<session.Store | undefined> {
+  try { return await makeRealSessionStore(); }
+  catch (e) {
+    if (!storeUnreachable(e)) throw e;
+    console.error(`[store] DATABASE UNREACHABLE — starting anyway, everyone is served as signed out until it is back. ${String((e as any)?.message || e).slice(0, 200)}`);
+    return new RetryingSessionStore(makeRealSessionStore);
+  }
+}
+
+async function makeRealSessionStore(): Promise<session.Store | undefined> {
   if (!client) return undefined;
   const c = client;
   // Probe the table first — if it doesn't exist yet (user hasn't run the latest supabase.sql), fall back to

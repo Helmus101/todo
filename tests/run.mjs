@@ -7183,6 +7183,7 @@ section("Safety, prompt-injection hardening and metering (unit + source pins)");
   check("the rate limiter uses one atomic database function when it exists, and retries a failed probe later", /rpc\("otto_rate_limit"/.test(stor) && /ratelimitsDownAt/.test(stor) && /otto_rate_limit/.test(rdx("../supabase.sql")));
   check("the task list is never read from a stale per-instance copy (a finished task must not reopen)", /req\.path === "\/api\/tasks" \? \{ bypassCache: true \}/.test(rdx("../server/index.ts")));
   check("an unreachable account service is not a wrong password (503), and a session-store outage serves the visitor as signed out instead of a 500 on every request", /"unavailable"/.test(stor) && /code: "auth_unavailable"/.test(auth) && /warnStoreDown\(error\); return cb\(null, null\)/.test(stor) && /verifyAuthPassword\(email, String\(req\.body\?\.password \|\| ""\)\)\) !== true/.test(auth));
+  check("production boots when the database is unreachable (RetryingSessionStore serves everyone signed out and re-probes), but still refuses a missing table", /class RetryingSessionStore/.test(stor) && /storeUnreachable\(e\)\) throw e/.test(stor) && /Date\.now\(\) - this\.last < 20_000/.test(stor) && /production needs the shared tables/.test(stor));
   check("the cron secret is compared in constant time", /timingSafeEqual\(want, got\)/.test(rdx("../server/routes/tasks.ts")));
 }
 
