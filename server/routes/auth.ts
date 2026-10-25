@@ -5,7 +5,7 @@ import express from "express";
 import { randomBytes } from "node:crypto";
 import type { WebTask } from "../../shared/types.ts";
 import { emptyProfile, normalizeProfile } from "../../shared/types.ts";
-import { listFeedbackFor, loadState, saveState, cloudEnabled, findAuthUserByEmail, createAuthUser, verifyAuthPassword, setAuthPassword, setResetToken, consumeResetToken, destroySessionsForUser, deleteAccount, exportJobsAndEvents, recordEvent } from "../store.ts";
+import { listFeedbackFor, loadState, saveState, cloudEnabled, findAuthUserByEmail, createAuthUser, createAuthUserWhy, verifyAuthPassword, setAuthPassword, setResetToken, consumeResetToken, destroySessionsForUser, deleteAccount, exportJobsAndEvents, recordEvent } from "../store.ts";
 import { sendTransactionalEmail } from "../mailer.ts";
 import * as tasks from "../tasks.ts";
 import * as integrations from "../integrations.ts";
@@ -42,7 +42,12 @@ export function registerAuthRoutes(app: express.Express): void {
     
     if (!cloudEnabled()) { res.status(500).json({ error: "Account storage isn't configured on the server (Supabase)." }); return; }
     if (await findAuthUserByEmail(email)) { res.status(409).json({ error: "An account with that email already exists — log in instead." }); return; }
-    if (!(await createAuthUser(email, password))) { res.status(500).json({ error: "Couldn't create the account." }); return; }
+    const made = await createAuthUserWhy(email, password);
+    if (made !== true) {
+      if (made === "key") { res.status(500).json({ error: "Sign-up isn't set up correctly on the server: the account service key was refused. (Owner: SUPABASE_SERVICE_KEY must be the project's service_role key.)", code: "auth_key_refused" }); return; }
+      if (made === "down") { res.status(503).json({ error: "Otto can't reach its account service right now. Please try again in a few minutes.", code: "auth_unavailable" }); return; }
+      res.status(500).json({ error: "Couldn't create the account." }); return;
+    }
     // Regenerate the session id on every privilege change (login/signup) — never write the authenticated
     // user onto a pre-existing session id. Without this, a session id fixed on a victim's browser BEFORE
     // they sign up (e.g. planted via an unrelated XSS/subdomain trick) would become a live authenticated

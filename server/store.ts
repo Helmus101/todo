@@ -297,12 +297,21 @@ export async function findAuthUserByEmail(email: string): Promise<{ id: string; 
  *  callers that need to tell those apart should check findAuthUserByEmail first (the signup route
  *  does, to return its own 409 with its own copy). */
 export async function createAuthUser(email: string, password: string): Promise<boolean> {
-  if (!client) return false;
+  return (await createAuthUserWhy(email, password)) === true;
+}
+/** Like createAuthUser, but says why it failed: "key" when the server's key is not allowed to create users (an anon key, or the
+ *  wrong project's key, in SUPABASE_SERVICE_KEY), "down" when the account service is unreachable, otherwise "other". */
+export async function createAuthUserWhy(email: string, password: string): Promise<true | "key" | "down" | "other"> {
+  if (!client) return "other";
   try {
     const { error } = await client.auth.admin.createUser({ email, password, email_confirm: true });
-    if (error) { console.warn("[store] createAuthUser failed:", error.message); return false; }
-    return true;
-  } catch (e) { console.warn("[store] createAuthUser threw:", (e as any)?.message || e); return false; }
+    if (!error) return true;
+    console.warn("[store] createAuthUser failed:", error.message, (error as any).status || "");
+    const m = `${error.message || ""}`;
+    if ((error as any).status === 401 || (error as any).status === 403 || /not allowed|api key|jwt|service_role|permission|forbidden|unauthori[sz]ed/i.test(m)) return "key";
+    if (/fetch|network|ENOTFOUND|timeout/i.test(m) || Number((error as any).status) >= 500) return "down";
+    return "other";
+  } catch (e) { console.warn("[store] createAuthUser threw:", (e as any)?.message || e); return "down"; }
 }
 
 /** Verify a password against Supabase Auth — the actual login check. Deliberately a FRESH,
