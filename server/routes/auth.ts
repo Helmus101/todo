@@ -112,6 +112,7 @@ export function registerAuthRoutes(app: express.Express): void {
     // hammering a victim's email with bad guesses is what trips it, but correct logins never count toward it.
     const lockKey = `login-fail:${email}`;
     const validPassword = await verifyAuthPassword(email, password);
+    if (validPassword === "unavailable") { res.status(503).json({ error: "Otto can't reach its account service right now, so nobody can log in. Please try again in a few minutes.", code: "auth_unavailable" }); return; }
     if (!validPassword) {
       const perAccount = await limitBy(lockKey, 30, 60 * 60_000).catch(() => ({ allowed: true, retryAfterMs: 0 }));
       if (!perAccount.allowed) { res.set("Retry-After", String(Math.ceil(perAccount.retryAfterMs / 1000))).status(429).json({ error: "Too many failed attempts on this account — try again later, or reset your password." }); return; }
@@ -213,7 +214,7 @@ export function registerAuthRoutes(app: express.Express): void {
   app.post("/api/account/delete", requireAuth, rateLimit(5, 60_000), async (req, res) => {
     const email = req.session.user!;
     // Deleting everything needs the password again — a stolen or left-open session must not be enough to erase an account.
-    if (!(await verifyAuthPassword(email, String(req.body?.password || "")))) { res.status(403).json({ error: "Enter your password to delete the account." }); return; }
+    if ((await verifyAuthPassword(email, String(req.body?.password || ""))) !== true) { res.status(403).json({ error: "Enter your password to delete the account." }); return; }
     // NOT recordEvent(): deleteAccount() below purges this account's OWN rows from the events table as
     // part of the erasure, so a "deleted" event written there would erase itself in the same request —
     // the one event that most needs to survive would leave zero trace. console.warn instead: platform log

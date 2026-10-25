@@ -162,19 +162,22 @@ export async function makeSessionStore(): Promise<session.Store | undefined> {
     getCache.set(sid, { at: Date.now(), sess });
     while (getCache.size > GET_CACHE_MAX) { const oldest = getCache.keys().next().value; if (oldest === undefined) break; getCache.delete(oldest); }
   };
+  let lastDownLog = 0;
+  const warnStoreDown = (e: any) => { if (Date.now() - lastDownLog > 60_000) { lastDownLog = Date.now(); console.warn(`[store] session store unreachable (${String(e?.message || e).slice(0, 120)}) — serving requests as signed out until it is back.`); reportError("session-store-get", e); } };
   class SupabaseStore extends session.Store {
     get(sid: string, cb: (err: any, sess?: any) => void) {
       const cached = getCache.get(sid);
       if (cached && Date.now() - cached.at < GET_CACHE_TTL_MS) { cb(null, cached.sess); return; }
       c.from(SESSIONS).select("sess,expire").eq("sid", sid).maybeSingle().then(
         ({ data, error }) => {
-          if (error) { reportError("session-store-get", error); return cb(error); }
+          // A store outage must not turn into a 500 on every request: serve the visitor as signed out (their session row is untouched, so it works again when the store is back).
+          if (error) { warnStoreDown(error); return cb(null, null); }
           if (!data) return cb(null, null);
           if (data.expire && new Date(data.expire).getTime() < Date.now()) { this.destroy(sid, () => {}); return cb(null, null); }
           cacheSet(sid, data.sess);
           cb(null, data.sess);
         },
-        (e) => cb(e),
+        (e) => { warnStoreDown(e); cb(null, null); },
       );
     }
     set(sid: string, sess: any, cb?: (err?: any) => void) {
@@ -279,13 +282,17 @@ export async function createAuthUser(email: string, password: string): Promise<b
  *  used elsewhere in this file), and `client` is one long-lived instance reused across every
  *  concurrent request from every different user — running a stateful auth method on it would risk
  *  one request's sign-in state leaking into another's. */
-export async function verifyAuthPassword(email: string, password: string): Promise<boolean> {
+export async function verifyAuthPassword(email: string, password: string): Promise<boolean | "unavailable"> {
   if (!url || !authKey) return false;
   try {
     const throwaway = fake ? fake.client : createClient(url, authKey, { auth: { persistSession: false, autoRefreshToken: false } });
     const { error } = await throwaway.auth.signInWithPassword({ email, password });
-    return !error;
-  } catch (e) { console.warn("[store] verifyAuthPassword threw:", (e as any)?.message || e); return false; }
+    if (!error) return true;
+    // The account service itself failing (unreachable, paused, over quota, 5xx) is not a wrong password: say so.
+    const status = Number((error as any).status) || 0;
+    if (status >= 500 || /fetch|network|ENOTFOUND|timeout/i.test(`${(error as any).name || ""} ${error.message || ""}`)) return "unavailable";
+    return false;
+  } catch (e) { console.warn("[store] verifyAuthPassword threw:", (e as any)?.message || e); return "unavailable"; }
 }
 
 /** Set a new password on an already-identified Supabase Auth user (by id, from
