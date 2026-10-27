@@ -363,3 +363,37 @@ h1 { font-family: var(--display); font-weight: 400; letter-spacing: -0.025em; }
   .research-main .research-sec-title { margin: 0 0 var(--space-3); }
   .research-main .research-sec-body, .research-main .research-sec-title + .research-sec-body { font-size: 17px; }
 }
+
+/* ---- Blog, second pass: bolder hero, filter tabs, numbered cards, reading progress ---- */
+.legal .blog:not(.blog-post) h1 { font-size: clamp(2.7rem, 8vw, 5.4rem) !important; line-height: 1 !important; letter-spacing: -0.045em !important; max-width: 13ch; }
+.legal .blog-tabs { display: flex; flex-wrap: wrap; gap: var(--space-2); margin: 0 0 var(--space-5); }
+.legal .blog-tab { font: inherit; font-size: 14px; font-weight: 600; padding: 9px 18px; border-radius: 999px; border: 1px solid var(--line); background: transparent; color: var(--ink-2); cursor: pointer; transition: background .15s ease, color .15s ease, border-color .15s ease; }
+@media (hover: hover) { .legal .blog-tab:hover { border-color: var(--ink-3); color: var(--ink); } }
+.legal .blog-tab.on { background: var(--ink); border-color: var(--ink); color: var(--bg); }
+.legal .blog-card-num { position: absolute; right: var(--space-5); bottom: var(--space-3); font-size: clamp(3.5rem, 8vw, 5.5rem); font-weight: 700; letter-spacing: -0.05em; line-height: 1; color: var(--bg-3); pointer-events: none; transition: color .2s ease; }
+@media (hover: hover) { .legal .blog-card:hover .blog-card-num { color: var(--line); } }
+.legal .blog-card { overflow: hidden; }
+.legal .blog-card:not(.featured) { min-height: 260px; }
+.blog-progress { position: fixed; top: 0; left: 0; right: 0; height: 3px; z-index: 50; background: transparent; }
+.blog-progress > div { height: 100%; background: var(--ink); transition: width .08s linear; }
+.legal .blog-body > p:first-child::first-line { color: var(--ink); font-weight: 600; }
+.legal .blog-body h2 { padding-top: var(--space-5); border-top: 1px solid var(--line); }
+.legal .blog-body li::before { width: 8px; height: 8px; border-radius: 50%; top: .68em; }
+.legal .blog-tab.on, .legal .blog-tab.on:hover { background: var(--ink) !important; border-color: var(--ink) !important; color: var(--bg) !important; }
+.legal .blog-tab { background: transparent; color: var(--ink-2); }
+.legal .blog-card-num { font-size: 2rem; right: var(--space-5); bottom: var(--space-5); letter-spacing: -0.03em; color: var(--ink-3); opacity: .5; }
+@media (hover: hover) { .legal .blog-card:hover .blog-card-num { color: var(--ink); opacity: .8; } }
+
+/* ---- Individual posts: a dek, a jump list, and the "Where Otto fits" callout ---- */
+.legal .blog-dek { font-size: clamp(1.15rem, 2.3vw, 1.4rem); line-height: 1.5; color: var(--ink-2); margin: 0 0 var(--space-5); max-width: 40ch; }
+.legal .blog-toc { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); }
+.legal .blog-toc span { font-size: 12px; letter-spacing: .1em; text-transform: uppercase; color: var(--ink-3); margin-right: var(--space-2); }
+.legal .blog-toc a { font-size: 13px; font-weight: 600; padding: 7px 14px; border-radius: 999px; background: var(--bg-2); border: 1px solid var(--line); color: var(--ink-2); text-decoration: none; transition: background .15s ease, color .15s ease; }
+@media (hover: hover) { .legal .blog-toc a:hover { background: var(--ink); color: var(--bg); border-color: var(--ink); text-decoration: none; } }
+.legal .blog-body h2 { scroll-margin-top: 80px; }
+.legal .blog-otto { margin: var(--space-7) 0 0; padding: var(--space-6); background: var(--bg-2); border: 1px solid var(--line); border-left: 4px solid var(--ink); border-radius: 16px; scroll-margin-top: 80px; }
+.legal .blog-otto .blog-otto-label { font-size: 12px; letter-spacing: .1em; text-transform: uppercase; font-weight: 700; color: var(--ink-2); margin: 0 0 var(--space-2); }
+.legal .blog-otto p:not(.blog-otto-label) { margin: 0; font-size: 17px; }
+html { scroll-behavior: smooth; }
+@media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } }
+.legal .blog-more .blog-card:not(.featured) { min-height: 0; }
