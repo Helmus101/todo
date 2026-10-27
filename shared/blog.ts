@@ -5,6 +5,8 @@ export type Block = { t: "h2"; text: string } | { t: "p"; text: string } | { t: 
 
 export interface Post {
   slug: string;
+  /** "guide" marks the IB guides; the other posts are study-method articles. */
+  kind?: "guide";
   title: string;
   description: string;
   /** ISO date of publication. */
@@ -196,6 +198,140 @@ export const POSTS: Post[] = [
       { t: "p", text: "Say who wrote a source, when and why, and what that does to its value as evidence. Never invent a quotation or a page number. If you are not sure of a fact, check it or leave it out." },
       { t: "h2", text: "Where Otto fits" },
       { t: "p", text: "In a humanities session Otto acts as a discussion partner. It asks for your claim and your evidence, raises the strongest objection, and gives feedback on your own paragraph without rewriting it for you." },
+    ],
+  },
+  {
+    slug: "ib-command-terms-what-they-ask-for",
+    title: "IB command terms: what each one is really asking for",
+    description: "Most lost IB marks come from answering a different question to the one asked. A short guide to the command terms that matter most and how to answer each.",
+    date: "2026-10-27",
+    minutes: 5,
+    kind: "guide",
+    blocks: [
+      { t: "p", text: "Every IB question starts with a command term, and the IB publishes what each one means. The same topic can be worth two marks or six depending on the word in front of it. Reading that word properly is the cheapest improvement most students can make." },
+      { t: "h2", text: "The short-answer terms" },
+      { t: "ul", items: [
+        "State, Write down, List, Identify: give the answer with no explanation. A paragraph here only costs you time.",
+        "Define: the precise meaning of the word or quantity, in the subject's own terms.",
+        "Calculate: a number, with the working shown. Determine: the only possible answer, which may come from a graph or a calculation.",
+        "Show that: the result is given, so every step must appear. Never work backwards from the answer you were handed."
+      ] },
+      { t: "h2", text: "The explanation terms" },
+      { t: "ul", items: [
+        "Describe: a detailed account of what happens or what a graph shows, without reasons.",
+        "Explain: reasons or causes. If your answer has no word like because or therefore, it is probably a description.",
+        "Outline: a brief account. Suggest: propose a possible answer, usually with the reasoning for it.",
+        "Compare: similarities, referring to both items throughout. Compare and contrast: similarities and differences. Contrast: differences only."
+      ] },
+      { t: "h2", text: "The judgement terms" },
+      { t: "p", text: "Discuss, Evaluate, Justify and To what extent are where the top marks sit. Discuss asks for a balanced review of several arguments or factors. Evaluate asks you to weigh strengths against limitations. Both end with a clear, supported conclusion. An answer that argues one side only, or lists points and never decides, cannot reach the top band." },
+      { t: "h2", text: "A habit that works" },
+      { t: "p", text: "Before you write, underline the command term and say in one sentence what a full-mark answer would contain. Then look at the marks: the number of marks is roughly the number of separate points wanted. The wording above follows the IB's own glossary, but a subject guide can word a term slightly differently, so check the one for your subject." },
+      { t: "h2", text: "Where Otto fits" },
+      { t: "p", text: "Otto asks you which command term a question uses and what it wants before you answer, and it will not write the other side of a Discuss answer for you. It asks the one question that shows you what is missing." },
+    ],
+  },
+  {
+    slug: "ib-past-papers-how-to-use-them",
+    title: "How to use IB past papers so they actually raise your grade",
+    description: "Doing past papers is the best exam preparation, but only if you mark them properly. A step-by-step method that turns every lost mark into something to fix.",
+    date: "2026-10-26",
+    minutes: 5,
+    kind: "guide",
+    blocks: [
+      { t: "p", text: "Past papers are the closest thing to the real exam, but most students use them badly: they do a paper open-book, glance at the mark scheme and move on. The learning happens in the marking." },
+      { t: "h2", text: "The method" },
+      { t: "ul", items: [
+        "Do the paper, or a section of it, under timed conditions with only what the exam allows. A rough guide is one to one and a half minutes per mark, but check the marks and minutes for your paper.",
+        "Mark it yourself with the official mark scheme, in a different colour. Learn to read the codes: M for method, A for accuracy, R for reasoning, and follow-through where an earlier slip is carried forward.",
+        "For every lost mark, write down the cause: a knowledge gap, a misread command term, a method slip, arithmetic, or time.",
+        "Count the causes. The most common one is your next study task, not the topic that feels worst.",
+        "Come back a week later and redo only the questions you lost marks on, from a blank page."
+      ] },
+      { t: "h2", text: "Why the delay matters" },
+      { t: "p", text: "Doing the same question again after a gap is retrieval practice spread over time, which research on testing and spacing keeps finding works better than rereading (Roediger and Karpicke, 2006; Dunlosky and colleagues, 2013). Redoing a question straight after seeing the answer only proves you can copy it." },
+      { t: "h2", text: "Do not wait until the end" },
+      { t: "p", text: "Use single questions on a topic as soon as you have covered it, and save full papers for the weeks before the exam. Keep a few papers for the last stretch so you have something unseen to test yourself on." },
+      { t: "h2", text: "Where Otto fits" },
+      { t: "p", text: "Otto can sit with you while you work out why you lost a mark, asking what you were thinking at that step. It writes practice questions in the style of the paper, but it says plainly that they are practice and not real past-paper questions, and its marking is an estimate, not an examiner's." },
+    ],
+  },
+  {
+    slug: "ib-maths-show-that-and-hence",
+    title: "IB maths: how to answer Show that and Hence questions",
+    description: "Two phrases that cost IB maths students marks every year. What the examiner expects, the most common mistakes, and how to practise them.",
+    date: "2026-10-25",
+    minutes: 4,
+    kind: "guide",
+    blocks: [
+      { t: "p", text: "In IB Mathematics, Show that and Hence look like small words and carry a lot of marks. Both are about reasoning, and both are marked on the method on the page." },
+      { t: "h2", text: "Show that" },
+      { t: "p", text: "The answer is printed in the question, so earning the mark means writing every step that leads to it. The final line alone earns nothing, which is why the mark scheme calls it the answer given. The common mistake is to start from the result and work backwards, or to jump over a line of algebra that the examiner needed to see. Start from the left side, or from the given information, and finish on the target." },
+      { t: "h2", text: "Hence" },
+      { t: "p", text: "Hence means use the result you have just found. If the question says hence and you start a new method, you may lose the marks even with the right final answer. Look back at the previous part and ask what it gave you, then find where it plugs in. Hence or otherwise means either route is accepted, but the hence route is usually the short one." },
+      { t: "h2", text: "Habits that protect marks" },
+      { t: "ul", items: [
+        "Write the method first and the number second, so a slip in arithmetic still earns the method marks.",
+        "Keep exact values until the end, unless the question asks for a decimal. Otherwise give three significant figures.",
+        "If you cannot do an earlier part, use the answer given in it to try the next part. Marks can be earned that way.",
+        "Check the marks: a part worth four marks needs more than one line."
+      ] },
+      { t: "h2", text: "How to practise" },
+      { t: "p", text: "Take a multi-part question, cover the printed answer and try it, then compare your steps to the mark scheme line by line. Where you skipped a step, write it in. Do the same for one question a week, since spacing it out works better than doing many in one evening." },
+      { t: "h2", text: "Where Otto fits" },
+      { t: "p", text: "Otto asks where the previous part comes in before it says anything about the next one, and it will not hand you the missing step. At higher level it writes multi-step questions that end in a Hence part." },
+    ],
+  },
+  {
+    slug: "ib-extended-essay-research-question",
+    title: "The IB Extended Essay: choosing a research question you can answer",
+    description: "A weak research question is the most common reason an Extended Essay struggles. How to narrow a topic, test the question, and use your supervisor well.",
+    date: "2026-10-24",
+    minutes: 5,
+    kind: "guide",
+    blocks: [
+      { t: "p", text: "The Extended Essay is an independent piece of research of up to 4,000 words in a subject you choose, written with a supervisor. Everything else in it depends on the research question, so spend time there before you write anything." },
+      { t: "h2", text: "From a topic to a question" },
+      { t: "p", text: "A topic is a subject area, such as sleep and memory. A research question is something you could answer with evidence in the space available, and that has more than one possible answer. If the answer is a fact you can look up, it is too small. If you would need years of data, it is too big." },
+      { t: "h2", text: "Tests for your question" },
+      { t: "ul", items: [
+        "Can you name the sources, data or texts you would use, and can you get them?",
+        "Could a reasonable person argue a different answer? If not, there is nothing to argue.",
+        "Does it fit the subject you chose, using that subject's methods and vocabulary?",
+        "Is it narrow enough to answer in 4,000 words, including the evaluation?"
+      ] },
+      { t: "h2", text: "Working with your supervisor" },
+      { t: "p", text: "Your supervisor guides and gives feedback. The essay and the ideas have to be yours, and every source has to be acknowledged. Bring a draft of your question and a few lines on how you will answer it to each meeting, and keep your reflections up to date as you go, since they are part of the assessment. Check the current Extended Essay guide for the criteria and exactly what is assessed." },
+      { t: "h2", text: "Where Otto fits" },
+      { t: "p", text: "Otto asks questions about your research question: what would count as evidence, what the strongest objection is, what you would do if the data disagreed. It does not write, redraft or suggest wording for any part of the essay. That line is also where the IB's academic honesty rules sit." },
+    ],
+  },
+  {
+    slug: "ib-diploma-points-explained",
+    title: "IB Diploma points explained: how the 45 add up",
+    description: "How the Diploma is scored out of 45, what TOK and the Extended Essay add, and why you should check the exact rules with your coordinator.",
+    date: "2026-10-23",
+    minutes: 4,
+    kind: "guide",
+    blocks: [
+      { t: "p", text: "The Diploma is scored out of 45. It helps to know how the points add up, so that you can see where effort pays off. This is a summary, not the rulebook: the IB changes details from time to time." },
+      { t: "h2", text: "Where the points come from" },
+      { t: "ul", items: [
+        "Six subjects, each graded from 1 to 7, give a maximum of 42.",
+        "Theory of Knowledge and the Extended Essay are graded together on a grid and add 0 to 3 bonus points.",
+        "Together that makes 45. The Diploma is awarded at 24 points or more, as long as no failing condition applies.",
+        "CAS is not graded, but it must be completed."
+      ] },
+      { t: "h2", text: "Things that stop the award" },
+      { t: "p", text: "Reaching 24 points is not enough on its own. The IB lists conditions that stop the award even above 24, including an incomplete CAS, a grade of 1 in a subject, too many low grades, a failing grade in TOK or the Extended Essay, too few points in the higher-level or standard-level subjects, or a finding of academic misconduct. A single grade of 2 does not fail you by itself, but several can. The exact numbers are in the IB documents and your coordinator can tell you how they apply to you." },
+      { t: "h2", text: "What this means for your study" },
+      { t: "ul", items: [
+        "A bonus point from TOK and the Extended Essay is worth the same as a grade rise in a subject, so do not leave the core to the end.",
+        "Raising a 4 to a 5 is usually easier than raising a 6 to a 7, so find your weakest subject early.",
+        "Do not use a points total to decide how little you can do. Predicted and final grades can differ."
+      ] },
+      { t: "h2", text: "Where Otto fits" },
+      { t: "p", text: "Otto gives the outline of the rules and always sends questions about your own case to your IB coordinator and the IB documents. It does not promise an outcome. Its help is on the other side: working on the subject you are weakest in." },
     ],
   },
 ];

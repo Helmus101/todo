@@ -271,3 +271,22 @@ h1 { font-family: var(--display); font-weight: 400; letter-spacing: -0.025em; }
 
 
 .live-disclaimer { margin: 6px 0 0; text-align: center; font-size: 12px; color: var(--ink-3); }
+
+/* Research page rhythm: room between sections, a readable measure and line height, and paragraph spacing inside a section. */
+.research-main { padding: clamp(var(--space-7), 8vh, var(--space-8)) var(--space-5) var(--space-8); }
+.research-intro { line-height: 1.55; margin: var(--space-4) 0 var(--space-8); }
+.research-sec { margin-top: var(--space-8); padding-top: var(--space-6); }
+.research-sec:first-of-type { margin-top: 0; }
+.research-sec-kicker { margin-bottom: var(--space-3); }
+.research-sec-title { margin: 0 0 var(--space-4); }
+.research-sec-body { max-width: 62ch; font-size: 17px; line-height: 1.7; margin: 0 0 var(--space-4); }
+.research-sec-closing .research-sec-title:not(:first-child) { margin-top: var(--space-7); }
+.research-main .legal-back { margin-top: var(--space-8); }
+.blog p, .blog li { line-height: 1.7; }
+.blog h2 { margin: var(--space-7) 0 var(--space-3); }
+.blog ul { margin-bottom: var(--space-4); }
+.blog-list h2 { margin-top: 0; }
+@media (max-width: 640px) {
+  .research-sec { margin-top: var(--space-7); }
+  .research-sec-body { font-size: 16px; }
+}

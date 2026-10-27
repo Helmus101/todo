@@ -20,13 +20,13 @@ export function BlogIndexBody(): ReactNode {
   return (
     <article className="blog">
       <h1>{"Otto blog: study methods that work"}</h1>
-      <p className="blog-lede">{"Short guides to studying, each based on published research on how people learn, with the studies named so you can check them."}</p>
+      <p className="blog-lede">{"Study methods based on published research, with the studies named so you can check them, and guides to the IB Diploma: command terms, past papers, the Extended Essay and the points."}</p>
       <ul className="blog-list">
         {POSTS.map((p) => (
           <li key={p.slug}>
             <h2><a href={postPath(p)}>{p.title}</a></h2>
             <p>{p.description}</p>
-            <p className="blog-meta">{`${fmt(p.date)} · ${p.minutes} min read`}</p>
+            <p className="blog-meta">{`${p.kind === "guide" ? "IB guide · " : ""}${fmt(p.date)} · ${p.minutes} min read`}</p>
           </li>
         ))}
       </ul>
