@@ -338,3 +338,28 @@ h1 { font-family: var(--display); font-weight: 400; letter-spacing: -0.025em; }
 .legal .blog-card.featured h2 { font-size: clamp(1.9rem, 4.6vw, 3rem) !important; line-height: 1.06 !important; font-weight: 700 !important; letter-spacing: -0.035em !important; max-width: 20ch; }
 .legal .blog-more-head { font-size: 1.4rem !important; font-weight: 700 !important; letter-spacing: -0.02em !important; }
 .legal .blog-card.featured h2 { margin-bottom: var(--space-3); }
+.legal .blog-cta b { color: inherit; }
+
+/* ---- Research: a manifesto layout. Big title, then each idea as a row: number and name on the left, the argument on the right ---- */
+.research-main { max-width: 1080px; }
+.research-page .micro-label { display: inline-flex; align-items: center; gap: 8px; font-family: inherit; font-size: 12px; letter-spacing: .12em; text-transform: uppercase; color: var(--ink-2); }
+.research-page .micro-label::before { content: ""; width: 24px; height: 2px; background: var(--ink); }
+.research-main .research-title { font-size: clamp(2.6rem, 8vw, 5.6rem) !important; line-height: 1 !important; font-weight: 700 !important; letter-spacing: -0.045em !important; max-width: 14ch; margin: var(--space-4) 0 var(--space-5); }
+.research-main .research-intro { font-size: clamp(1.15rem, 2.3vw, 1.45rem); line-height: 1.5; color: var(--ink-2); max-width: 44ch; margin: 0 0 var(--space-8); }
+.research-main .research-sec { display: grid; grid-template-columns: minmax(0, 340px) minmax(0, 1fr); column-gap: clamp(var(--space-6), 6vw, 80px); grid-template-rows: auto 1fr; align-items: start; border-top: 1px solid var(--line); margin-top: 0; padding: var(--space-7) 0; }
+.research-main .research-sec-kicker { grid-column: 1; grid-row: 1; font-size: clamp(3rem, 7vw, 5rem); font-weight: 700; letter-spacing: -0.04em; opacity: 1; color: var(--bg-3); margin: 0; }
+.research-main .research-sec-title { grid-column: 1; grid-row: 2; font-size: clamp(1.5rem, 2.8vw, 2rem) !important; line-height: 1.12 !important; font-weight: 700 !important; letter-spacing: -0.03em !important; margin: var(--space-2) 0 0; }
+.research-main .research-sec-body { grid-column: 2; max-width: 60ch; font-size: 18px; line-height: 1.72; color: var(--ink); margin: 0 0 var(--space-4); }
+.research-main .research-sec-title + .research-sec-body { grid-row: 1 / span 2; font-size: 19px; }
+.research-main .research-sec-closing { display: block; margin-top: var(--space-7); padding: clamp(var(--space-6), 5vw, var(--space-8)); background: var(--ink); border: 0; border-radius: 24px; }
+.research-main .research-sec-closing .research-sec-title { color: var(--bg); margin: 0 0 var(--space-3); font-size: clamp(1.4rem, 2.6vw, 1.8rem) !important; }
+.research-main .research-sec-closing .research-sec-title:not(:first-child) { margin-top: var(--space-6); }
+.research-main .research-sec-closing .research-sec-body { color: var(--bg); opacity: .82; max-width: 64ch; }
+.research-main .legal-back { display: inline-flex; margin: var(--space-7) 0 0; padding: 12px 22px; border: 1px solid var(--line); border-radius: 999px; color: var(--ink); text-decoration: none; transition: background .2s ease, border-color .2s ease; }
+.research-main .legal-back:hover { background: var(--bg-2); border-color: var(--ink-3); }
+@media (max-width: 760px) {
+  .research-main .research-sec { display: block; padding: var(--space-6) 0; }
+  .research-main .research-sec-kicker { font-size: 2.6rem; }
+  .research-main .research-sec-title { margin: 0 0 var(--space-3); }
+  .research-main .research-sec-body, .research-main .research-sec-title + .research-sec-body { font-size: 17px; }
+}
