@@ -109,7 +109,7 @@ const routeOf = (pathname: string) => pathname.replace(/^\/+/, "").replace(/\/+$
 function usePathRoute(): [string, (r: string) => void] {
   const [route, setRoute] = useState(() => {
     const r = routeOf(window.location.pathname);
-    if (r === "" && CACHED_STATUS?.loggedIn) return "tasks";
+    if (r === "" && (CACHED_STATUS?.loggedIn || WAS_SIGNED_IN)) return "tasks";
     return r;
   });
   useEffect(() => {
@@ -135,6 +135,10 @@ function usePathRoute(): [string, (r: string) => void] {
 const CACHED_STATUS: ConnectionStatus | null = (() => {
   try { return JSON.parse(localStorage.getItem("weave-status") || "null"); } catch { return null; }
 })();
+
+// Sticky "this browser has been signed in" marker: unlike weave-status it survives a transient signed-out answer, so a returning user
+// sees the spinner (never the public landing page) while the real status loads. Removed with the rest of the account data on sign-out.
+const WAS_SIGNED_IN = (() => { try { return localStorage.getItem("otto-was-in") === "1"; } catch { return false; } })();
 
 // Last-known task list — hydrates the dashboard INSTANTLY on open (server truth replaces it right after).
 const CACHED_TASKS: WebTask[] = (() => {
@@ -163,7 +167,7 @@ const saveSeenTasks = (s: Set<string>) => {
 export function App() {
   // FAST FIRST PAINT: a visitor with no signed-in history is shown the public page at once instead of a spinner while /api/status
   // answers; the real status replaces it a moment later (and a signed-in visitor on a fresh browser is switched over then).
-  const [status, setStatus] = useState<ConnectionStatus | null>(CACHED_STATUS ?? ({ loggedIn: false } as ConnectionStatus));
+  const [status, setStatus] = useState<ConnectionStatus | null>(CACHED_STATUS ?? (WAS_SIGNED_IN ? null : ({ loggedIn: false } as ConnectionStatus)));
   const statusRef = useRef<ConnectionStatus | null>(status);
   statusRef.current = status;
   // index.html hardcodes lang="fr" (the app's actual default), but the EN toggle never followed it — an
@@ -420,6 +424,7 @@ export function App() {
 
   // Persist the signed-in state so a returning user skips the login flash (reconciled on next load).
   useEffect(() => {
+    try { if (status?.loggedIn) localStorage.setItem("otto-was-in", "1"); } catch { /* ignore */ }
     try { status ? localStorage.setItem("weave-status", JSON.stringify(status)) : localStorage.removeItem("weave-status"); } catch { /* ignore */ }
   }, [status]);
 
@@ -428,7 +433,7 @@ export function App() {
     try { localStorage.setItem("otto-tasks", JSON.stringify(tasks.slice(0, 60))); } catch { /* ignore */ }
   }, [tasks]);
 
-  const [initialStatusChecked, setInitialStatusChecked] = useState(!CACHED_STATUS?.loggedIn);
+  const [initialStatusChecked, setInitialStatusChecked] = useState(!CACHED_STATUS?.loggedIn && !WAS_SIGNED_IN);
   // Retry status until the backend is reachable (tsx dev-server boot race) — don't get stuck on the spinner.
   // After the retries are exhausted, surface a real "can't reach the server" screen instead of a forever-spinner.
   useEffect(() => {

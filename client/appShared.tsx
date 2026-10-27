@@ -58,7 +58,7 @@ export function enforceAccountOwner(user: string): void {
 export function clearAllLocalAccountData(userId: string | null): void {
   // Keys that are NOT namespaced by account. Every one is removed whenever an account ends on this browser (a leftover
   // "skip connect" or last subject from account A would otherwise apply to account B).
-  try { ["otto-tasks", "weave-status", "otto-seen-tasks", "otto-lastgen", "otto-onboard", "otto-onboard-step", "otto-onboard-track", "otto-tours-seen",
+  try { ["otto-tasks", "weave-status", "otto-was-in", "otto-seen-tasks", "otto-lastgen", "otto-onboard", "otto-onboard-step", "otto-onboard-track", "otto-tours-seen",
     "otto-skip-connect", "otto-last-subject", "otto-density-arm", "otto-autoopen-docs", "otto-error-log", "otto-local-practice", "otto.tutor.endedSessions", "otto-opened-docs", OWNER_KEY].forEach((k) => localStorage.removeItem(k)); } catch { /* ignore */ }
   void clearStudyDB(); // Study Mode's IndexedDB is not per-account either
   clearLocalDecks(userId);
