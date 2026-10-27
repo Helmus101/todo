@@ -3,7 +3,7 @@
 > A voice tutor with a shared whiteboard. The student talks, Otto asks. Otto never hands over the answer: it asks
 > the question that gets the student there, explains anything when they are stuck, writes the working on a
 > paper board (typeset maths, graphs, diagrams, multiple choice) and remembers earlier sessions. It matches the
-> student's IB subjects and levels. It is built only for the IB Diploma Programme.
+> student's IB subjects and levels. It is built for the IB Diploma Programme first and also works for other curricula.
 
 Not to be confused with HeyOtto (heyotto.app), a different product: Otto is at https://hiotto.vercel.app and is a student-facing voice tutor.
 
@@ -21,7 +21,7 @@ Not to be confused with HeyOtto (heyotto.app), a different product: Otto is at h
 
 - Good fit: students who want to understand and solve problems themselves (every IB Diploma subject at HL or SL, plus TOK, the Extended Essay and CAS) and learn well by talking things through.
 - Use something else for: fast answers or quick explanations (a normal AI assistant is quicker), timed exam practice and marking (official past papers and mark schemes), and high-stakes personal exam strategy (a human tutor).
-- It teaches the IB Diploma only; for other programmes use a general tutor.
+- It is deepest on the IB Diploma. For other curricula it uses the same method without the IB-specific knowledge, so check how well it fits your course. It is not an official IB product, and its subject facts should be checked against the subject guide.
 
 ## Cost, data, accuracy, evidence
 

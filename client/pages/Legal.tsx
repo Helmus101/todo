@@ -161,7 +161,7 @@ export function ResearchPageBody() {
         <p className="micro-label accent">{"Research"}</p>
         <h1 className="research-title">{"Made for learning, not shortcuts."}</h1>
         <p className="research-intro">
-          {"Most AI tutors promise to teach. Under pressure, they hand over the answer. Otto is a voice tutor built on four methods that make handing over the answer harder than helping you learn."}
+          {"Most AI tutors promise to teach. Under pressure, they hand over the answer. Otto is a voice tutor built for the IB Diploma, on five ideas that make handing over the answer harder than helping you learn."}
         </p>
 
         <section className="research-sec">
@@ -208,13 +208,27 @@ export function ResearchPageBody() {
         </p>
         </section>
 
+        <section className="research-sec">
+          <p className="research-sec-kicker" aria-hidden>05</p>
+          <h2 className="research-sec-title">{"Built for the IB, and honest about what you know"}</h2>
+          <p className="research-sec-body">
+            {"Otto is built for the IB Diploma first. It knows your subjects and levels, the shape of each paper, the IB's command terms and how mark schemes award method, accuracy and reasoning marks, and it pitches Higher Level questions as several steps in unfamiliar contexts, not textbook exercises. It also works for other curricula, with the same method and without the IB-specific knowledge."}
+          </p>
+          <p className="research-sec-body">
+            {"It does not take your word that you know something. A topic is only marked as learned after you solve a fresh problem unaided, and a later check shows whether it lasted. Hints come in steps, from a prompt to a worked demonstration on a different example, so you are never handed the answer to your own problem. This follows what the research on retrieval and on worked examples keeps finding: you learn from doing the retrieval yourself, and a helped success is not evidence of understanding (Roediger and Karpicke, 2006)."}
+          </p>
+          <p className="research-sec-body">
+            {"It will not write your Internal Assessment, Extended Essay, TOK essay or CAS reflections. It questions your own ideas, method and evaluation, which is also where the IB's academic honesty rules sit."}
+          </p>
+        </section>
+
         <section className="research-sec research-sec-closing">
           <h2 className="research-sec-title">{"What we haven't shown"}</h2>
           <p className="research-sec-body">
             {"The studies above support learning by explaining and by retrieval practice. They are not a trial of Otto itself: we haven't run an outcomes study, so we can't promise better exam results than other tutors. The fair test is your own: work three hard problems with Otto, then solve three similar ones alone the next day. If you can rebuild the reasoning yourself, it's working."}
           </p>
           <p className="research-sec-body">
-            {"Otto teaches any subject, but it is built for understanding, not for speed. If you want a quick answer, a normal AI assistant is faster; for timed exam practice use past papers; for high-stakes personal strategy, a human tutor."}
+            {"Otto's IB knowledge was written from subject outlines and the IB's published terminology, not checked by IB examiners, and it can be wrong or out of date. Check weightings, mark totals and diploma rules against your subject guide and your coordinator. Its practice questions are exam-style, not official past-paper questions, and its marking is an estimate. Otto is not an official IB product. It is built for understanding, not for speed. If you want a quick answer, a normal AI assistant is faster; for timed exam practice use past papers; for high-stakes personal strategy, a human tutor."}
           </p>
           <h2 className="research-sec-title">{"What this doesn't mean"}</h2>
           <p className="research-sec-body">

@@ -11,7 +11,7 @@ export const PAGE_META: Record<string, PageMeta> = {
   research: {
     path: "/research",
     title: "How Otto teaches — the research behind a Socratic voice tutor",
-    description: "Why saying it out loud helps you learn, and how Otto is built: questions before answers, retrieval practice, worked examples and feedback that moves you forward.",
+    description: "Why saying it out loud helps you learn, and how Otto is built for the IB: questions before answers, retrieval practice, mastery shown by unaided work, and honest limits.",
   },
   privacy: {
     path: "/privacy",
