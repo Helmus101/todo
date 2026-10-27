@@ -580,7 +580,7 @@ export function normalizeProfile(p: any): Profile {
         })).filter((m: MilestoneEntry) => m.subject && m.topic && m.label)).slice(0, 300)
       : undefined,
     lastTutorActivityAt: typeof p?.lastTutorActivityAt === "string" ? p.lastTutorActivityAt : undefined,
-    track: "ib", // Otto is built only for the IB Diploma: every account is an IB account
+    track: p?.track === "other" ? "other" : "ib", // Otto is built for the IB Diploma: IB unless the student says they are not in it
     ibSubjects: (() => { const l = cleanIbSubjects(p?.ibSubjects); return l.length ? l : undefined; })(),
     yearLevel: typeof p?.yearLevel === "string" ? p.yearLevel.trim().slice(0, 40) || undefined : undefined,
     learningStyle: ["visual", "auditory", "reading", "kinesthetic", "mixed"].includes(p?.learningStyle) ? p.learningStyle : undefined,

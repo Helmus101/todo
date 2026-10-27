@@ -216,9 +216,9 @@ export function registerProfileRoutes(app: express.Express): void {
       } else if (key === "language" && (value === "fr" || value === "en")) {
         p.language = value;
         p.languageSetAt = new Date().toISOString();
-      } else if (key === "track" && value === "ib") {
-        // Otto is IB-only: the track is always "ib", and any other value is ignored.
-        p.track = "ib"; p.preferencesUpdatedAt = new Date().toISOString();
+      } else if (key === "track" && (value === "ib" || value === "other")) {
+        // Built for the IB: "ib" is the default, "other" means the student is not in the IB (the tutor then teaches their own curriculum).
+        p.track = value; p.preferencesUpdatedAt = new Date().toISOString();
       } else if (key === "learningStyle" && ["visual", "auditory", "reading", "kinesthetic", "mixed"].includes(value)) {
         // Fully wired for a while on the READ side (learningStyleLine, claude.ts) but had no write path at
         // all until now — a student could never actually set it, so the field sat permanently empty.
@@ -348,7 +348,7 @@ export function registerProfileRoutes(app: express.Express): void {
     const list = cleanIbSubjects(req.body?.subjects);
     p.ibSubjects = list.length ? list : undefined;
     p.subjects = list.map((s) => s.name);
-    p.track = "ib";
+    if (list.length) p.track = "ib";
     if (typeof req.body?.year === "string" && /^(DP1|DP2)$/.test(req.body.year)) p.yearLevel = `IB ${req.body.year}`;
     p.preferencesUpdatedAt = new Date().toISOString();
     await commit(req);

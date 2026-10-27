@@ -88,6 +88,11 @@ export function Onboarding({ status, onStatus, onDone, mode = "full" }: { status
     } catch { notify("Your subjects didn't save — you can set them later in Settings.", "error"); }
     setStep(3);
   };
+  // Built for the IB, but anyone can use it: "not in the IB" just switches the tutor to the student's own curriculum.
+  const notIb = async () => {
+    try { await api.setProfilePreference("track", "other"); await onStatus(); } catch { /* Settings has the same switch */ }
+    setStep(3);
+  };
   const saveName = async () => {
     const n = name.trim();
     if (n) { try { await api.setProfile("name", n); await onStatus(); } catch { notify("Name didn't save — you can set it later in Settings.", "error"); } }
@@ -149,6 +154,7 @@ export function Onboarding({ status, onStatus, onDone, mode = "full" }: { status
               <button className="btn ghost" onClick={() => setStep(0)}>{"Back"}</button>
               <button className="btn primary" onClick={() => void saveYearSubjects()}>{"Continue"}</button>
             </div>
+            <p className="muted small mt-3">{"Not in the IB? "}<button type="button" className="btn ghost xs" onClick={() => void notIb()}>{"Use Otto for my own subjects"}</button></p>
           </div>
         )}
 

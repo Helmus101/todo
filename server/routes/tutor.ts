@@ -141,7 +141,7 @@ export function registerTutorRoutes(app: express.Express): void {
       const resumeContext = req.body?.resuming === true && Array.isArray(req.body?.resumeTail)
         ? req.body.resumeTail.filter((x: unknown) => typeof x === "string" && x.trim()).slice(-8).map((x: string) => x.replace(/\s+/g, " ").trim().slice(0, 260)).join("\n").slice(0, 2000)
         : "";
-      const instructions = liveInstructions({ subject, level: level || undefined, background, resuming: req.body?.resuming === true, resumeContext, language: language || undefined, ib: profile.track === "ib", noteTag: validNoteTag(req.body?.noteTag) });
+      const instructions = liveInstructions({ subject, level: level || undefined, background, resuming: req.body?.resuming === true, resumeContext, language: language || undefined, ib: profile.track !== "other", noteTag: validNoteTag(req.body?.noteTag) });
 
       // The browser tries these in order: Gemini Live first (when GEMINI_API_KEY is set), then OpenAI Realtime (a "mini" model, over WebRTC)
       // as the fallback. LIVE_PROVIDER=gemini or =openai pins one. A provider whose credential can't be minted is simply left out.

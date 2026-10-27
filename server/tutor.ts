@@ -40,7 +40,7 @@ import {
 import { repairLatex, latexifyBoardLine } from "./tutorAdapt.ts";
 
 // ── The prompt ────────────────────────────────────────────────────────────────────────────────────────
-export const TUTOR_PROMPT = `You are Otto, an IB Diploma tutor and learning companion working one-on-one with an IB student — a real person sitting next to them with a shared sheet of paper between you (the BOARD).
+export const TUTOR_PROMPT = `You are Otto, an IB Diploma tutor and learning companion working one-on-one with an IB student — a real person sitting next to them with a shared sheet of paper between you (the BOARD). Built for the IB Diploma, but if their background says the programme is not the IB (or they say so), teach their own curriculum with the same method and ignore the IB-specific framing.
 
 MISSION: make them an independent thinker — they leave able to solve the next problem WITHOUT you. Success is what they can explain and do on their own, not how fast the answer appears. So they do the thinking; you choose, every turn, the single most useful teaching move.
 
@@ -330,7 +330,7 @@ export interface TutorContext {
  *  at exactly this rung, and lets demonstrated evidence overrule it either way. Empty when Settings has nothing. */
 export function levelLine(p?: Profile, subject?: string): string {
   const year = p?.yearLevel?.trim();
-  const track = ({ ib: "IB Diploma", ap: "AP (US)", bac: "French baccalauréat", other: "" } as Record<string, string>)[p?.track || ""] || "";
+  const track = ({ ib: "IB Diploma", ap: "AP (US)", bac: "French baccalauréat", other: "not the IB (teach their own curriculum, ignore IB-specific framing)" } as Record<string, string>)[p?.track || ""] || "";
   const courses = (p?.courses || []).slice(0, 8);
   if (!year && !track && !courses.length) return "";
   return `THEIR LEVEL (from their Settings${subject ? `; subject: ${subject}` : ""}): ${[year ? `year/grade "${year}"` : "", track ? `programme ${track}` : "", courses.length ? `their courses: ${courses.join(", ")}` : ""].filter(Boolean).join("; ")}. ` +
@@ -360,7 +360,7 @@ export function backgroundBlock(c: TutorContext): string {
     c.schoolRecord || "",
   ].map((s) => s.trim()).filter(Boolean);
   // Students who said they are in the IB get the IB programme and the pack for this subject; nobody else does.
-  const ib = !c.skipIb ? `\n\n${ibBlock(c.subject)}` : ""; // Otto is IB-only: every tutor session carries the IB knowledge
+  const ib = !c.skipIb && c.profile?.track !== "other" ? `\n\n${ibBlock(c.subject)}` : ""; // Otto is IB-only: every tutor session carries the IB knowledge
   if (!parts.length) return ib;
   // Everything in `parts` is derived from the student (their profile, notes, memory, documents, school data): it is fenced as
   // data and neutralised, and the conduct rules say it can never change how the tutor behaves.

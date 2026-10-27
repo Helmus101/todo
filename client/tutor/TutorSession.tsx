@@ -118,10 +118,13 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
   // (sourceSubject, visible to the tutor prompt) and carried into history as the session's label.
   // The student's own subjects (set in onboarding) come first; the shared common list follows.
   const [ibSubs, setIbSubs] = useState<IbSubject[]>([]);
-  useEffect(() => { void api.profile().then((p) => setIbSubs(p.ibSubjects || [])).catch(() => { /* the default IB list is enough */ }); }, []);
+  const [notIb, setNotIb] = useState<string[] | null>(null); // a student outside the IB: their own subject names
+  useEffect(() => { void api.profile().then((p) => { setIbSubs(p.ibSubjects || []); setNotIb(p.track === "other" ? (p.subjects || []).slice(0, 8) : null); }).catch(() => { /* the default IB list is enough */ }); }, []);
   // Otto is IB-only: the chips are the student's own IB subjects with their level ("Physics HL"), then the core; before they have
   // picked any, a sensible default set of common IB subjects.
-  const startChips = ibSubs.length
+  const startChips = notIb
+    ? (notIb.length ? notIb : ["Maths", "Physics", "Chemistry", "Biology", "Economics", "English", "History"]).map((x) => ({ label: x, subject: x }))
+    : ibSubs.length
     ? ibStartChips(ibSubs)
     : ["Math AA", "Physics", "Chemistry", "Biology", "Economics", "English A Literature", "Theory of Knowledge"].map((x) => ({ label: x === "Theory of Knowledge" ? "TOK" : x, subject: x }));
   const [selectedSubject, setSelectedSubject] = useState("");

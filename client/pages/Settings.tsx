@@ -110,6 +110,10 @@ function PreferencesFields({ profile, onChanged }: { profile: Profile | null; on
         <IbSubjectPicker value={ibSubs} onChange={(n) => void saveIbSubjects(n)} />
       </div>
       <label className="set-row">
+        <span className="set-text"><b>{"I'm not in the IB"}</b><span className="settings-hint">{"Otto is built for the IB, but it also works for any other curriculum. Turn this on and it teaches your own courses and exams."}</span></span>
+        <input type="checkbox" checked={profile?.track === "other"} onChange={(e) => { const v = e.target.checked ? "other" : "ib"; void api.setProfilePreference("track", v).then((np) => onChanged?.({ ...(profile as Profile), track: np.track })).catch((err) => notify(err?.message || "That didn't save — give it another try.", "error")); }} />
+      </label>
+      <label className="set-row">
         <span className="set-text"><b>{"Your year/grade"}</b><span className="settings-hint">{"Otto pitches every question at your level."}</span></span>
         <input className="addinput" style={{ maxWidth: 160 }} maxLength={40}
           placeholder={"e.g. IB DP1"}

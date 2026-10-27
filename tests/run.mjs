@@ -5506,7 +5506,7 @@ section("hintDensity preference — new axis, distinct from learningStyle, never
   // Real pre-existing bug, fixed alongside this feature: the UI (Settings AND onboarding) has always
   // offered an "AP" track button, but this route's allow-list omitted "ap" — clicking it silently never
   // saved. Caught while wiring hintDensity next to it in the same preference route.
-  check("the track preference route accepts only 'ib' (Otto is IB-only)", /key === "track" && value === "ib"/.test(serverSrcHint));
+  check("the track preference route accepts 'ib' (default) and 'other' (not in the IB)", /key === "track" && (value === "ib" || value === "other")/.test(serverSrcHint));
 
   const typesSrcHint = readFileSync(new URL("../shared/types.ts", import.meta.url), "utf8");
   check("Profile.hintDensity is sanitized through the same allow-list as the write route", /hintDensity: \["steps", "hints", "balanced"\]\.includes\(p\?\.hintDensity\) \? p\.hintDensity : undefined,/.test(typesSrcHint));
