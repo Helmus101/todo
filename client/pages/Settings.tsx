@@ -71,13 +71,36 @@ function PreferencesFields({ profile, onChanged }: { profile: Profile | null; on
   const notify = useNotify();
   // The IB subjects with their levels. Otto is IB-only, so this replaces the old "are you in the IB / your track" rows.
   const [ibSubs, setIbSubs] = useState<IbSubject[]>(profile?.ibSubjects || []);
-  useEffect(() => { setIbSubs(profile?.ibSubjects || []); }, [profile?.ibSubjects]);
-  const saveIbSubjects = async (next: IbSubject[]) => {
-    const prev = ibSubs;
-    setIbSubs(next);
-    try { await api.setIbSubjects(next, /DP\s?([12])/i.test(profile?.yearLevel || "") ? (`DP${/DP\s?([12])/i.exec(profile?.yearLevel || "")![1]}` as "DP1" | "DP2") : undefined); onChanged?.({ ...(profile as Profile), ibSubjects: next, subjects: next.map((x) => x.name) }); }
-    catch (e: any) { setIbSubs(prev); notify(e?.message || "That didn't save — give it another try.", "error"); }
+  // Taps change the list here at once; the save is sent once the student pauses, always with the latest list. Saving after every tap
+  // raced (a slow earlier save answered last and put old subjects back) and tripped the rate limit.
+  const ibDirty = useRef(false);
+  const ibTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const ibSaved = useRef<IbSubject[]>(profile?.ibSubjects || []);
+  const ibLatest = useRef<IbSubject[]>(ibSubs);
+  const ibProfile = useRef(profile); ibProfile.current = profile;
+  useEffect(() => { if (!ibDirty.current) { setIbSubs(profile?.ibSubjects || []); ibSaved.current = profile?.ibSubjects || []; } }, [profile?.ibSubjects]);
+  const flushIbSubjects = useCallback(async () => {
+    ibTimer.current = null;
+    const next = ibLatest.current;
+    const pr = ibProfile.current;
+    const dp = /DP\s?([12])/i.exec(pr?.yearLevel || "");
+    try {
+      await api.setIbSubjects(next, dp ? (`DP${dp[1]}` as "DP1" | "DP2") : undefined);
+      ibSaved.current = next;
+      if (ibLatest.current === next) ibDirty.current = false; // nothing was tapped while this was in flight
+      onChanged?.({ ...(pr as Profile), ibSubjects: next, subjects: next.map((x) => x.name) });
+    } catch (e: any) {
+      ibDirty.current = false; ibLatest.current = ibSaved.current; setIbSubs(ibSaved.current);
+      notify(e?.message || "That didn't save — give it another try.", "error");
+    }
+  }, [notify, onChanged]);
+  const saveIbSubjects = (next: IbSubject[]) => {
+    ibDirty.current = true; ibLatest.current = next; setIbSubs(next);
+    if (ibTimer.current) clearTimeout(ibTimer.current);
+    ibTimer.current = setTimeout(() => { void flushIbSubjects(); }, 700);
   };
+  // Leaving Settings with a change still waiting sends it right away.
+  useEffect(() => () => { if (ibTimer.current) { clearTimeout(ibTimer.current); void flushIbSubjects(); } }, [flushIbSubjects]);
   // Hint density — a DIFFERENT axis from learningStyle (VARK, presentation-only): this is how much the
   // tutor walks through vs. just nudges when the student is stuck. Never changes whether the direct
   // answer is given (that's unconditionally never, server-side) — only how much scaffolding leads there.
@@ -107,7 +130,7 @@ function PreferencesFields({ profile, onChanged }: { profile: Profile | null; on
     <>
       <div className="set-row" style={{ display: "block" }}>
         <span className="set-text"><b>{"Your IB subjects"}</b><span className="settings-hint">{"Otto is built only for the IB Diploma. Your subjects and levels decide the papers, command terms and mark schemes it teaches to."}</span></span>
-        <IbSubjectPicker value={ibSubs} onChange={(n) => void saveIbSubjects(n)} />
+        <IbSubjectPicker value={ibSubs} onChange={saveIbSubjects} />
       </div>
       <label className="set-row">
         <span className="set-text"><b>{"I'm not in the IB"}</b><span className="settings-hint">{"Otto is built for the IB, but it also works for any other curriculum. Turn this on and it teaches your own courses and exams."}</span></span>

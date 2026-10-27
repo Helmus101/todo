@@ -343,7 +343,7 @@ export function registerProfileRoutes(app: express.Express): void {
   }));
 
   // The student's IB subjects with their level (HL or SL): the tutor's start screen, the subject packs and the question level all follow it.
-  app.post("/api/profile/ib-subjects", requireAuth, rateLimit(20, 60_000), ah(async (req, res) => {
+  app.post("/api/profile/ib-subjects", requireAuth, rateLimit(60, 60_000), ah(async (req, res) => {
     const p = (req.session.profile ||= emptyProfile());
     const list = cleanIbSubjects(req.body?.subjects);
     p.ibSubjects = list.length ? list : undefined;
