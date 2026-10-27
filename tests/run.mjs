@@ -658,6 +658,15 @@ check("structured settings survive merge", pm.responseStyle === "concise");
   check("IB subjects: the newer change wins a merge whichever side it is on", mergeProfileStates(ibA, ibB).ibSubjects?.[0]?.name === "Biology" && mergeProfileStates(ibB, ibA).ibSubjects?.[0]?.name === "Biology");
   check("IB subjects: an emptied list is a real change and is not revived by a stale copy", mergeProfileStates(ibB, cleared).ibSubjects === undefined && mergeProfileStates(cleared, ibB).ibSubjects === undefined);
 }
+{
+  // Every setting a student can change must survive a save/load (normalizeProfile) and a merge with an empty or stale copy.
+  const full = { ...emptyProfile(), betaFeatures: true, hintDensity: "steps", responseStyle: "concise", uiDensity: "compact", genPerDay: 3, timezone: "Europe/Paris", learningStyle: "visual", yearLevel: "IB DP1", autoApprove: ["a"], preferencesUpdatedAt: "2026-10-01T00:00:00Z", courses: ["Physics HL"], track: "other" };
+  const n = normalizeProfile(JSON.parse(JSON.stringify(full)));
+  for (const k of ["betaFeatures", "hintDensity", "responseStyle", "uiDensity", "genPerDay", "timezone", "learningStyle", "yearLevel", "autoApprove", "courses", "track"]) {
+    check(`setting '${k}' survives normalizeProfile and a merge either way round`, JSON.stringify(n[k]) === JSON.stringify(full[k]) && JSON.stringify(mergeProfileStates(emptyProfile(), n)[k]) === JSON.stringify(full[k]) && JSON.stringify(mergeProfileStates(n, emptyProfile())[k]) === JSON.stringify(full[k]));
+  }
+  check("every profile route that changes a setting waits for the account row to be written", !/await commit\(req\);/.test(readFileSync(new URL("../server/routes/profile.ts", import.meta.url), "utf8")));
+}
 const pmLang = mergeProfileStates(
   { ...emptyProfile(), language: "en", languageSetAt: newer },
   { ...emptyProfile(), language: "fr" }, // stale session, never itself touched the language toggle

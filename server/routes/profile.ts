@@ -27,7 +27,7 @@ export function registerProfileRoutes(app: express.Express): void {
       if (p.paused) { p.autoPausedAt = undefined; } else { p.autoPausedAt = undefined; p.autoResumedAt = p.pausedAt; }
       void recordEvent(req.session.user!, "settings_changed", { message: p.paused ? "AI paused" : "AI resumed" });
       void recordMetric(req.session.user!, "ai_paused_toggled", p.paused ? 1 : 0);
-      await commit(req);
+      await commit(req, { awaitCloud: true });
       res.json(p);
     } catch (e: any) { console.error(e);
       res.status(500).json({ error: "Couldn't save — try again." }); }
@@ -89,7 +89,7 @@ export function registerProfileRoutes(app: express.Express): void {
       if (!Object.keys(result.tokens).length) { res.status(502).json({ error: "Couldn't come up with a theme just now — try again." }); return; }
       profile.customTheme = result.tokens;
       profile.preferencesUpdatedAt = new Date().toISOString();
-      await commit(req);
+      await commit(req, { awaitCloud: true });
       res.json({ customTheme: profile.customTheme });
     } catch (e: any) { console.error(e);
       res.status(500).json({ error: "Couldn't personalize your theme — try again." }); }
@@ -99,7 +99,7 @@ export function registerProfileRoutes(app: express.Express): void {
     const profile = req.session.profile ||= emptyProfile();
     profile.customTheme = undefined;
     profile.preferencesUpdatedAt = new Date().toISOString();
-    await commit(req);
+    await commit(req, { awaitCloud: true });
     res.json({ ok: true });
   }));
 
@@ -160,7 +160,7 @@ export function registerProfileRoutes(app: express.Express): void {
         if (!k) { res.status(400).json({ error: `Unknown profile category "${category}".` }); return; }
         if (value && !(p as any)[k].some((x: string) => x.toLowerCase() === value.toLowerCase())) (p as any)[k].push(value.slice(0, 160));
       }
-      await commit(req);
+      await commit(req, { awaitCloud: true });
       res.json(p);
     } catch (e: any) { console.error(e);
       res.status(500).json({ error: "Couldn't save — try again." }); }
@@ -171,7 +171,7 @@ export function registerProfileRoutes(app: express.Express): void {
     const p = (req.session.profile ||= emptyProfile());
     p.fullAccess = req.body?.on === false ? false : true;
     p.fullAccessAt = new Date().toISOString();
-    await commit(req);
+    await commit(req, { awaitCloud: true });
     res.json({ ok: true, fullApp: p.fullAccess });
   }));
 
@@ -234,7 +234,7 @@ export function registerProfileRoutes(app: express.Express): void {
         res.status(400).json({ error: `Unrecognized preference "${key}" or invalid value.` });
         return;
       }
-      await commit(req);
+      await commit(req, { awaitCloud: true });
       res.json(p);
     } catch (e: any) { console.error(e);
       res.status(500).json({ error: "Couldn't save — try again." }); }
@@ -253,7 +253,7 @@ export function registerProfileRoutes(app: express.Express): void {
     if (!subject || !Number.isFinite(grade)) { res.status(400).json({ error: "subject and grade are required" }); return; }
     const list = (p.grades ||= []);
     list.push({ id: randomUUID(), subject, grade: Math.max(0, Math.min(scale, grade)), scale, updatedAt: new Date().toISOString(), source: "manual" });
-    await commit(req);
+    await commit(req, { awaitCloud: true });
     res.json(p);
   }));
 
@@ -268,7 +268,7 @@ export function registerProfileRoutes(app: express.Express): void {
       // same tombstone-less limitation as the preference/people/project lists). Persist the deletion to cloud
       // directly FIRST, so by the time commit() reloads "current" for the merge, it already reflects the delete.
       if (req.session.user) { try { await saveState(req.session.user, { profile: p, tasks: req.session.tasks || [] }); } catch { /* commit() below still tries */ } }
-      await commit(req);
+      await commit(req, { awaitCloud: true });
       res.json(p);
     } catch (e: any) { console.error(e);
       res.status(500).json({ error: "Couldn't delete that grade — try again." }); }
@@ -285,7 +285,7 @@ export function registerProfileRoutes(app: express.Express): void {
     if (!subject || !/^\d{4}-\d{2}-\d{2}/.test(deadline)) { res.status(400).json({ error: "subject and a real deadline are required" }); return; }
     const list = (p.manualExams ||= []);
     list.push({ id: randomUUID(), subject, deadline });
-    await commit(req);
+    await commit(req, { awaitCloud: true });
     res.json(p);
   }));
 
@@ -295,7 +295,7 @@ export function registerProfileRoutes(app: express.Express): void {
   app.post("/api/profile/onboarded", requireAuth, ah(async (req, res) => {
     const p = (req.session.profile ||= emptyProfile());
     if (!p.onboardedAt) p.onboardedAt = new Date().toISOString();
-    await commit(req);
+    await commit(req, { awaitCloud: true });
     res.json({ ok: true });
   }));
 
@@ -305,7 +305,7 @@ export function registerProfileRoutes(app: express.Express): void {
     if (!id) { res.status(400).json({ error: "id required" }); return; }
     const p = (req.session.profile ||= emptyProfile());
     p.toursSeen = [...new Set([...(p.toursSeen || []), id])].slice(0, 40);
-    await commit(req);
+    await commit(req, { awaitCloud: true });
     res.json({ ok: true, toursSeen: p.toursSeen });
   }));
 
@@ -319,7 +319,7 @@ export function registerProfileRoutes(app: express.Express): void {
     p.trainingShare = on ? true : undefined;
     p.trainingShareAt = new Date().toISOString();
     if (!on) await deleteTutorArchive(req.session.user!);
-    await commit(req);
+    await commit(req, { awaitCloud: true });
     res.json({ ok: true, trainingShare: on });
   }));
 
@@ -329,7 +329,7 @@ export function registerProfileRoutes(app: express.Express): void {
     p.toursSeen = [];
     p.onboardedAt = undefined;
     if (req.session.user) { try { await saveState(req.session.user, { profile: p, tasks: req.session.tasks || [] }); } catch { /* commit() below still tries */ } }
-    await commit(req);
+    await commit(req, { awaitCloud: true });
     res.json({ ok: true });
   }));
 
@@ -338,7 +338,7 @@ export function registerProfileRoutes(app: express.Express): void {
     const p = (req.session.profile ||= emptyProfile());
     const list = Array.isArray(req.body?.subjects) ? req.body.subjects : [];
     p.subjects = [...new Set<string>(list.map((s: unknown) => String(s).trim().slice(0, 60)).filter(Boolean))].slice(0, 14);
-    await commit(req);
+    await commit(req, { awaitCloud: true });
     res.json({ ok: true, subjects: p.subjects });
   }));
 
@@ -363,7 +363,7 @@ export function registerProfileRoutes(app: express.Express): void {
       p.manualExams = (p.manualExams || []).filter((e) => e.id !== id);
       // Same tombstone-less-merge reasoning as the grade delete above — persist the delete to cloud FIRST.
       if (req.session.user) { try { await saveState(req.session.user, { profile: p, tasks: req.session.tasks || [] }); } catch { /* commit() below still tries */ } }
-      await commit(req);
+      await commit(req, { awaitCloud: true });
       res.json(p);
     } catch (e: any) { console.error(e);
       res.status(500).json({ error: "Couldn't remove that exam — try again." }); }
@@ -381,7 +381,7 @@ export function registerProfileRoutes(app: express.Express): void {
     if (!subject || !question) { res.status(400).json({ error: "subject and question are required" }); return; }
     const list = (p.errorLog ||= []);
     list.push({ id: randomUUID(), subject, question, mistake, fix, createdAt: new Date().toISOString() });
-    await commit(req);
+    await commit(req, { awaitCloud: true });
     res.json(p);
   }));
 
@@ -391,7 +391,7 @@ export function registerProfileRoutes(app: express.Express): void {
       const id = decodeURIComponent(String(req.params.id || ""));
       p.errorLog = (p.errorLog || []).filter((e) => e.id !== id);
       if (req.session.user) { try { await saveState(req.session.user, { profile: p, tasks: req.session.tasks || [] }); } catch { /* commit() below still tries */ } }
-      await commit(req);
+      await commit(req, { awaitCloud: true });
       res.json(p);
     } catch (e: any) { console.error(e);
       res.status(500).json({ error: "Couldn't remove that entry — try again." }); }
@@ -408,7 +408,7 @@ export function registerProfileRoutes(app: express.Express): void {
       // Delete-persists-to-cloud-first — same reasoning as the errorLog/grade/exam deletes above: without
       // this, commit()'s cross-device merge could resurrect the "deleted" summary from a stale cloud copy.
       if (req.session.user) { try { await saveState(req.session.user, { profile: p, tasks: req.session.tasks || [] }); } catch { /* commit() below still tries */ } }
-      await commit(req);
+      await commit(req, { awaitCloud: true });
       res.json(p);
     } catch (e: any) { console.error(e);
       res.status(500).json({ error: "Couldn't reset — try again." }); }
@@ -418,7 +418,7 @@ export function registerProfileRoutes(app: express.Express): void {
   app.delete("/api/profile", requireAuth, async (req, res) => {
     try {
       req.session.profile = emptyProfile();
-      await commit(req);
+      await commit(req, { awaitCloud: true });
       res.json(tasks.stripProfileForResponse(req.session.profile));
     } catch (e: any) { console.error(e);
       res.status(500).json({ error: "Couldn't reset your profile — try again." }); }
@@ -435,7 +435,7 @@ export function registerProfileRoutes(app: express.Express): void {
     }
     try {
       (p as any)[k].splice(i, 1);
-      await commit(req);
+      await commit(req, { awaitCloud: true });
       res.json(tasks.stripProfileForResponse(p));
     } catch (e: any) { console.error(e);
       res.status(500).json({ error: "Couldn't delete that — try again." }); }
@@ -446,7 +446,7 @@ export function registerProfileRoutes(app: express.Express): void {
     const p = (req.session.profile ||= emptyProfile());
     p.usageRequest = { at: new Date().toISOString(), weekKey: weekKeyOf(), ...(typeof req.body?.note === "string" && req.body.note.trim() ? { note: req.body.note.trim().slice(0, 300) } : {}) };
     void recordEvent(req.session.user!, "usage_requested", { message: p.usageRequest.note });
-    await commit(req);
+    await commit(req, { awaitCloud: true });
     res.json({ ok: true });
   }));
 
@@ -480,7 +480,7 @@ export function registerProfileRoutes(app: express.Express): void {
     if (email === String(req.session.user || "").toLowerCase()) {
       const p = (req.session.profile ||= emptyProfile());
       p.fullAccess = on; p.fullAccessAt = new Date().toISOString();
-      await commit(req);
+      await commit(req, { awaitCloud: true });
     } else if (!(await setFullAccessFor(email, on))) { res.status(404).json({ error: "No account with that email." }); return; }
     void recordEvent(req.session.user!, "full_access_set", { message: `${email} ${on ? "on" : "off"}` });
     res.json({ ok: true, fullApp: on });

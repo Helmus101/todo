@@ -588,6 +588,7 @@ export function normalizeProfile(p: any): Profile {
     yearLevel: typeof p?.yearLevel === "string" ? p.yearLevel.trim().slice(0, 40) || undefined : undefined,
     learningStyle: ["visual", "auditory", "reading", "kinesthetic", "mixed"].includes(p?.learningStyle) ? p.learningStyle : undefined,
     hintDensity: ["steps", "hints", "balanced"].includes(p?.hintDensity) ? p.hintDensity : undefined,
+    betaFeatures: typeof p?.betaFeatures === "boolean" ? p.betaFeatures : undefined,
     focusStats: p?.focusStats && typeof p.focusStats === "object" ? {
       totalTrackedSessions: Number(p.focusStats.totalTrackedSessions) || 0,
       avgConcentration: Math.min(100, Math.max(0, Number(p.focusStats.avgConcentration) || 0)),
