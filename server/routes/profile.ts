@@ -347,11 +347,12 @@ export function registerProfileRoutes(app: express.Express): void {
     const p = (req.session.profile ||= emptyProfile());
     const list = cleanIbSubjects(req.body?.subjects);
     p.ibSubjects = list.length ? list : undefined;
+    p.ibSubjectsAt = new Date().toISOString();
     p.subjects = list.map((s) => s.name);
     if (list.length) p.track = "ib";
     if (typeof req.body?.year === "string" && /^(DP1|DP2)$/.test(req.body.year)) p.yearLevel = `IB ${req.body.year}`;
     p.preferencesUpdatedAt = new Date().toISOString();
-    await commit(req);
+    await commit(req, { awaitCloud: true }); // written to the account row before we answer, so a reload or another device sees it
     res.json({ ok: true, ibSubjects: p.ibSubjects || [], yearLevel: p.yearLevel });
   }));
 

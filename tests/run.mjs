@@ -651,6 +651,13 @@ check("structured settings survive merge", pm.responseStyle === "concise");
 // explicitly chose fr" — the stale LOCAL session's copy always won, silently reverting another device's
 // switch to English on the very next commit from the stale session. Device A switches to English (stamped);
 // device B's still-open, never-reloaded session (still "fr", unstamped) merges next — English must survive.
+{
+  const ibA = { ...emptyProfile(), ibSubjects: [{ name: "Physics", level: "HL" }], subjects: ["Physics"], ibSubjectsAt: "2026-10-01T10:00:00Z" };
+  const ibB = { ...emptyProfile(), ibSubjects: [{ name: "Biology", level: "SL" }], subjects: ["Biology"], ibSubjectsAt: "2026-10-02T10:00:00Z" };
+  const cleared = { ...emptyProfile(), ibSubjects: undefined, subjects: [], ibSubjectsAt: "2026-10-03T10:00:00Z" };
+  check("IB subjects: the newer change wins a merge whichever side it is on", mergeProfileStates(ibA, ibB).ibSubjects?.[0]?.name === "Biology" && mergeProfileStates(ibB, ibA).ibSubjects?.[0]?.name === "Biology");
+  check("IB subjects: an emptied list is a real change and is not revived by a stale copy", mergeProfileStates(ibB, cleared).ibSubjects === undefined && mergeProfileStates(cleared, ibB).ibSubjects === undefined);
+}
 const pmLang = mergeProfileStates(
   { ...emptyProfile(), language: "en", languageSetAt: newer },
   { ...emptyProfile(), language: "fr" }, // stale session, never itself touched the language toggle

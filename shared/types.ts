@@ -335,6 +335,8 @@ export interface Profile {
   track?: "ib" | "ap" | "bac" | "other"; // Otto is IB-only: normalizeProfile always sets this to "ib" (the other values exist only in old saved profiles)
   /** The student's IB subjects with their level (HL or SL), chosen in onboarding or Settings. */
   ibSubjects?: { name: string; level: "HL" | "SL" }[];
+  /** When ibSubjects was last changed: the newer side wins a merge, and an emptied list is a real change, not a missing value. */
+  ibSubjectsAt?: string;
   /** The student's actual school year/grade — e.g. "Terminale", "Grade 10", "DP1", "Year 12". Free text,
    *  not an enum: year-level names aren't standardized across the systems Otto supports, and forcing one
    *  system's labels onto another would be wrong for half the audience. This is what lets Otto tell a
@@ -582,6 +584,7 @@ export function normalizeProfile(p: any): Profile {
     lastTutorActivityAt: typeof p?.lastTutorActivityAt === "string" ? p.lastTutorActivityAt : undefined,
     track: p?.track === "other" ? "other" : "ib", // Otto is built for the IB Diploma: IB unless the student says they are not in it
     ibSubjects: (() => { const l = cleanIbSubjects(p?.ibSubjects); return l.length ? l : undefined; })(),
+    ibSubjectsAt: typeof p?.ibSubjectsAt === "string" ? p.ibSubjectsAt : undefined,
     yearLevel: typeof p?.yearLevel === "string" ? p.yearLevel.trim().slice(0, 40) || undefined : undefined,
     learningStyle: ["visual", "auditory", "reading", "kinesthetic", "mixed"].includes(p?.learningStyle) ? p.learningStyle : undefined,
     hintDensity: ["steps", "hints", "balanced"].includes(p?.hintDensity) ? p.hintDensity : undefined,

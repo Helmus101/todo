@@ -949,8 +949,14 @@ export function mergeProfileStates(p1: Profile, p2: Profile): Profile {
       : undefined,
     onboardedAt: [p1.onboardedAt, p2.onboardedAt].filter(Boolean).sort()[0],
     toursSeen: (p1.toursSeen?.length || p2.toursSeen?.length) ? [...new Set([...(p1.toursSeen || []), ...(p2.toursSeen || [])])].slice(0, 40) : undefined,
-    subjects: p2.subjects ?? p1.subjects,
-    ibSubjects: p2.ibSubjects ?? p1.ibSubjects,
+    // The IB subjects (and the plain subject names derived from them) follow their own stamp: the newer change wins, including
+    // an emptied list. Before any stamp existed, fall back to whichever side has a value.
+    ...(() => {
+      const t1 = Date.parse(p1.ibSubjectsAt || "") || 0, t2 = Date.parse(p2.ibSubjectsAt || "") || 0;
+      if (!t1 && !t2) return { subjects: p2.subjects ?? p1.subjects, ibSubjects: p2.ibSubjects ?? p1.ibSubjects };
+      const side = t2 >= t1 ? p2 : p1;
+      return { subjects: side.subjects, ibSubjects: side.ibSubjects, ibSubjectsAt: side.ibSubjectsAt };
+    })(),
     manualExams: (p1.manualExams?.length || p2.manualExams?.length)
       ? [...new Map([...(p1.manualExams || []), ...(p2.manualExams || [])].map((e) => [e.id, e])).values()]
       : undefined,
