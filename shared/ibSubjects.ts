@@ -4,16 +4,21 @@
 // outlines is left out rather than guessed; the general block (ibCurriculum.ts) tells the tutor to say so and point to
 // the subject guide when it is unsure. Pure text.
 import { IB_KNOWLEDGE } from "./ibCurriculum.ts";
+import { LANG_ARTS_CORE_PACKS } from "./ibPacks/languagesArtsCore.ts";
+import { MATHS_PACKS } from "./ibPacks/maths.ts";
+import { SCIENCE_PACKS } from "./ibPacks/sciences.ts";
+import { GROUP3_PACKS } from "./ibPacks/group3.ts";
 
 interface Pack { test: RegExp; title: string; text: string }
 
-const PACKS: Pack[] = [
+// The deep packs come first (they are matched first); the short original packs below stay as the fallback for anything a deep pack does not recognise.
+const LEGACY_PACKS: Pack[] = [
   { test: /math|maths|mathématiques|calcul/i, title: "MATHS", text: `Know which course they are on: Analysis and Approaches (AA) or Applications and Interpretation (AI), at SL or HL. Five topics: number and algebra, functions, geometry and trigonometry, statistics and probability, calculus.
 - AA leans on algebra, proof and calculus. HL adds: proof (induction, contradiction, counterexample), complex numbers (Argand diagram, modulus and argument, de Moivre), polynomials and partial fractions, binomial theorem for negative and fractional powers, counting (permutations, combinations), vectors (scalar and vector product, lines and planes in 3D, systems of equations), further trigonometry (compound and double angle, reciprocal and inverse functions), further functions (modulus, rational functions, transformations), further calculus (implicit differentiation, related rates, integration by parts and substitution, volumes of revolution, differential equations with Euler's method, separation of variables and integrating factors, Maclaurin series, l'Hôpital), Bayes' theorem, continuous random variables and the normal distribution.
 - AI leans on modelling, data and technology: financial maths, regression and correlation (Pearson, Spearman), chi-squared and t-tests, Voronoi diagrams, binomial and normal distributions, sinusoidal models.
 - Papers. AA SL: Paper 1 is 90 min without technology (40%), Paper 2 is 90 min with technology (40%), IA 20%. AA HL: Paper 1 is 120 min without technology (30%), Paper 2 is 120 min with technology (30%), Paper 3 is 60 min with technology with two compulsory extended problem-solving questions (20%), IA 20%. AI SL: Paper 1 is 90 min of short-response questions (80 marks, 40%), Paper 2 is 90 min of extended-response questions (80 marks, 40%), IA 20%; AI HL has a third paper, so check the guide. Papers 1 and 2 have a short-response section and an extended-response section, and the marks for each question are printed beside it. The IA is a written mathematical exploration on a topic of the student's own choice, marked out of 20 against five criteria.
 - Habits: on the no-technology paper, exact values and clear algebra; on technology papers, make them say what they entered, what the output means and why the method is valid, and still show the setup (a calculator output is not a solution); never accept an unjustified answer. In proofs, check that every line is logically justified, find the FIRST unjustified step, and ask them to repair it themselves. Watch for lost domain restrictions on inverses, dropped plus-or-minus, degrees versus radians, and solutions that are never checked.` },
-  { test: /phys/i, title: "PHYSICS", text: `The current course (first exams 2025) has five themes with a fixed topic list; topics marked HL are HL only, "+" means extra HL content.
+  { test: /\bphysics\b|\bphysique\b/i, title: "PHYSICS", text: `The current course (first exams 2025) has five themes with a fixed topic list; topics marked HL are HL only, "+" means extra HL content.
 - A Space, time and motion: A.1 Kinematics, A.2 Forces and momentum, A.3 Work, energy and power, A.4 Rigid body mechanics (HL), A.5 Galilean and special relativity (HL).
 - B The particulate nature of matter: B.1 Thermal energy transfers, B.2 Greenhouse effect, B.3 Gas laws, B.4 Thermodynamics (HL), B.5 Current and circuits.
 - C Wave behaviour: C.1 Simple harmonic motion (+), C.2 Wave model, C.3 Wave phenomena (+), C.4 Standing waves and resonance, C.5 Doppler effect (+).
@@ -58,6 +63,8 @@ const PACKS: Pack[] = [
 - Habits: match the text type (blog, speech, letter, article...) and register, answer the task fully, organise with connectors, and correct recurring grammar errors by questioning, not by rewriting.` },
 ];
 
+const PACKS: Pack[] = [...LANG_ARTS_CORE_PACKS, ...MATHS_PACKS, ...SCIENCE_PACKS, ...GROUP3_PACKS, ...LEGACY_PACKS];
+
 /** Every pack, for documentation (the unlisted brief page quotes them verbatim so it can never drift from what the tutor is told). */
 export function ibPacks(): { title: string; text: string }[] { return PACKS.map((p) => ({ title: p.title, text: p.text })); }
 
@@ -66,7 +73,13 @@ export function ibSubjectPack(subject?: string): string {
   const s = String(subject || "").trim();
   if (!s) return "";
   const p = PACKS.find((x) => x.test.test(s));
-  return p ? `\n\nTHIS SUBJECT IN THE IB: ${p.title}\n${p.text}` : "";
+  const lv = /\b(HL|SL)\b/i.exec(s)?.[1]?.toUpperCase();
+  const level = lv === "HL"
+    ? `\nTHIS STUDENT TAKES THIS SUBJECT AT HIGHER LEVEL: pitch questions at HL standard (several steps, unfamiliar contexts, more than one topic at once, proof or evaluation), and use the HL-only content when it is relevant.`
+    : lv === "SL"
+    ? `\nTHIS STUDENT TAKES THIS SUBJECT AT STANDARD LEVEL: pitch questions at SL standard, keep to the SL content, and do not drift into HL-only material unless they ask for a stretch.`
+    : "";
+  return p ? `\n\nTHIS SUBJECT IN THE IB: ${p.title}${level}\n${p.text}` : level ? `\n\nTHIS SUBJECT IN THE IB: ${s}${level}` : "";
 }
 
 /** Everything the tutor knows about the IB, for a student who said they are in the IB: the general programme knowledge plus

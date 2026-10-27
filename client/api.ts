@@ -313,6 +313,7 @@ export const api = {
   deleteCoursework: (id: string): Promise<Profile> => req(`/api/coursework/${encodeURIComponent(id)}`, { method: "DELETE" }).then(j).then(normalizeProfile),
   markTourSeen: (id: string): Promise<{ ok: boolean; toursSeen: string[] }> => post("/api/profile/tour-seen", { id }),
   resetOnboarding: (): Promise<{ ok: boolean }> => post("/api/profile/onboarding-reset"),
+  setIbSubjects: (subjects: { name: string; level: "HL" | "SL" }[], year?: "DP1" | "DP2"): Promise<{ ok: boolean; ibSubjects: { name: string; level: "HL" | "SL" }[]; yearLevel?: string }> => post("/api/profile/ib-subjects", { subjects, year }),
   setSubjects: (subjects: string[]): Promise<{ ok: boolean; subjects: string[] }> => post("/api/profile/subjects", { subjects }),
   // Otto's learned teaching policy for this student (transparency + reset).
   tutorPolicy: (): Promise<{ learning: boolean; updates: number; flow?: { move: string; pace: string }; stuck?: { move: string; pace: string } }> => req("/api/tutor/policy").then(j),

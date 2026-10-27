@@ -1,5 +1,6 @@
 // Shared task model — imported by both the Express backend and the React client.
 import type { TableSpec, SourceSpec } from "./boardTable.ts";
+import { cleanIbSubjects } from "./ibSubjectList.ts";
 import { normalizeCoursework, type CourseworkDoc } from "./coursework.ts";
 // The adaptive-agent layer's shapes (the persistent student model, the concept graph, the app-owned session
 // state, the board event stream and the action space). They live in their own shared module so the client can
@@ -331,7 +332,9 @@ export interface Profile {
   // command terms and mark-scheme-style rubrics, AP uses College Board MCQ/FRQ conventions — see
   // examStyleLine in claude.ts. "ap" added alongside "ib" (they're two distinct programs, not one "IB or
   // similar" bucket) by direct request. Set from Settings.
-  track?: "ib" | "ap" | "bac" | "other";
+  track?: "ib" | "ap" | "bac" | "other"; // Otto is IB-only: normalizeProfile always sets this to "ib" (the other values exist only in old saved profiles)
+  /** The student's IB subjects with their level (HL or SL), chosen in onboarding or Settings. */
+  ibSubjects?: { name: string; level: "HL" | "SL" }[];
   /** The student's actual school year/grade — e.g. "Terminale", "Grade 10", "DP1", "Year 12". Free text,
    *  not an enum: year-level names aren't standardized across the systems Otto supports, and forcing one
    *  system's labels onto another would be wrong for half the audience. This is what lets Otto tell a
@@ -412,7 +415,7 @@ export interface FocusSession {
 function newId(): string {
   return typeof crypto !== "undefined" && typeof crypto.randomUUID === "function" ? crypto.randomUUID() : Math.random().toString(36).slice(2) + Date.now().toString(36);
 }
-export function emptyProfile(): Profile { return { about: "", preferences: [], people: [], projects: [], courses: [], sessions: [] }; }
+export function emptyProfile(): Profile { return { about: "", preferences: [], people: [], projects: [], courses: [], sessions: [], track: "ib" }; }
 
 /** Self-heals an already-duplicated grade history on every normalize — a Pronote sync is meant to keep ONE
  *  live row per subject (see applyPronoteGrades, server/pronote.ts), but a bug there used to generate a
@@ -577,7 +580,8 @@ export function normalizeProfile(p: any): Profile {
         })).filter((m: MilestoneEntry) => m.subject && m.topic && m.label)).slice(0, 300)
       : undefined,
     lastTutorActivityAt: typeof p?.lastTutorActivityAt === "string" ? p.lastTutorActivityAt : undefined,
-    track: ["ib", "ap", "bac", "other"].includes(p?.track) ? p.track : undefined,
+    track: "ib", // Otto is built only for the IB Diploma: every account is an IB account
+    ibSubjects: (() => { const l = cleanIbSubjects(p?.ibSubjects); return l.length ? l : undefined; })(),
     yearLevel: typeof p?.yearLevel === "string" ? p.yearLevel.trim().slice(0, 40) || undefined : undefined,
     learningStyle: ["visual", "auditory", "reading", "kinesthetic", "mixed"].includes(p?.learningStyle) ? p.learningStyle : undefined,
     hintDensity: ["steps", "hints", "balanced"].includes(p?.hintDensity) ? p.hintDensity : undefined,

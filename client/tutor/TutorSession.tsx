@@ -30,7 +30,7 @@ import { buttonMessage, deviceStateOf } from "../../shared/deviceProtocol.ts";
 import { EXPLAIN_NOW_NOTE, isOnlyAQuestion, nextStuckCount } from "../../shared/stuck.ts";
 import { PageTour } from "../PageTour.tsx";
 import { TOURS } from "../tours.ts";
-import { COMMON_SUBJECTS } from "../../shared/coursework.ts";
+import { ibStartChips, type IbSubject } from "../../shared/ibSubjectList.ts";
 import { buildSessionSummary, saveTutorSession, getTutorSessions, sessionCardTitle, sessionCardDesc, sessionTopic, relativeWhen, sessionMemoryForPrompt, type TutorSessionSummary } from "./tutorSessions.ts";
 
 // A dismiss that silently fails (a network blip, a momentary 429) used to just be swallowed — the session
@@ -117,21 +117,13 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
   // The landing screen asks WHAT to study before starting — the subject is stamped onto the session
   // (sourceSubject, visible to the tutor prompt) and carried into history as the session's label.
   // The student's own subjects (set in onboarding) come first; the shared common list follows.
-  const [mySubjects, setMySubjects] = useState<string[]>([]);
-  useEffect(() => { void api.profile().then((p) => setMySubjects(p.subjects || [])).catch(() => { /* the common list is enough */ }); }, []);
-  const SUBJECT_GROUPS: { label: string; items: string[] }[] = [
-    { label: "Maths & science", items: ["Math", "Physics", "Chemistry", "Biology", "Computer Science", "Economics"] },
-    { label: "Exam prep", items: ["SAT prep"] },
-    { label: "Languages & humanities", items: ["English", "French", "Spanish", "History", "Geography", "Philosophy", "Art", "Music"] },
-  ];
-  const known = new Set(SUBJECT_GROUPS.flatMap((g) => g.items));
-  const mine = mySubjects.filter((x) => x && x !== "Other");
-  const extra = COMMON_SUBJECTS.filter((x) => x !== "Other" && !known.has(x));
-  const subjectGroups = [
-    ...(mine.length ? [{ label: "Your subjects", items: [...new Set(mine)] }] : []),
-    ...SUBJECT_GROUPS.map((g) => ({ ...g, items: g.items.filter((x) => !mine.includes(x)) })),
-    ...(extra.length ? [{ label: "More", items: extra.filter((x) => !mine.includes(x)) }] : []),
-  ].filter((g) => g.items.length);
+  const [ibSubs, setIbSubs] = useState<IbSubject[]>([]);
+  useEffect(() => { void api.profile().then((p) => setIbSubs(p.ibSubjects || [])).catch(() => { /* the default IB list is enough */ }); }, []);
+  // Otto is IB-only: the chips are the student's own IB subjects with their level ("Physics HL"), then the core; before they have
+  // picked any, a sensible default set of common IB subjects.
+  const startChips = ibSubs.length
+    ? ibStartChips(ibSubs)
+    : ["Math AA", "Physics", "Chemistry", "Biology", "Economics", "English A Literature", "Theory of Knowledge"].map((x) => ({ label: x === "Theory of Knowledge" ? "TOK" : x, subject: x }));
   const [selectedSubject, setSelectedSubject] = useState("");
   // Only used when the subject is "Other": the student names it here. Every other subject starts with one tap, no extra question.
   const OTHER = "__other__";
@@ -851,7 +843,7 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
     let last = "";
     try { last = localStorage.getItem("otto-last-subject") || ""; } catch { /* no storage */ }
     // Nothing picked and nothing remembered: start in the student's first subject (or Math) rather than do nothing.
-    if (!last) last = (mine.length ? mine : ["Math"])[0];
+    if (!last) last = startChips[0]?.subject || "Math AA";
     setSelectedSubject(last);
     setDeviceStartFor(last);
   };
@@ -956,8 +948,8 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
               onKeyDown={(e) => { if (e.key === "Enter" && topic.trim()) void startNewSession(); }}
             />
             <div className="tutor-subject-suggest">
-              {(mine.length ? mine : ["Math", "Physics", "Chemistry", "Biology", "English", "SAT prep"]).slice(0, 6).map((subj) => (
-                <button key={subj} type="button" className={selectedSubject === subj ? "on" : ""} onClick={() => { setSelectedSubject(subj); setTopic(""); }}>{subj}</button>
+              {startChips.slice(0, 10).map((c) => (
+                <button key={c.subject} type="button" className={selectedSubject === c.subject ? "on" : ""} onClick={() => { setSelectedSubject(c.subject); setTopic(""); }}>{c.label}</button>
               ))}
             </div>
           </div>

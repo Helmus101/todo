@@ -5,6 +5,8 @@
 //
 // The SHAPES live in shared/agentTypes.ts (the client's transparency panel and the profile need them, and a
 // server import there would drag server code into the browser bundle). This module is the behaviour.
+import { mathsPrerequisites } from "../shared/ibMathsGraph.ts";
+import { masteryState, MASTERY_LABEL } from "../shared/masteryState.ts";
 //
 // Two design rules from the spec are load-bearing:
 //
@@ -435,6 +437,7 @@ export function studentModelBlock(model: StudentModelShape | undefined, opts: { 
     const bits: string[] = read
       ? [`${read.status} (model: ${Math.round(read.predicted * 100)}% likely to get the next one right)`, `next: ${read.next}`]
       : [`mastery ${band(c.mastery)}`];
+    bits.unshift(`evidence state: ${MASTERY_LABEL[masteryState(c)]}`);
     if (c.confidence < 0.35) bits.push("(thin evidence — treat as a guess, not a fact)");
     if (c.attempts > 0) {
       const ind = independentSuccess(c);
@@ -449,6 +452,15 @@ export function studentModelBlock(model: StudentModelShape | undefined, opts: { 
     }
     for (const e of c.commonErrors.slice(0, 2)) lines.push(`    ! recurring slip: ${e.text} (${e.count}×)`);
     for (const s of c.strengths.slice(-1)) lines.push(`    ✓ can already: ${s}`);
+    // IB Maths: what this idea builds on, and what the evidence says about each of those (probe the weakest before teaching on).
+    const builds = mathsPrerequisites(c.label);
+    if (builds.length) {
+      const parts = builds.map((n) => {
+        const rec = Object.values(model.concepts).find((r) => n.match.test(r.label));
+        return `${n.title} (${rec ? MASTERY_LABEL[masteryState(rec)].toLowerCase() : "no evidence yet"})`;
+      });
+      lines.push(`    ⟵ builds on: ${parts.join("; ")}`);
+    }
     if (c.nextReview && Date.parse(c.nextReview) <= now.getTime()) lines.push(`    ↻ due for a quick retrieval check (not demonstrated since ${c.lastDemonstrated ? c.lastDemonstrated.slice(0, 10) : "unknown"})`);
   }
   return (

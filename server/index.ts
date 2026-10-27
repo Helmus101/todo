@@ -286,7 +286,7 @@ app.get("/api/status", ah(async (req, res) => {
     home: (typeof req.session.profile?.fullAccess === "boolean" ? req.session.profile.fullAccess : FULL_APP_EMAILS.includes(String(req.session.user || "").toLowerCase())) ? "tasks" : "tutor",
     // "Onboarded" = finished/skipped the basic flow, OR an account that clearly predates it (has a name, a track or
     // tasks) — those are never put through name/track questions they've long answered. Page guides still run.
-    onboarded: !!req.session.profile?.onboardedAt || !!req.session.profile?.name || !!req.session.profile?.track || (req.session.tasks || []).length > 0,
+    onboarded: !!req.session.profile?.onboardedAt || !!req.session.profile?.name || !!req.session.profile?.ibSubjects?.length || (req.session.tasks || []).length > 0,
     toursSeen: req.session.profile?.toursSeen,
     trainingShare: !!req.session.profile?.trainingShare,
   };

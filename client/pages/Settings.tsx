@@ -1,4 +1,7 @@
 import { LanguagePicker } from "../LanguagePicker.tsx";
+import { masteryState, MASTERY_LABEL } from "../../shared/masteryState.ts";
+import { IbSubjectPicker } from "./IbSubjectPicker.tsx";
+import type { IbSubject } from "../../shared/ibSubjectList.ts";
 import { FeedbackForm } from "./FeedbackForm.tsx";
 import { StudyStatsSection } from "./StudyStats.tsx";
 import { AdminTools } from "./AdminTools.tsx";
@@ -66,16 +69,14 @@ function writePronoteOptimistic(value: boolean | null): void {
 function PreferencesFields({ profile, onChanged }: { profile: Profile | null; onChanged?: (p: Profile) => void }) {
   const L = useLang();
   const notify = useNotify();
-  // Track: onboarding's copy has always claimed this is "changeable any time in Settings" — it wasn't
-  // actually wired up here, so that claim was false for anyone past onboarding. Same optimistic-save
-  // pattern as language above.
-  const [track, setTrackState] = useState<"ib" | "ap" | "bac" | "other" | undefined>(profile?.track);
-  useEffect(() => { setTrackState(profile?.track); }, [profile?.track]);
-  const saveTrack = async (v: "ib" | "ap" | "bac" | "other") => {
-    const prev = track;
-    setTrackState(v);
-    try { onChanged?.(await api.setProfilePreference("track", v)); }
-    catch (e: any) { setTrackState(prev); notify(e?.message || "That didn't save — give it another try.", "error"); }
+  // The IB subjects with their levels. Otto is IB-only, so this replaces the old "are you in the IB / your track" rows.
+  const [ibSubs, setIbSubs] = useState<IbSubject[]>(profile?.ibSubjects || []);
+  useEffect(() => { setIbSubs(profile?.ibSubjects || []); }, [profile?.ibSubjects]);
+  const saveIbSubjects = async (next: IbSubject[]) => {
+    const prev = ibSubs;
+    setIbSubs(next);
+    try { await api.setIbSubjects(next, /DP\s?([12])/i.test(profile?.yearLevel || "") ? (`DP${/DP\s?([12])/i.exec(profile?.yearLevel || "")![1]}` as "DP1" | "DP2") : undefined); onChanged?.({ ...(profile as Profile), ibSubjects: next, subjects: next.map((x) => x.name) }); }
+    catch (e: any) { setIbSubs(prev); notify(e?.message || "That didn't save — give it another try.", "error"); }
   };
   // Hint density — a DIFFERENT axis from learningStyle (VARK, presentation-only): this is how much the
   // tutor walks through vs. just nudges when the student is stuck. Never changes whether the direct
@@ -104,26 +105,14 @@ function PreferencesFields({ profile, onChanged }: { profile: Profile | null; on
   };
   return (
     <>
-      <div className="set-row">
-        <span className="set-text"><b>{"Are you in the IB Diploma?"}</b><span className="settings-hint">{"Yes: Otto teaches to the IB, with your papers, command terms, mark schemes and each subject's syllabus. No: it stays a general tutor and ignores all IB specifics. The IB material follows one school's 2026 to 2028 course outlines and covers Maths, Physics, Chemistry, Biology, Economics, History, Geography, Computer Science, TOK, English A and Languages; other courses get the general IB knowledge only. Put your exact courses and levels (for example Maths AA HL) under Courses in \u201CWhat Otto knows about you\u201D."}</span></span>
-        <div className="lang-toggle">
-          <button type="button" className={`btn xs ${track === "ib" ? "" : "ghost"}`} aria-pressed={track === "ib"} onClick={() => void saveTrack("ib")}>{"Yes"}</button>
-          <button type="button" className={`btn xs ${track && track !== "ib" ? "" : "ghost"}`} aria-pressed={!!track && track !== "ib"} onClick={() => void saveTrack(track && track !== "ib" ? track : "other")}>{"No"}</button>
-        </div>
-      </div>
-      <div className="set-row">
-        <span className="set-text"><b>{"Your track"}</b><span className="settings-hint">{"Your programme, so exam practice matches it."}</span></span>
-        <div className="lang-toggle">
-          <button type="button" className={`btn xs ${track === "bac" ? "" : "ghost"}`} aria-pressed={track === "bac"} onClick={() => void saveTrack("bac")}>{"Bac"}</button>
-          <button type="button" className={`btn xs ${track === "ib" ? "" : "ghost"}`} aria-pressed={track === "ib"} onClick={() => void saveTrack("ib")}>IB</button>
-          <button type="button" className={`btn xs ${track === "ap" ? "" : "ghost"}`} aria-pressed={track === "ap"} onClick={() => void saveTrack("ap")}>AP</button>
-          <button type="button" className={`btn xs ${track === "other" ? "" : "ghost"}`} aria-pressed={track === "other"} onClick={() => void saveTrack("other")}>{"Other"}</button>
-        </div>
+      <div className="set-row" style={{ display: "block" }}>
+        <span className="set-text"><b>{"Your IB subjects"}</b><span className="settings-hint">{"Otto is built only for the IB Diploma. Your subjects and levels decide the papers, command terms and mark schemes it teaches to."}</span></span>
+        <IbSubjectPicker value={ibSubs} onChange={(n) => void saveIbSubjects(n)} />
       </div>
       <label className="set-row">
         <span className="set-text"><b>{"Your year/grade"}</b><span className="settings-hint">{"Otto pitches every question at your level."}</span></span>
         <input className="addinput" style={{ maxWidth: 160 }} maxLength={40}
-          placeholder={track === "ib" ? "e.g. DP1" : track === "ap" ? "e.g. Junior year" : track === "other" ? "e.g. Grade 7" : "e.g. Terminale"}
+          placeholder={"e.g. IB DP1"}
           value={yearLevel} onChange={(e) => setYearLevelState(e.target.value)}
           onBlur={() => void saveYearLevel()} onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }} />
       </label>
@@ -341,7 +330,7 @@ export function SettingsPage({ status, tasks, onSignOut, onChanged, onTasksChang
         {showSources ? <div className="settings-reveal">
         <p className="settings-hint">{status.fullApp ? "Otto reads these sources and preps the work — " : "Connect Pronote so Otto knows what you are studying: your homework (cahier de texte) and the lesson content your teachers publish. "}<b>{"It never sends or hands anything in for you"}</b>.</p>
         <PronoteTile status={status} onStatusUpdate={onStatusUpdate} />
-        {status.fullApp ? <GoogleTiles onChanged={onChanged} restricted={profile?.track !== "ib" && profile?.track !== "ap" && profile?.track !== "other"} /> : null}
+        {status.fullApp ? <GoogleTiles onChanged={onChanged} restricted={false} /> : null}
         </div> : null}
       </section>
 
@@ -841,7 +830,7 @@ function ConceptsPanel({ profile }: { profile: Profile | null }) {
                     const live = (c.misconceptions || []).filter((m) => !m.retiredAt).slice(-1)[0];
                     return (
                       <div key={c.key} className="concept-row">
-                        <div className="concept-top"><b>{c.label}</b><span className="concept-level">{level(p)}</span></div>
+                        <div className="concept-top"><b>{c.label}</b><span className="concept-level">{MASTERY_LABEL[masteryState(c as any)]}</span></div>
                         <div className="concept-bar" aria-hidden="true"><span style={{ width: `${Math.round(p * 100)}%` }} /></div>
                         <div className="concept-meta">
                           {live ? <span>{`Watch out: ${live.text}`}</span> : null}

@@ -3,7 +3,8 @@ import { useEffect, useState, useCallback } from "react";
 import type { ConnectionStatus } from "../../shared/types.ts";
 import { api } from "../api.ts";
 import { useLang, useNotify } from "../ui.tsx";
-import { COMMON_SUBJECTS } from "../../shared/coursework.ts";
+import { IbSubjectPicker } from "./IbSubjectPicker.tsx";
+import type { IbSubject } from "../../shared/ibSubjectList.ts";
 import { Logo } from "../appShared.tsx";
 import { GoogleTiles, PronoteTile } from "./Settings.tsx";
 
@@ -31,7 +32,7 @@ export function Onboarding({ status, onStatus, onDone, mode = "full" }: { status
   // Two flows. "tutor" (tutor-only accounts): name + language, grade, Pronote, done: no track, no subject list, no Google.
   // "full" (whole app): the complete flow below.
   const tutorMode = mode === "tutor";
-  const stepOrder = tutorMode ? [0, 2, 3, 4] : [0, 1, 2, 3, 5, 4]; // 5 = "everything in Otto", full mode only
+  const stepOrder = tutorMode ? [0, 2, 3, 4] : [0, 2, 3, 5, 4]; // 5 = "everything in Otto", full mode only. Otto is IB-only, so there is no "track" step.
   // Every profile write below is deliberately non-blocking (a failed save shouldn't trap the student on
   // this screen — see saveTrack's own comment, and the copy already tells them everything here is
   // "changeable any time in Settings"), but non-blocking used to also mean SILENT: the catch blocks were
@@ -56,30 +57,14 @@ export function Onboarding({ status, onStatus, onDone, mode = "full" }: { status
   };
   const [name, setName] = useState("");
   const [pronoteConnected, setPronoteConnected] = useState(false);
-  // Which curriculum/track the student is on — drives both AI vocabulary (trackLine() in server/claude.ts,
-  // already good) and, from here on, whether Pronote gets framed as THE data source or as one option among
-  // several. Previously never asked anywhere, so every account silently defaulted to unset/"bac"-shaped
-  // assumptions regardless of what the student actually needed.
-  // Persisted the same way `step` is (localStorage) — plain useState reverted to null on every reload, so a
-  // student who picked "ib" on step 1 and refreshed mid-onboarding (their track already saved server-side
-  // by then) would see step 3's pronoteIsPrimary computed from a null track again, i.e. the wrong (primary)
-  // Pronote copy for an IB student.
-  const [track, setTrackState] = useState<"ib" | "ap" | "bac" | "other" | null>(() => {
-    try { return (localStorage.getItem("otto-onboard-track") as "ib" | "ap" | "bac" | "other" | null) || null; }
-    catch { return null; }
-  });
-  const setTrack = (t: "ib" | "ap" | "bac" | "other" | null) => {
-    setTrackState(t);
-    try { if (t) localStorage.setItem("otto-onboard-track", t); else localStorage.removeItem("otto-onboard-track"); } catch { /* best-effort */ }
-  };
   // Year level is no longer asked in onboarding: it was one more field on day one for optional context,
   // and the track pick already calibrates the AI vocabulary. It remains fully settable in Settings
   // (PreferencesFields.saveYearLevel), which is the right home for an optional detail.
   // Year + subjects: the last things the basic flow collects (the page guides cover everything else).
   const [year, setYear] = useState("");
-  const [subs, setSubs] = useState<string[]>([]);
+  const [ibSubs, setIbSubs] = useState<IbSubject[]>([]);
   // Any grade is allowed: the chips are shortcuts, "Other" opens a free-text box (also used for a saved grade that is not a chip).
-  const YEAR_CHIPS = ["Seconde", "Première", "Terminale", "IB DP1", "IB DP2", "Grade 9", "Grade 10", "Grade 11", "Grade 12"];
+  const YEAR_CHIPS = ["IB DP1", "IB DP2"];
   const [yearOther, setYearOther] = useState(false);
   const showYearBox = yearOther || (!!year && !YEAR_CHIPS.includes(year));
   // Prefill from what the account already has — matters for "Test onboarding" replays, where re-asking
@@ -89,34 +74,24 @@ export function Onboarding({ status, onStatus, onDone, mode = "full" }: { status
     void api.profile().then((p) => {
       if (!alive) return;
       if (p.name) setName((n) => n || p.name!);
-      if (p.track) setTrack(p.track);
       if (p.yearLevel) setYear(p.yearLevel);
-      if (p.subjects?.length) setSubs(p.subjects);
+      if (p.ibSubjects?.length) setIbSubs(p.ibSubjects);
     }).catch(() => { /* a blank form is fine */ });
     return () => { alive = false; };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
   const saveYearSubjects = async () => {
     try {
-      if (year.trim()) await api.setProfilePreference("yearLevel", year.trim());
-      // Picking an IB year (IB DP1 / IB DP2, or typing "DP2", "IB year 1") is the same as choosing the IB track: it turns on
-      // the IB question sources. The tutor-only flow has no separate track step, so this is how those accounts get it.
-      if (!track && /\b(ib|dp\s?[12])\b/i.test(year)) { setTrack("ib"); await api.setProfilePreference("track", "ib"); }
-      if (!tutorMode) await api.setSubjects(subs);
-    } catch { notify("Year/subjects didn't save — you can set them later in Settings.", "error"); }
+      const dp = /DP\s?([12])/i.exec(year); // "IB DP1" / "IB DP2"
+      await api.setIbSubjects(ibSubs, dp ? (`DP${dp[1]}` as "DP1" | "DP2") : undefined);
+      await onStatus();
+    } catch { notify("Your subjects didn't save — you can set them later in Settings.", "error"); }
     setStep(3);
   };
   const saveName = async () => {
     const n = name.trim();
     if (n) { try { await api.setProfile("name", n); await onStatus(); } catch { notify("Name didn't save — you can set it later in Settings.", "error"); } }
-    setStep(tutorMode ? 2 : 1);
-  };
-  const saveTrack = async (t: "ib" | "ap" | "bac" | "other") => {
-    setTrack(t);
-    try { await api.setProfilePreference("track", t); await onStatus(); } catch { notify("Track didn't save — you can set it later in Settings.", "error"); }
-    // Used to jump straight to step 2 here — but the year-level field below lives on this SAME step, so
-    // auto-advancing the instant a track button is clicked never gave the student a chance to see or fill
-    // it in. Stay put; "Continue" (added alongside the field) is what actually moves on now.
+    setStep(2);
   };
   const checkPronote = useCallback(async () => { try { const s = await api.pronoteStatus(); setPronoteConnected(s.connected); onStatus(); } catch { /* keep last */ } }, [onStatus]);
   useEffect(() => { void checkPronote(); }, [checkPronote]);
@@ -128,7 +103,7 @@ export function Onboarding({ status, onStatus, onDone, mode = "full" }: { status
   // copy. Derive it from the actual selection: primary unless the student is explicitly on IB or AP (unset
   // track still defaults to primary, same as the "bac"/unset framing the comment above already describes).
   // AP is a US College Board program — like IB, essentially never on Pronote (a French national tool).
-  const pronoteIsPrimary = track !== "ib" && track !== "ap";
+  const pronoteIsPrimary = false; // IB-only product: Pronote is an optional extra
 
   return (
     <div className="onboard-overlay" role="dialog" aria-modal="true">
@@ -144,7 +119,7 @@ export function Onboarding({ status, onStatus, onDone, mode = "full" }: { status
         {step === 0 && (
           <div className="onboard-step">
             <h2>{"Welcome to Otto"}</h2>
-            <p className="onboard-lead">{"Otto turns homework, tests, and emails into a clear plan — without doing the work for you. Connect a source or add tasks yourself."}</p>
+            <p className="onboard-lead">{"The voice tutor built only for the IB Diploma. It asks instead of telling, teaches to your papers and mark schemes, and never does the work for you."}</p>
             <label className="field onboard-name"><span>{"What should Otto call you?"}</span>
               <input className="addinput" placeholder={"Your first name (optional)"} value={name} maxLength={60} autoFocus
                 onChange={(e) => setName(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") void saveName(); }} />
@@ -157,58 +132,21 @@ export function Onboarding({ status, onStatus, onDone, mode = "full" }: { status
           </div>
         )}
 
-        {step === 1 && (
-          <div className="onboard-step">
-            <h2>{"Your track"}</h2>
-            <p className="onboard-lead">{"Changes the vocabulary Otto uses."}</p>
-            <div className="onboard-apps">
-              <button type="button" className={`btn xs ob-track-btn ${track === "bac" ? "" : "ghost"}`} onClick={() => void saveTrack("bac")}>{"French Bac (lycée)"}</button>
-              <button type="button" className={`btn xs ob-track-btn ${track === "ib" ? "" : "ghost"}`} onClick={() => void saveTrack("ib")}>IB</button>
-              <button type="button" className={`btn xs ob-track-btn ${track === "ap" ? "" : "ghost"}`} onClick={() => void saveTrack("ap")}>AP</button>
-              <button type="button" className={`btn xs ob-track-btn ${track === "other" ? "" : "ghost"}`} onClick={() => void saveTrack("other")}>{"Other (middle school, etc.)"}</button>
-            </div>
-            <div className="onboard-actions onboard-actions-split">
-              <button className="btn ghost" onClick={() => setStep(0)}>{"Back"}</button>
-              <button className="btn primary" onClick={() => setStep(2)}>{"Continue"}</button>
-            </div>
-          </div>
-        )}
-
         {step === 2 && (
           <div className="onboard-step">
-            <h2>{tutorMode ? "Your grade" : "Your classes"}</h2>
-            <p className="onboard-lead">{tutorMode ? "Otto pitches its questions at your level." : "Otto pitches its level to you and files your coursework by subject."}</p>
-            {!tutorMode && <p className="onboard-lead mt-3">{"Your year"}</p>}
+            <h2>{"Your IB subjects"}</h2>
+            <p className="onboard-lead">{"Otto is built only for the IB Diploma. Pick your subjects and levels so every question, mark scheme and command term fits your courses."}</p>
+            <p className="onboard-lead mt-3">{"Your year"}</p>
             <div className="onboard-chips">
               {YEAR_CHIPS.map((y) => (
-                <button key={y} type="button" className={`btn xs ${year === y ? "" : "ghost"}`} onClick={() => { setYear(y); setYearOther(false); }} aria-pressed={year === y}>{y}</button>
+                <button key={y} type="button" className={`btn xs ${year === y ? "" : "ghost"}`} onClick={() => setYear(y)} aria-pressed={year === y}>{y}</button>
               ))}
-              <button type="button" className={`btn xs ${showYearBox ? "" : "ghost"}`} onClick={() => { setYearOther(true); if (YEAR_CHIPS.includes(year)) setYear(""); }} aria-pressed={showYearBox}>{"Other"}</button>
             </div>
-            {tutorMode && (
-              <>
-                <p className="onboard-lead mt-3">{"Are you in the IB Diploma?"}</p>
-                <div className="onboard-chips">
-                  <button type="button" className={`btn xs ${track === "ib" ? "" : "ghost"}`} aria-pressed={track === "ib"} onClick={() => void saveTrack("ib")}>{"Yes"}</button>
-                  <button type="button" className={`btn xs ${track && track !== "ib" ? "" : "ghost"}`} aria-pressed={!!track && track !== "ib"} onClick={() => void saveTrack(track && track !== "ib" ? track : "other")}>{"No"}</button>
-                </div>
-              </>
-            )}
-            {showYearBox && (
-              <label className="field onboard-name mt-3"><span>{"Your grade or level"}</span>
-                <input className="addinput" placeholder={"e.g. Year 8, 6ème, first-year university"} value={year} maxLength={40} autoFocus
-                  onChange={(e) => setYear(e.target.value)} />
-              </label>
-            )}
-            {!tutorMode && <p className="onboard-lead mt-4">{"Your subjects"}</p>}
-            {!tutorMode && <div className="onboard-chips">
-              {COMMON_SUBJECTS.filter((x) => x !== "Other").map((x) => (
-                <button key={x} type="button" className={`btn xs ${subs.includes(x) ? "" : "ghost"}`} onClick={() => setSubs((cur) => (cur.includes(x) ? cur.filter((c) => c !== x) : [...cur, x]))} aria-pressed={subs.includes(x)}>{x}</button>
-              ))}
-            </div>}
-            <p className="muted small">{"Optional — change it any time in Settings."}</p>
+            <p className="onboard-lead mt-4">{"Your subjects"}</p>
+            <IbSubjectPicker value={ibSubs} onChange={setIbSubs} />
+            <p className="muted small">{"Optional. Change it any time in Settings."}</p>
             <div className="onboard-actions onboard-actions-split">
-              <button className="btn ghost" onClick={() => setStep(tutorMode ? 0 : 1)}>{"Back"}</button>
+              <button className="btn ghost" onClick={() => setStep(0)}>{"Back"}</button>
               <button className="btn primary" onClick={() => void saveYearSubjects()}>{"Continue"}</button>
             </div>
           </div>
@@ -226,7 +164,7 @@ export function Onboarding({ status, onStatus, onDone, mode = "full" }: { status
               ? "Optional. If your school uses Pronote, Otto can see your homework and tests and start from what you're studying. Your credentials are encrypted."
               : pronoteIsPrimary
               ? "Pronote alone gets Otto going. Gmail and Calendar are optional — Otto spots homework and deadlines in them. Your credentials are encrypted, never resold."
-              : "Most IB schools don't use Pronote — connect it only if your school has it. Otherwise Gmail/Calendar, or add your homework by hand."}</p>
+              : "Optional. If your school uses Pronote, Otto reads your homework and tests so it can start from what you are studying. Otherwise add your homework by hand."}</p>
             <div className="onboard-apps">
               <PronoteTile status={status} onChanged={() => void checkPronote()} />
               {!tutorMode && <GoogleTiles restricted={true} onChanged={() => void onStatus()} />}

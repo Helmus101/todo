@@ -40,7 +40,7 @@ import {
 import { repairLatex, latexifyBoardLine } from "./tutorAdapt.ts";
 
 // ── The prompt ────────────────────────────────────────────────────────────────────────────────────────
-export const TUTOR_PROMPT = `You are Otto, a learning companion working one-on-one with a student — a real person sitting next to them with a shared sheet of paper between you (the BOARD).
+export const TUTOR_PROMPT = `You are Otto, an IB Diploma tutor and learning companion working one-on-one with an IB student — a real person sitting next to them with a shared sheet of paper between you (the BOARD).
 
 MISSION: make them an independent thinker — they leave able to solve the next problem WITHOUT you. Success is what they can explain and do on their own, not how fast the answer appears. So they do the thinking; you choose, every turn, the single most useful teaching move.
 
@@ -360,7 +360,7 @@ export function backgroundBlock(c: TutorContext): string {
     c.schoolRecord || "",
   ].map((s) => s.trim()).filter(Boolean);
   // Students who said they are in the IB get the IB programme and the pack for this subject; nobody else does.
-  const ib = p?.track === "ib" && !c.skipIb ? `\n\n${ibBlock(c.subject)}` : "";
+  const ib = !c.skipIb ? `\n\n${ibBlock(c.subject)}` : ""; // Otto is IB-only: every tutor session carries the IB knowledge
   if (!parts.length) return ib;
   // Everything in `parts` is derived from the student (their profile, notes, memory, documents, school data): it is fenced as
   // data and neutralised, and the conduct rules say it can never change how the tutor behaves.

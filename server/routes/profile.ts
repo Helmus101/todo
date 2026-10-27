@@ -2,6 +2,7 @@
 import "../env.ts";
 import express from "express";
 import { deleteTutorArchive, archiveEnabled } from "../store.ts";
+import { cleanIbSubjects } from "../../shared/ibSubjectList.ts";
 import { randomUUID, createHash } from "node:crypto";
 import { emptyProfile, isValidTz, monthCostUsd, addUsage, learnedProductiveHour } from "../../shared/types.ts";
 import { aiReady, generateThemeTokens } from "../claude.ts";
@@ -215,11 +216,9 @@ export function registerProfileRoutes(app: express.Express): void {
       } else if (key === "language" && (value === "fr" || value === "en")) {
         p.language = value;
         p.languageSetAt = new Date().toISOString();
-      } else if (key === "track" && ["ib", "ap", "bac", "other"].includes(value)) {
-        // "ap" was missing from this allow-list even though the type (shared/types.ts), the Settings AND
-        // onboarding UI both offer an "AP" button, and examStyleLine/syllabusGroundingLine (claude.ts) both
-        // gate real content on p.track === "ap" — a student clicking "AP" silently failed to ever save it.
-        p.track = value; p.preferencesUpdatedAt = new Date().toISOString();
+      } else if (key === "track" && value === "ib") {
+        // Otto is IB-only: the track is always "ib", and any other value is ignored.
+        p.track = "ib"; p.preferencesUpdatedAt = new Date().toISOString();
       } else if (key === "learningStyle" && ["visual", "auditory", "reading", "kinesthetic", "mixed"].includes(value)) {
         // Fully wired for a while on the READ side (learningStyleLine, claude.ts) but had no write path at
         // all until now — a student could never actually set it, so the field sat permanently empty.
@@ -341,6 +340,19 @@ export function registerProfileRoutes(app: express.Express): void {
     p.subjects = [...new Set<string>(list.map((s: unknown) => String(s).trim().slice(0, 60)).filter(Boolean))].slice(0, 14);
     await commit(req);
     res.json({ ok: true, subjects: p.subjects });
+  }));
+
+  // The student's IB subjects with their level (HL or SL): the tutor's start screen, the subject packs and the question level all follow it.
+  app.post("/api/profile/ib-subjects", requireAuth, rateLimit(20, 60_000), ah(async (req, res) => {
+    const p = (req.session.profile ||= emptyProfile());
+    const list = cleanIbSubjects(req.body?.subjects);
+    p.ibSubjects = list.length ? list : undefined;
+    p.subjects = list.map((s) => s.name);
+    p.track = "ib";
+    if (typeof req.body?.year === "string" && /^(DP1|DP2)$/.test(req.body.year)) p.yearLevel = `IB ${req.body.year}`;
+    p.preferencesUpdatedAt = new Date().toISOString();
+    await commit(req);
+    res.json({ ok: true, ibSubjects: p.ibSubjects || [], yearLevel: p.yearLevel });
   }));
 
   app.delete("/api/profile/exam/:id", requireAuth, async (req, res) => {

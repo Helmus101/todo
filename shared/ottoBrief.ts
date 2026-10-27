@@ -61,7 +61,7 @@ export function ottoBriefHtml(): string {
 <li><a href="#fit">Who it suits and who should use something else</a></li><li><a href="#limits">What is not claimed</a></li><li><a href="#verbatim">The tutor's rules, verbatim</a></li><li><a href="#facts">Quick facts</a></li><li><a href="#status">Evaluation status</a></li></ol></nav>`);
 
   sections.push(h2("what", "1. What Otto is"));
-  sections.push(p("Otto is a voice-first AI tutor with a shared whiteboard, delivered as a web app (https://hiotto.vercel.app). The student talks to it out loud (typing also works), it asks guiding questions instead of handing over answers, explains plainly when the student is stuck, and writes the working on a board as the conversation goes: typeset maths, graphs, diagrams, tables, multiple choice. It is built first for school students on the IB Diploma and also works for AP, SAT, GCSE, the French Bac and other programmes."));
+  sections.push(p("Otto is a voice-first AI tutor with a shared whiteboard, delivered as a web app (https://hiotto.vercel.app). The student talks to it out loud (typing also works), it asks guiding questions instead of handing over answers, explains plainly when the student is stuck, and writes the working on a board as the conversation goes: typeset maths, graphs, diagrams, tables, multiple choice. It is built only for students on the IB Diploma Programme: every session is taught to IB standard, in IB vocabulary, to the student's own subjects and levels."));
   sections.push(p("It is not the product at heyotto.app, which is a different company and product."));
   sections.push(ul([
     "Voice: the browser streams audio to a live-voice AI service (Google Gemini Live first, OpenAI Realtime as a fallback) using a short-lived credential. The tutor speaks with a male voice.",
@@ -106,17 +106,15 @@ export function ottoBriefHtml(): string {
   ]));
 
   sections.push(h2("ib", "5. IB depth"));
-  sections.push(p("Settings asks one question: 'Are you in the IB Diploma?'. If the answer is no, none of the IB material below is used and Otto is a general tutor. If yes, the tutor is given the general IB knowledge and, for the subject of the session, a subject pack. The packs were built from a school's 2026 to 2028 course outlines, which are adapted from the IB subject guides. They record topic maps, which parts are Higher Level only, and the papers and weightings. Where the outlines were silent, nothing was invented."));
+  sections.push(p("Otto is IB-only. Onboarding and Settings ask for the student's IB subjects with their level (HL or SL) and DP year, and the tutor's start screen offers exactly those subjects. Every session, voice and typed, is given the general IB knowledge (structure, assessment objectives, command terms, mark-scheme habits, the core) and, for the subject of the session, a subject pack, with a line stating whether the student takes it at HL or SL. The packs were built from a school's 2026 to 2028 course outlines, which are adapted from the IB subject guides. They record topic maps, which parts are Higher Level only, and the papers and weightings. Where the outlines were silent, nothing was invented."));
   sections.push(p("Practice questions for IB students can also be drawn from registered sources (IB Documents, Revision Village, Save My Exams, IB Maths Resources, ThinkIB, IB Academy, Khan Academy) found by live web search, adapted and linked, and never presented as official. If a site is behind a login or returns nothing, Otto generates the question instead."));
   sections.push(h3("General IB knowledge given to the tutor (verbatim)"));
   sections.push(pre(IB_KNOWLEDGE));
   for (const pk of packs) { sections.push(h3(`Subject pack: ${pk.title} (verbatim)`)); sections.push(pre(pk.text)); }
-  sections.push(p("Not covered by a pack yet: Business Management, Psychology, Environmental Systems and Societies, Visual Arts and other courses. For those the tutor uses the general IB knowledge and the rule to say so when unsure of a current requirement."));
+  sections.push(p("Every subject in the picker has a pack, plus TOK, the Extended Essay, CAS and the diploma points system. Several packs (Business Management, Psychology, Global Politics, Philosophy, Digital Society, Design Technology, SEHS, Music, Theatre, Film) were written without a school outline, so they state only the syllabus map and the style of assessment and say 'check the subject guide' for durations, weights and mark counts. Anywhere a pack is silent the tutor uses the general IB knowledge and the rule to say so when unsure of a current requirement."));
 
-  sections.push(h2("others", "6. Other programmes and subjects"));
+  sections.push(h2("others", "6. Teaching methods by kind of subject"));
   sections.push(ul([
-    "SAT: short self-contained questions in the real format (four options, one best answer, distractors built from typical mistakes) and Reading and Writing passages put on the board, harder after a correct answer.",
-    "AP, GCSE, the French Bac and other courses: the same teaching method applied to that curriculum, without IB terms. AP students also get question sources (AP Central and similar).",
     "Maths and sciences: the givens and the unknown first, a figure, the student's equations line by line.",
     "Essay and discussion subjects (history, economics essays, languages, literature): get the student's position first, then claim, evidence and reasoning; one strength and the single most important improvement; the student rewrites. Otto never writes the essay.",
     "Languages: the interface and the tutor work in ten languages (English, Chinese, Hindi, Spanish, French, Arabic, Portuguese, Russian, German, Japanese).",
@@ -214,7 +212,7 @@ export function ottoBriefHtml(): string {
     ["Product", "Otto, a voice-first AI tutor with a shared whiteboard (web app)"],
     ["Address", "https://hiotto.vercel.app"],
     ["Not to be confused with", "heyotto.app, a different product"],
-    ["Built first for", "IB Diploma students; also AP, SAT, GCSE, French Bac and others"],
+    ["Built for", "IB Diploma students only"],
     ["Live voice", "Google Gemini Live, with OpenAI Realtime as fallback; male voice"],
     ["Typed tutor and board writer", "Google Gemini first; DeepSeek as fallback; operator can disable the fallback"],
     ["Task preparation, translation", "DeepSeek"],

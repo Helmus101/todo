@@ -41,7 +41,7 @@ export async function runTutorEngineSim(check, section) {
 
   const probs = [{ id: "p1", question: "Water content of a 125 g sample with dry mass 100 g?", answer: "0.25", createdAt: "" }];
   check("leakedValue: open problem answers count, solved ones don't", leakedValue("so it comes out at 0.25", "hm", [], probs) !== null && leakedValue("so it comes out at 0.25", "hm", [], [{ ...probs[0], solved: true }]) === null);
-  check("no background at all → no empty BACKGROUND header", backgroundBlock({}) === "");
+  check("no student data at all → no empty BACKGROUND header (the IB knowledge is still given, with no student block)", !/BACKGROUND/.test(backgroundBlock({})) && /IB DIPLOMA/.test(backgroundBlock({})) && backgroundBlock({ skipIb: true }) === "");
 
   check("the prompt is Socratic and subject-agnostic", /Never give the answer/.test(TUTOR_PROMPT) && /ANY SUBJECT/.test(TUTOR_PROMPT) && /another way/.test(TUTOR_PROMPT) && /independent thinker/.test(TUTOR_PROMPT));
   check("subject detection: explicit words win, keywords decide otherwise, nothing → undefined",
