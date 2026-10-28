@@ -677,6 +677,16 @@ check("structured settings survive merge", pm.responseStyle === "concise");
   const tt = normalizeProfile({ examSession: "2027-05" }), tf = normalizeProfile({ examSession: "soon" });
   check("exam session: normalizeProfile keeps a valid one and drops junk", tt.examSession === "2027-05" && tf.examSession === undefined);
 }
+{
+  const { QUESTION_BANK, bankQuestionsFor, bankBlock, bankSubjectOf } = await import("../shared/ibQuestionBank.ts");
+  const { ibBlock } = await import("../shared/ibSubjects.ts");
+  check("question bank: unique ids and every answer recomputes from the question's own numbers (check() is true)", new Set(QUESTION_BANK.map((q) => q.id)).size === QUESTION_BANK.length && QUESTION_BANK.every((q) => q.check() === true));
+  check("question bank: the marks in brackets in each question add up to its stated total, and every one has a scheme line per part", QUESTION_BANK.every((q) => [...q.question.matchAll(/\[(\d+)\]/g)].reduce((a, m) => a + Number(m[1]), 0) === q.marks && q.scheme.length >= 1));
+  check("question bank: no scheme or question uses a backtick or a template placeholder (it is pasted into a prompt)", QUESTION_BANK.every((q) => !/[`]|\$\{/.test(q.question + q.scheme.join(""))));
+  check("question bank: subject routing (Math AA HL, Math AI SL, Physics, Chemistry, Economics, Biology; none for History or TOK)", bankSubjectOf("Math AA HL") === "math-aa" && bankSubjectOf("Math AI SL") === "math-ai" && bankSubjectOf("Physics HL") === "physics" && bankSubjectOf("Chemistry SL") === "chemistry" && bankSubjectOf("Economics SL") === "economics" && bankSubjectOf("Biology HL") === "biology" && bankSubjectOf("History HL") === undefined && bankSubjectOf("Theory of Knowledge") === undefined);
+  check("question bank: an SL student is never given an HL-only question, an HL student gets HL and shared ones", bankQuestionsFor("Math AA SL").every((q) => q.level !== "HL") && bankQuestionsFor("Math AA HL").some((q) => q.level === "HL") && bankQuestionsFor("Physics SL").every((q) => q.level !== "HL"));
+  check("question bank: the prompt block marks the schemes private and the questions as practice, and is part of ibBlock for banked subjects only", /PRIVATE/.test(bankBlock("Physics HL")) && /not real past-paper/.test(bankBlock("Physics HL")) && ibBlock("Physics HL").includes("[phys-projectile]") && !ibBlock("History HL").includes("VERIFIED PRACTICE QUESTIONS"));
+}
 const pmLang = mergeProfileStates(
   { ...emptyProfile(), language: "en", languageSetAt: newer },
   { ...emptyProfile(), language: "fr" }, // stale session, never itself touched the language toggle
