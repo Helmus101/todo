@@ -5,7 +5,7 @@
 //
 // The SHAPES live in shared/agentTypes.ts (the client's transparency panel and the profile need them, and a
 // server import there would drag server code into the browser bundle). This module is the behaviour.
-import { mathsPrerequisites } from "../shared/ibMathsGraph.ts";
+import { ibPrerequisites } from "../shared/ibGraphs.ts";
 import { masteryState, MASTERY_LABEL } from "../shared/masteryState.ts";
 //
 // Two design rules from the spec are load-bearing:
@@ -452,8 +452,8 @@ export function studentModelBlock(model: StudentModelShape | undefined, opts: { 
     }
     for (const e of c.commonErrors.slice(0, 2)) lines.push(`    ! recurring slip: ${e.text} (${e.count}×)`);
     for (const s of c.strengths.slice(-1)) lines.push(`    ✓ can already: ${s}`);
-    // IB Maths: what this idea builds on, and what the evidence says about each of those (probe the weakest before teaching on).
-    const builds = mathsPrerequisites(c.label);
+    // IB: what this idea builds on, and what the evidence says about each of those (probe the weakest before teaching on).
+    const builds = ibPrerequisites(c.label, c.subject);
     if (builds.length) {
       const parts = builds.map((n) => {
         const rec = Object.values(model.concepts).find((r) => n.match.test(r.label));

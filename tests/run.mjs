@@ -742,6 +742,17 @@ check("structured settings survive merge", pm.responseStyle === "concise");
   check("lost-mark causes: survive save/load and the side that has recorded more wins a merge", rt.causes.Physics.units === 3 && tm.mergePatterns(undefined, p).causes.Physics.units === 3 && tm.mergePatterns(p, tm.bumpCause(undefined, "Physics", "units")).causes.Physics.units === 3);
   check("the board writer is asked for a cause and the route files it", /"cause":"for a mistake or misconception only/.test(readFileSync(new URL("../server/tutorTurn/boardWriter.ts", import.meta.url), "utf8")) && /bumpCause\(profile\.patterns/.test(readFileSync(new URL("../server/routes/tutor.ts", import.meta.url), "utf8")));
 }
+{
+  const g = await import("../shared/ibGraphs.ts");
+  const { MATHS_AA_GRAPH } = await import("../shared/ibMathsGraph.ts");
+  const all = { ...g.IB_GRAPHS, maths: MATHS_AA_GRAPH };
+  for (const [name, nodes] of Object.entries(all)) {
+    const ids = new Set(nodes.map((n) => n.id));
+    const acyclic = (() => { const seen = new Map(); const visit = (id) => { if (seen.get(id) === 1) return false; if (seen.get(id) === 2) return true; seen.set(id, 1); const n = nodes.find((x) => x.id === id); for (const d of n.needs) if (!visit(d)) return false; seen.set(id, 2); return true; }; return nodes.every((n) => visit(n.id)); })();
+    check(`prerequisite map '${name}': unique ids, every 'needs' exists, no cycles, at least 10 ideas`, ids.size === nodes.length && nodes.every((n) => n.needs.every((d) => ids.has(d))) && acyclic && nodes.length >= 10);
+  }
+  check("prerequisites by subject: a physics concept builds on physics ideas, a chemistry one on chemistry ones, and a maths label with no subject still finds the maths map", g.ibPrerequisites("projectile motion", "Physics HL").some((n) => n.id === "units") && g.ibPrerequisites("Le Chatelier's principle", "Chemistry SL").some((n) => n.id === "kinetics") && g.ibPrerequisites("the product rule", undefined).some((n) => n.id === "limits") && g.ibPrerequisites("the product rule", "History").length === 0);
+}
 const pmLang = mergeProfileStates(
   { ...emptyProfile(), language: "en", languageSetAt: newer },
   { ...emptyProfile(), language: "fr" }, // stale session, never itself touched the language toggle
