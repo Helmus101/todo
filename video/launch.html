@@ -1,0 +1,389 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Otto launch film</title>
+<style>
+  @font-face { font-family: "Instrument Serif"; src: url("../node_modules/@fontsource/instrument-serif/files/instrument-serif-latin-400-normal.woff2") format("woff2"); font-style: normal; }
+  @font-face { font-family: "Instrument Serif"; src: url("../node_modules/@fontsource/instrument-serif/files/instrument-serif-latin-400-italic.woff2") format("woff2"); font-style: italic; }
+  :root { --paper: #FAF8F4; --ink: #1B1815; --muted: #8A8379; --line: #E4E0DA; --face: #EFEBE0; --card: #FFFFFF; --amber: #F2B84B; }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { width: 1920px; height: 1080px; overflow: hidden; background: var(--ink); }
+  body { font-family: "Helvetica Neue", Helvetica, Arial, sans-serif; color: var(--ink); -webkit-font-smoothing: antialiased; position: relative; }
+  .scene { position: absolute; inset: 0; display: none; overflow: hidden; }
+  .dark { background: var(--ink); color: var(--paper); }
+  .light { background: var(--paper); color: var(--ink); }
+  .abs { position: absolute; }
+  .serif { font-family: "Instrument Serif", Georgia, serif; font-weight: 400; letter-spacing: -0.01em; }
+  .big { font-weight: 800; letter-spacing: -0.045em; text-transform: uppercase; line-height: .9; }
+  .ln { display: block; overflow: hidden; padding: 0.06em 0 0.1em; }
+  .ln > span { display: inline-block; will-change: transform; }
+  .face { position: absolute; border-radius: 50%; background: var(--face); will-change: transform; }
+  .eye { position: absolute; background: var(--ink); border-radius: 50%; }
+  .ring { position: absolute; border-radius: 50%; border: 3px solid currentColor; will-change: transform, opacity; }
+
+  /* board */
+  .board { width: 1000px; height: 780px; background: var(--card); border: 2px solid var(--line); border-radius: 28px; overflow: hidden; box-shadow: 0 40px 80px -40px rgba(27,24,21,.28); }
+  .board-head { position: absolute; left: 56px; top: 44px; right: 56px; display: flex; justify-content: space-between; font-size: 26px; color: var(--muted); letter-spacing: .02em; }
+  .board-head b { color: var(--ink); font-weight: 700; }
+  .rule { position: absolute; left: 56px; right: 56px; height: 2px; background: #F0ECE5; }
+  .bline { position: absolute; left: 76px; font-size: 104px; line-height: 1; white-space: nowrap; }
+  .bline i { font-style: italic; }
+  .bno { position: absolute; left: 18px; font-size: 22px; color: #BDB6AA; }
+  .hl { position: absolute; left: 60px; right: 60px; height: 150px; background: var(--amber); opacity: 0; border-radius: 10px; mix-blend-mode: multiply; }
+  .caption { font-size: 46px; line-height: 1.2; letter-spacing: -0.01em; font-weight: 500; }
+  .caption.you { font-family: "Instrument Serif", Georgia, serif; font-style: italic; font-size: 60px; color: #6d665c; font-weight: 400; }
+  .cap-label { font-size: 22px; letter-spacing: .14em; text-transform: uppercase; color: var(--muted); }
+  .bars { display: flex; align-items: center; justify-content: center; gap: 8px; }
+  .bars span { display: block; width: 8px; border-radius: 4px; background: currentColor; }
+
+  .marq { position: absolute; left: -200px; white-space: nowrap; font-weight: 800; text-transform: uppercase; letter-spacing: -0.04em; line-height: 1; }
+  .marq .o { color: transparent; -webkit-text-stroke: 3px rgba(250,248,244,.5); }
+  .hw { position: absolute; left: 0; right: 0; background: var(--card); border: 2px solid var(--line); border-radius: 22px; height: 118px; padding: 0 36px; display: flex; align-items: center; gap: 28px; font-size: 40px; font-weight: 600; letter-spacing: -0.01em; box-shadow: 0 30px 60px -40px rgba(27,24,21,.3); }
+  .hw .cb { width: 44px; height: 44px; border-radius: 12px; border: 3px solid var(--ink); flex: none; }
+  .hw small { margin-left: auto; font-size: 26px; font-weight: 500; color: var(--muted); }
+  .mcard { position: absolute; width: 800px; height: 168px; background: var(--card); border: 2px solid var(--line); border-radius: 24px; padding: 30px 38px; color: var(--ink); box-shadow: 0 40px 70px -40px rgba(0,0,0,.6); }
+  .mcard .t { font-size: 38px; font-weight: 700; letter-spacing: -0.01em; }
+  .mcard .s { position: absolute; right: 38px; top: 34px; font-size: 27px; color: var(--muted); font-weight: 600; }
+  .track { position: absolute; left: 38px; right: 38px; bottom: 34px; height: 14px; background: #EEEAE3; border-radius: 7px; overflow: hidden; }
+  .fill { height: 100%; background: var(--ink); border-radius: 7px; width: 0; }
+  .pill { display: inline-block; background: var(--ink); color: #fff; font-size: 40px; font-weight: 700; padding: 30px 70px; border-radius: 24px; letter-spacing: -0.01em; }
+  .wipe { position: absolute; top: 0; bottom: 0; width: 2100px; left: 0; will-change: transform; display: none; z-index: 50; }
+  #grain { position: absolute; inset: -40px; z-index: 60; pointer-events: none; opacity: .035; mix-blend-mode: multiply; background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='300' height='300'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='2' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 0  0 0 0 0 0  0 0 0 0 0  0 0 0 .9 0'/></filter><rect width='300' height='300' filter='url(%23n)'/></svg>"); }
+  #vig { position: absolute; inset: 0; z-index: 55; pointer-events: none; background: radial-gradient(ellipse at center, rgba(0,0,0,0) 62%, rgba(27,24,21,.07) 100%); }
+</style>
+</head>
+<body>
+
+<!-- ═══════ S1 (0–4): the problem, in kinetic type ═══════ -->
+<div class="scene dark" id="s1">
+  <div class="abs big" id="s1-stack" style="left:130px; top:110px; font-size:200px; width:1700px;">
+    <span class="ln"><span>Most AI</span></span>
+    <span class="ln"><span>tutors just</span></span>
+    <span class="ln"><span>hand you</span></span>
+    <span class="ln"><span id="s1-ans" style="position:relative">the answer.<i id="s1-strike" style="position:absolute; left:-10px; top:50%; height:26px; background:var(--amber); width:0; margin-top:-8px;"></i></span></span>
+  </div>
+  <div class="ring" id="s1-iris" style="left:960px; top:540px; width:10px; height:10px; margin:-5px 0 0 -5px; border:0; background:var(--paper);"></div>
+</div>
+
+<!-- ═══════ S2 (4–6): meet Otto ═══════ -->
+<div class="scene light" id="s2">
+  <div id="s2-rings"></div>
+  <div class="face" id="s2-face" style="left:790px; top:210px; width:340px; height:340px;">
+    <div class="eye" id="s2-eyeL" style="left:110px; top:136px; width:34px; height:44px;"></div>
+    <div class="eye" id="s2-eyeR" style="left:196px; top:136px; width:34px; height:44px;"></div>
+  </div>
+  <div class="abs" style="left:0; right:0; top:640px; text-align:center;">
+    <span class="ln big" style="font-size:230px; display:inline-block;"><span id="s2-meet" style="font-size:230px;">Meet <i class="serif" style="font-weight:400; text-transform:none; letter-spacing:-0.02em; font-size:260px;">Otto.</i></span></span>
+  </div>
+  <div class="abs" id="s2-sub" style="left:0; right:0; top:930px; text-align:center; font-size:44px; letter-spacing:-0.01em; color:#6e675d;">The tutor that asks.</div>
+</div>
+
+<!-- ═══════ S3 (6–12): the live demo ═══════ -->
+<div class="scene light" id="s3">
+  <div class="abs" id="s3-cam" style="inset:0; transform-origin: 960px 540px;">
+    <div class="abs board" id="board" style="left:110px; top:150px;">
+      <div class="hl" id="hl2" style="top:352px;"></div>
+      <div class="hl" id="hl3" style="top:532px;"></div>
+      <div class="board-head"><span><b>Math</b></span><span>Out loud, together</span></div>
+      <div class="rule" style="top:250px"></div><div class="rule" style="top:430px"></div><div class="rule" style="top:610px"></div>
+      <div class="bno" style="top:196px">1</div><div class="bno" style="top:376px">2</div><div class="bno" style="top:556px">3</div>
+      <div class="bline serif" id="bl1" style="top:150px; clip-path: inset(0 100% 0 0);"><i>3x</i> + 5 = 20</div>
+      <div class="bline serif" id="bl2" style="top:330px; clip-path: inset(0 100% 0 0);"><i>3x</i> = 15</div>
+      <div class="bline serif" id="bl3" style="top:510px; clip-path: inset(0 100% 0 0);"><i>x</i> = 5</div>
+      <svg id="tick" viewBox="0 0 120 120" width="120" height="120" style="position:absolute; left:430px; top:498px; opacity:0;">
+        <circle cx="60" cy="60" r="52" fill="none" stroke="#1B1815" stroke-width="5"/>
+        <path id="tickp" d="M34 62 L53 80 L88 42" fill="none" stroke="#1B1815" stroke-width="7" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="100" stroke-dashoffset="100"/>
+      </svg>
+      <div class="abs" id="found" style="left:590px; top:532px; font-size:34px; font-weight:600; opacity:0;">You found it.</div>
+      <div id="burst" class="abs" style="left:490px; top:558px;"></div>
+    </div>
+    <div class="abs" id="panel" style="left:1230px; top:150px; width:580px; height:780px;">
+      <div id="s3-rings"></div>
+      <div class="face" id="s3-face" style="left:160px; top:20px; width:260px; height:260px;">
+        <div class="eye" id="s3-eyeL" style="left:84px; top:104px; width:26px; height:34px;"></div>
+        <div class="eye" id="s3-eyeR" style="left:150px; top:104px; width:26px; height:34px;"></div>
+      </div>
+      <div class="abs cap-label" id="who" style="left:0; right:0; top:336px; text-align:center;">Otto</div>
+      <div class="abs caption" id="cap" style="left:0; right:0; top:390px; text-align:center;"></div>
+      <div class="abs bars" id="bars" style="left:0; right:0; top:680px; height:100px;"></div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════ S4a VOICE (12–13.5) ═══════ -->
+<div class="scene dark" id="s4a">
+  <div class="abs big" style="left:110px; top:90px; font-size:300px;"><span class="ln"><span id="s4a-w">Voice.</span></span></div>
+  <div class="abs bars" id="s4a-bars" style="left:0; right:0; top:560px; height:340px; gap:14px; color:var(--paper);"></div>
+  <div class="abs" id="s4a-c" style="left:110px; top:940px; font-size:46px; letter-spacing:-0.01em; color:#c9c2b6;">Say it out loud. Otto listens.</div>
+</div>
+<!-- S4b BOARD (13.5–15) -->
+<div class="scene light" id="s4b">
+  <div class="abs big" style="left:110px; top:90px; font-size:300px;"><span class="ln"><span id="s4b-w">Board.</span></span></div>
+  <div class="abs board" id="s4b-card" style="left:960px; top:330px; width:850px; height:600px; border-radius:24px;">
+    <div class="rule" style="top:150px; left:44px; right:44px"></div><div class="rule" style="top:300px; left:44px; right:44px"></div><div class="rule" style="top:450px; left:44px; right:44px"></div>
+    <div class="bline serif" id="s4b-l1" style="left:60px; top:70px; font-size:84px; clip-path: inset(0 100% 0 0);"><i>f</i>(<i>x</i>) = <i>x</i><sup style="font-size:.5em">2</sup> + 3<i>x</i></div>
+    <div class="bline serif" id="s4b-l2" style="left:60px; top:220px; font-size:84px; clip-path: inset(0 100% 0 0);"><i>f</i>′(<i>x</i>) = 2<i>x</i> + 3</div>
+    <div class="bline serif" id="s4b-l3" style="left:60px; top:370px; font-size:84px; clip-path: inset(0 100% 0 0);"><i>f</i>′(2) = 7</div>
+  </div>
+  <div class="abs" id="s4b-c" style="left:110px; top:940px; font-size:46px; letter-spacing:-0.01em; color:#6e675d;">It writes as you think.</div>
+</div>
+<!-- S4c IB (15–16.5) -->
+<div class="scene dark" id="s4c">
+  <div id="s4c-marq"></div>
+  <div class="abs" id="s4c-badge" style="left:0; right:0; top:410px; text-align:center;">
+    <div style="display:inline-block; background:var(--paper); color:var(--ink); padding:34px 80px; border-radius:30px;">
+      <div class="big" style="font-size:150px; line-height:.95;">Built for<br>the IB.</div>
+    </div>
+  </div>
+</div>
+<!-- S4d PRONOTE (16.5–18) -->
+<div class="scene light" id="s4d">
+  <div class="abs big" style="left:110px; top:90px; font-size:300px;"><span class="ln"><span id="s4d-w">Pronote.</span></span></div>
+  <div class="abs" id="s4d-list" style="left:960px; top:360px; width:850px; height:520px;">
+    <div class="hw" id="hw1" style="top:0"><div class="cb"></div>Maths · exercices 4 à 9<small>pour demain</small></div>
+    <div class="hw" id="hw2" style="top:150px"><div class="cb"></div>Physique · DM chapitre 3<small>vendredi</small></div>
+    <div class="hw" id="hw3" style="top:300px"><div class="cb"></div>Anglais · essay plan<small>lundi</small></div>
+  </div>
+  <div class="abs" id="s4d-c" style="left:110px; top:940px; font-size:46px; letter-spacing:-0.01em; color:#6e675d;">Read-only. It never sends a thing.</div>
+</div>
+
+<!-- ═══════ S5 (18–24): mistakes ═══════ -->
+<div class="scene light" id="s5">
+  <div class="abs big" id="s5-stack" style="left:110px; top:120px; font-size:150px; width:900px;">
+    <span class="ln"><span>Make a</span></span>
+    <span class="ln"><span>mistake</span></span>
+    <span class="ln"><span class="serif" style="text-transform:none; font-weight:400; font-style:italic; letter-spacing:-0.02em; font-size:176px;">once.</span></span>
+    <span class="ln" style="margin-top:34px"><span id="s5-not" style="position:relative">Not twice.<i id="s5-strike" style="position:absolute; left:-8px; top:84%; height:0; z-index:-1;"></i></span></span>
+  </div>
+  <div class="mcard" id="m1" style="left:1010px; top:230px;"><div class="t">Product rule for logs</div><div class="s" id="m1s">Getting there</div><div class="track"><div class="fill" id="m1f"></div></div></div>
+  <div class="mcard" id="m2" style="left:1010px; top:430px;"><div class="t">Balancing equations</div><div class="s" id="m2s">Getting there</div><div class="track"><div class="fill" id="m2f"></div></div></div>
+  <div class="mcard" id="m3" style="left:1010px; top:630px;"><div class="t">Sign errors in vectors</div><div class="s" id="m3s">Coming back</div><div class="track"><div class="fill" id="m3f"></div></div></div>
+</div>
+
+<!-- ═══════ S6 (24–30): finale ═══════ -->
+<div class="scene dark" id="s6a">
+  <div class="abs big" id="s6a-stack" style="left:0; right:0; top:120px; font-size:330px; text-align:center;">
+    <span class="ln"><span id="w1">Think.</span></span>
+    <span class="ln"><span id="w2">Out.</span></span>
+    <span class="ln"><span id="w3">Loud.</span></span>
+  </div>
+</div>
+<div class="scene light" id="s6b">
+  <div id="s6-rings"></div>
+  <div class="face" id="s6-face" style="left:830px; top:110px; width:260px; height:260px;">
+    <div class="eye" id="s6-eyeL" style="left:84px; top:104px; width:26px; height:34px;"></div>
+    <div class="eye" id="s6-eyeR" style="left:150px; top:104px; width:26px; height:34px;"></div>
+  </div>
+  <div class="abs serif" id="s6-w" style="left:0; right:0; top:390px; text-align:center; font-size:300px; line-height:1; letter-spacing:-0.035em;">otto</div>
+  <div class="abs" id="s6-t" style="left:0; right:0; top:700px; text-align:center; font-size:62px; letter-spacing:-0.02em; font-weight:600;">Think out loud. Get it right.</div>
+  <div class="abs" id="s6-b" style="left:0; right:0; top:830px; text-align:center;"><span class="pill">Start talking</span></div>
+  <div class="abs" id="s6-u" style="left:0; right:0; top:978px; text-align:center; font-size:32px; color:var(--muted); letter-spacing:.05em;">hiotto.vercel.app</div>
+</div>
+
+<div class="wipe" id="wipe0" style="background:#EFEBE0"></div>
+<div class="wipe" id="wipe1" style="background:#1B1815"></div>
+<div id="vig"></div>
+<div id="grain"></div>
+
+<script>
+  // Every frame is a pure function of time, so the film renders identically on every run. 120 BPM: one beat = 0.5 s.
+  const BEAT = 0.5;
+  const clamp = (x, a = 0, b = 1) => Math.min(b, Math.max(a, x));
+  const lerp = (a, b, x) => a + (b - a) * x;
+  const easeOut = (x) => 1 - Math.pow(1 - clamp(x), 4);
+  const easeInOut = (x) => { x = clamp(x); return x < .5 ? 8 * x * x * x * x : 1 - Math.pow(-2 * x + 2, 4) / 2; };
+  const easeBack = (x) => { x = clamp(x); const c1 = 2.2, c3 = c1 + 1; return 1 + c3 * Math.pow(x - 1, 3) + c1 * Math.pow(x - 1, 2); };
+  const seg = (t, a, b, f = easeOut) => f((t - a) / (b - a));
+  const $ = (id) => document.getElementById(id);
+  const typed = (s, t, start, cps) => s.slice(0, Math.max(0, Math.min(s.length, Math.floor((t - start) * cps))));
+
+  const scenes = { s1: [0, 4], s2: [4, 6], s3: [6, 12], s4a: [12, 13.5], s4b: [13.5, 15], s4c: [15, 16.5], s4d: [16.5, 18], s5: [18, 24], s6a: [24, 26], s6b: [26, 30] };
+  // swipe transitions: [centre time, duration, which panel]
+  const wipes = [[12, .5, 1], [13.5, .4, 0], [15, .4, 1], [16.5, .4, 0], [18, .5, 1], [24, .5, 1], [26, .22, 0]];
+
+  // slam a line in from below its mask, with overshoot
+  const slam = (el, t, at, dur = 0.42) => { const k = seg(t, at, at + dur, easeBack); el.style.transform = `translateY(${(1 - k) * 118}%)`; el.style.opacity = t < at ? 0 : 1; };
+  const out = (el, t, at, dur = 0.3) => { const k = seg(t, at, at + dur, easeInOut); if (k > 0) el.style.transform = `translateY(${-k * 118}%)`; };
+  // a tiny punch that happens on every beat (1 → 1.05 → 1)
+  const beatPulse = (t, start = 0) => { const p = ((t - start) % BEAT + BEAT) % BEAT / BEAT; return Math.exp(-p * 6); };
+
+  function blink(t, eyes, times) { let k = 1; for (const b of times) { const d = Math.abs(t - b); if (d < 0.1) k = Math.min(k, 0.1 + 0.9 * (d / 0.1)); } eyes.forEach((e) => { e.style.transform = `scaleY(${k})`; }); }
+  const look = (eyes, dx, dy) => eyes.forEach((e) => { e.style.translate = `${dx}px ${dy}px`; });
+
+  // rings radiating from a face on every beat
+  function makeRings(host, n, size) { for (let i = 0; i < n; i++) { const r = document.createElement("div"); r.className = "ring"; r.style.width = r.style.height = size + "px"; host.appendChild(r); } return [...host.children]; }
+  function updateRings(rings, t, start, cx, cy, size, maxScale = 3.4, color = "#1B1815") {
+    rings.forEach((r, i) => {
+      const age = (t - start - i * BEAT) % (BEAT * rings.length);
+      const k = (t - start - i * BEAT) < 0 ? 2 : (((t - start) / BEAT - i) % rings.length + rings.length) % rings.length;
+      const a = k / rings.length;
+      r.style.left = (cx - size / 2) + "px"; r.style.top = (cy - size / 2) + "px"; r.style.color = color;
+      r.style.transform = `scale(${1 + a * maxScale})`; r.style.opacity = t < start ? 0 : (1 - a) * 0.4;
+    });
+  }
+
+  // waveform
+  function buildBars(host, n, w) { for (let i = 0; i < n; i++) { const s = document.createElement("span"); if (w) s.style.width = w + "px"; host.appendChild(s); } return [...host.children]; }
+  function wave(bars, t, amp, maxH, tint) {
+    bars.forEach((b, i) => {
+      const env = Math.sin((i / (bars.length - 1)) * Math.PI);
+      const v = (0.5 + 0.5 * Math.sin(t * 11 + i * 0.9)) * (0.55 + 0.45 * Math.sin(t * 6.1 + i * 1.7));
+      b.style.height = `${6 + amp * env * v * maxH}px`;
+      if (tint) b.style.background = tint;
+    });
+  }
+
+  const eyes2 = [$("s2-eyeL"), $("s2-eyeR")], eyes3 = [$("s3-eyeL"), $("s3-eyeR")], eyes6 = [$("s6-eyeL"), $("s6-eyeR")];
+  const rings2 = makeRings($("s2-rings"), 4, 340), rings3 = makeRings($("s3-rings"), 3, 260), rings6 = makeRings($("s6-rings"), 4, 260);
+  const bars3 = buildBars($("bars"), 31), bars4a = buildBars($("s4a-bars"), 41, 18);
+
+  // marquee rows for the IB scene
+  const SUBJECTS = ["Mathematics AA", "Physics", "Chemistry", "Biology", "Economics", "History", "Computer Science", "Theory of Knowledge", "English A", "Languages"];
+  const marqHost = $("s4c-marq"); const marqRows = [];
+  for (let r = 0; r < 5; r++) {
+    const d = document.createElement("div"); d.className = "marq"; d.style.top = (-30 + r * 230) + "px"; d.style.fontSize = "190px";
+    const list = [...SUBJECTS.slice(r * 2), ...SUBJECTS.slice(0, r * 2)];
+    d.innerHTML = list.concat(list).map((s, i) => `<span class="${(i + r) % 2 ? "o" : ""}" style="margin-right:70px">${s}</span>`).join("");
+    marqHost.appendChild(d); marqRows.push(d);
+  }
+  // particles for the success burst
+  const burst = $("burst"); const parts = [];
+  for (let i = 0; i < 26; i++) { const p = document.createElement("i"); p.style.cssText = "position:absolute; display:block; border-radius:50%; will-change:transform,opacity;"; const s = 10 + (i * 7) % 16; p.style.width = p.style.height = s + "px"; p.style.background = i % 3 === 0 ? "#1B1815" : "#F2B84B"; burst.appendChild(p); parts.push({ el: p, a: (i / 26) * Math.PI * 2 + (i % 3) * 0.2, v: 360 + (i * 53) % 420 }); }
+
+  const OTTO_1 = "What do you get if you take 5 away from both sides?";
+  const YOU_1 = "“Three x equals fifteen?”";
+  const OTTO_2 = "Yes. What undoes the times three?";
+  const YOU_2 = "“Divide by three. So x is five.”";
+
+  function render(t) {
+    // which scenes are on
+    for (const [id, [a, b]] of Object.entries(scenes)) $(id).style.display = t >= a && t < b ? "block" : "none";
+    // swipe transitions (the scene changes while the panel covers the screen)
+    wipes.forEach(([c, d, w], i) => {
+      const el = $("wipe" + w); const p = (t - (c - d / 2)) / d;
+      // two panels can be used by several wipes, so only drive the panel for the wipe that is currently active
+      if (p > 0 && p < 1) { el.style.display = "block"; el.style.transform = `translateX(${lerp(-2100, 1920, easeInOut(p))}px)`; el.dataset.w = i; }
+      else if (el.dataset.w == i || !el.dataset.w) el.style.display = "none";
+    });
+
+    // ───────── S1: kinetic problem statement ─────────
+    if (t < 4) {
+      const lines = [...$("s1-stack").querySelectorAll(".ln > span")];
+      lines.forEach((s, i) => { slam(s, t, 0.12 + i * BEAT, 0.5); if (t > 3.0) out(s, t, 3.0 + i * 0.08, 0.34); });
+      $("s1-stack").style.transform = `scale(${1 + 0.018 * t}) translateY(${-(t * 6)}px)`;
+      const k = seg(t, 2.1, 2.5, easeInOut); $("s1-strike").style.width = `${k * 106}%`;
+      $("s1-ans").style.transform = $("s1-ans").style.transform; // (the line itself is slammed above)
+      // iris: a paper dot opens from the centre and takes the screen at 4.0
+      const iris = seg(t, 3.35, 4.0, (x) => easeInOut(x)); const r = lerp(10, 2600, iris);
+      const el = $("s1-iris"); el.style.display = iris > 0 ? "block" : "none"; el.style.width = el.style.height = r + "px"; el.style.margin = `${-r / 2}px 0 0 ${-r / 2}px`;
+    }
+
+    // ───────── S2: Otto drops in ─────────
+    if (t >= 4 && t < 6) {
+      const face = $("s2-face");
+      const pop = seg(t, 4.0, 4.55, easeBack);
+      const squash = 1 + 0.06 * beatPulse(t, 4.0);
+      face.style.transform = `scale(${pop * squash}) translateY(${Math.sin(t * 3) * 6 - (t > 5.55 ? seg(t, 5.55, 6, easeInOut) * 60 : 0)}px)`;
+      look(eyes2, Math.sin(t * 2.4) * 14, 0); blink(t, eyes2, [5.2]);
+      updateRings(rings2, t, 4.0, 960, 380, 340, 3.2);
+      const m = $("s2-meet"); slam(m, t, 4.25, 0.5);
+      const sub = $("s2-sub"); sub.style.opacity = seg(t, 4.95, 5.3); sub.style.transform = `translateY(${(1 - seg(t, 4.95, 5.3)) * 20}px)`;
+    }
+
+    // ───────── S3: the demo ─────────
+    if (t >= 6 && t < 12) {
+      const cam = $("s3-cam");
+      const zoom = 1.10 - 0.10 * seg(t, 6, 8.5, easeInOut) + 0.035 * seg(t, 11.0, 11.9, easeInOut);
+      cam.style.transform = `scale(${zoom}) translate(${lerp(-40, 0, seg(t, 6, 8.5, easeInOut))}px, 0)`;
+      const bIn = seg(t, 6.0, 6.5, easeBack); $("board").style.transform = `translateY(${(1 - bIn) * 220}px)`; $("board").style.opacity = clamp(bIn * 3);
+      const pIn = seg(t, 6.15, 6.7, easeBack); $("panel").style.transform = `translateX(${(1 - pIn) * 200}px)`; $("panel").style.opacity = clamp(pIn * 3);
+      $("s3-face").style.transform = `scale(${1 + 0.02 * Math.sin(t * 12) * 0})`;
+      blink(t, eyes3, [8.7, 10.9]);
+      // lines are written with a quick wipe + pen-like leading edge
+      $("bl1").style.clipPath = `inset(0 ${100 - seg(t, 6.45, 6.85, easeInOut) * 100}% 0 0)`;
+      $("bl2").style.clipPath = `inset(0 ${100 - seg(t, 9.0, 9.3, easeInOut) * 100}% 0 0)`;
+      $("bl3").style.clipPath = `inset(0 ${100 - seg(t, 11.0, 11.25, easeInOut) * 100}% 0 0)`;
+      $("hl2").style.opacity = 0.9 * Math.sin(Math.PI * clamp(seg(t, 9.0, 9.7, (x) => clamp(x)))) ;
+      $("hl3").style.opacity = 0.9 * Math.sin(Math.PI * clamp(seg(t, 11.0, 11.8, (x) => clamp(x))));
+      // who is speaking
+      let who = "Otto", text = "", cls = "caption", amp = 0.05, tint = "#1B1815", lookX = 0;
+      if (t >= 6.9 && t < 8.0) { text = typed(OTTO_1, t, 6.9, 52); amp = 0.95; }
+      else if (t >= 8.0 && t < 9.2) { text = OTTO_1; amp = t < 8.15 ? 0.5 : 0.1; if (t >= 8.2) { who = "You"; cls = "caption you"; text = typed(YOU_1, t, 8.25, 26); amp = 0.8; tint = "#8A8379"; lookX = -8; } }
+      else if (t >= 9.2 && t < 10.3) { text = typed(OTTO_2, t, 9.25, 38); amp = 0.95; }
+      else if (t >= 10.3 && t < 11.3) { who = "You"; cls = "caption you"; text = typed(YOU_2, t, 10.35, 30); amp = 0.8; tint = "#8A8379"; lookX = -8; }
+      else if (t >= 11.3) { text = "Yes."; amp = 0.4; }
+      $("who").textContent = who; $("cap").className = "abs " + cls; $("cap").textContent = text;
+      wave(bars3, t, amp, 90, tint); look(eyes3, lookX, 0);
+      updateRings(rings3, t, 6.7, 290, 150, 260, 1.6);
+      // check + burst
+      const tk = seg(t, 11.2, 11.55, easeBack);
+      $("tick").style.opacity = clamp(tk * 2); $("tick").style.transform = `scale(${0.5 + 0.5 * tk})`;
+      $("tickp").style.strokeDashoffset = 100 - 100 * seg(t, 11.3, 11.6);
+      $("found").style.opacity = seg(t, 11.5, 11.8); $("found").style.transform = `translateX(${(1 - seg(t, 11.5, 11.8)) * -20}px)`;
+      parts.forEach((p) => { const k = seg(t, 11.25, 12.0, (x) => 1 - Math.pow(1 - clamp(x), 3)); const d = p.v * k; p.el.style.transform = `translate(${Math.cos(p.a) * d}px, ${Math.sin(p.a) * d + 160 * k * k}px) scale(${1 - k})`; p.el.style.opacity = t < 11.25 ? 0 : 1 - k; });
+    }
+
+    // ───────── S4: feature montage, one per three beats ─────────
+    if (t >= 12 && t < 13.5) {
+      slam($("s4a-w"), t, 12.0, 0.35);
+      wave(bars4a, t, 0.55 + 0.45 * beatPulse(t, 12), 330, null);
+      $("s4a-c").style.opacity = seg(t, 12.5, 12.8);
+    }
+    if (t >= 13.5 && t < 15) {
+      slam($("s4b-w"), t, 13.5, 0.35);
+      const cardIn = seg(t, 13.55, 14.0, easeBack); $("s4b-card").style.transform = `translateX(${(1 - cardIn) * 500}px) rotate(${(1 - cardIn) * 4}deg)`;
+      [[14.0, 14.25], [14.3, 14.55], [14.6, 14.85]].forEach(([a, b], i) => { $("s4b-l" + (i + 1)).style.clipPath = `inset(0 ${100 - seg(t, a, b, easeInOut) * 100}% 0 0)`; });
+      $("s4b-c").style.opacity = seg(t, 14.0, 14.3);
+    }
+    if (t >= 15 && t < 16.5) {
+      marqRows.forEach((m, i) => { const dir = i % 2 ? 1 : -1; m.style.transform = `translateX(${dir * (t - 15) * (420 + i * 90) - (dir > 0 ? 3200 : 0)}px)`; });
+      const b = seg(t, 15.2, 15.65, easeBack); $("s4c-badge").style.transform = `scale(${0.6 + 0.4 * b}) rotate(${(1 - b) * -6}deg)`; $("s4c-badge").style.opacity = clamp(b * 2);
+    }
+    if (t >= 16.5 && t < 18) {
+      slam($("s4d-w"), t, 16.5, 0.35);
+      ["hw1", "hw2", "hw3"].forEach((id, i) => { const k = seg(t, 16.65 + i * 0.25, 17.1 + i * 0.25, easeBack); $(id).style.transform = `translateX(${(1 - k) * 700}px)`; $(id).style.opacity = clamp(k * 2); $(id).querySelector(".cb").style.background = t > 17.35 + i * 0.18 ? "#1B1815" : "transparent"; });
+      $("s4d-c").style.opacity = seg(t, 17.1, 17.4);
+    }
+
+    // ───────── S5: mistakes ─────────
+    if (t >= 18 && t < 24) {
+      const lines = [...$("s5-stack").querySelectorAll(".ln > span")];
+      [18.1, 18.6, 19.1, 20.0].forEach((at, i) => slam(lines[i], t, at, 0.45));
+      $("s5-strike").style.height = "22px"; $("s5-strike").style.background = "#F2B84B"; $("s5-strike").style.width = `${seg(t, 21.0, 21.35, easeInOut) * 108}%`;
+      $("s5-stack").style.transform = `translateX(${-seg(t, 18, 24, (x) => x) * 40}px)`;
+      ["m1", "m2", "m3"].forEach((id, i) => { const k = seg(t, 19.5 + i * 0.5, 20.05 + i * 0.5, easeBack); $(id).style.transform = `translateX(${(1 - k) * 1100}px) rotate(${(1 - k) * 8}deg)`; $(id).style.opacity = clamp(k * 3); });
+      const g1 = seg(t, 20.6, 22.1, easeInOut); $("m1f").style.width = `${lerp(30, 100, g1)}%`; $("m1s").textContent = g1 > 0.98 ? "Solid ✓" : "Getting there";
+      const g2 = seg(t, 20.9, 21.7, easeInOut); $("m2f").style.width = `${lerp(40, 100, g2)}%`; $("m2s").textContent = g2 > 0.98 ? "Solid ✓" : "Getting there";
+      $("m3f").style.width = `${seg(t, 21.0, 21.8, easeInOut) * 24}%`;
+      ["m1", "m2"].forEach((id, i) => { const done = t > (i ? 21.7 : 22.1); if (done) $(id).style.transform += ` scale(${1 + 0.035 * Math.exp(-(t - (i ? 21.7 : 22.1)) * 9)})`; });
+      // everything flies out before the finale
+      if (t > 23.2) { const k = seg(t, 23.2, 23.7, easeInOut); ["m1", "m2", "m3"].forEach((id, i) => { $(id).style.transform += ` translateX(${k * 1300}px)`; }); $("s5-stack").style.transform += ` translateX(${-k * 1200}px)`; }
+    }
+
+    // ───────── S6a: the three-beat tagline, on the beat ─────────
+    if (t >= 24 && t < 26) {
+      ["w1", "w2", "w3"].forEach((id, i) => { slam($(id), t, 24.1 + i * BEAT, 0.36); });
+      $("s6a-stack").style.transform = `scale(${1 + 0.025 * (t - 24) + 0.02 * beatPulse(t, 24)})`;
+      if (t > 25.4) { const k = seg(t, 25.4, 25.78, easeInOut); $("s6a-stack").style.opacity = 1 - k; }
+      else $("s6a-stack").style.opacity = 1;
+    }
+    // ───────── S6b: logo lockup ─────────
+    if (t >= 26) {
+      const f = seg(t, 26.0, 26.55, easeBack);
+      $("s6-face").style.transform = `scale(${f * (1 + 0.04 * beatPulse(t, 26))}) translateY(${Math.sin(t * 2.4) * 5}px)`;
+      look(eyes6, Math.sin(t * 2) * 10, 0); blink(t, eyes6, [28.3]);
+      updateRings(rings6, t, 26.0, 960, 240, 260, 3.6);
+      const w = $("s6-w"); const k = seg(t, 26.3, 26.8, easeBack); w.style.transform = `translateY(${(1 - k) * 90}px) scale(${0.9 + 0.1 * k})`; w.style.opacity = clamp(k * 2);
+      const tg = seg(t, 26.9, 27.3); $("s6-t").style.opacity = tg; $("s6-t").style.transform = `translateY(${(1 - tg) * 26}px)`;
+      const bt = seg(t, 27.4, 27.85, easeBack); $("s6-b").style.opacity = clamp(bt * 2); $("s6-b").style.transform = `translateY(${(1 - bt) * 40}px) scale(${1 + 0.03 * beatPulse(t, 28)})`;
+      $("s6-u").style.opacity = seg(t, 28.0, 28.4);
+    }
+    // film grain: re-seeded 24 times a second
+    const gi = Math.floor(t * 24); $("grain").style.transform = `translate(${(gi * 37) % 40}px, ${(gi * 53) % 40}px)`;
+  }
+  window.render = render;
+  render(0);
+</script>
+</body>
+</html>

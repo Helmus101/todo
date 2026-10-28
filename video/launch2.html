@@ -1,0 +1,416 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Otto launch film — news open</title>
+<style>
+  @font-face { font-family: "Instrument Serif"; src: url("../node_modules/@fontsource/instrument-serif/files/instrument-serif-latin-400-normal.woff2") format("woff2"); font-style: normal; }
+  @font-face { font-family: "Instrument Serif"; src: url("../node_modules/@fontsource/instrument-serif/files/instrument-serif-latin-400-italic.woff2") format("woff2"); font-style: italic; }
+  :root { --paper: #FAF8F4; --ink: #1B1815; --muted: #8A8379; --line: #E4E0DA; --face: #EFEBE0; --card: #FFFFFF; --amber: #F2B84B; }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { width: 1920px; height: 1080px; overflow: hidden; background: var(--ink); }
+  body { font-family: "Helvetica Neue", Helvetica, Arial, sans-serif; color: var(--paper); -webkit-font-smoothing: antialiased; position: relative; }
+  .scene { position: absolute; inset: 0; display: none; overflow: hidden; background: var(--ink); }
+  .light { background: var(--paper); color: var(--ink); }
+  .abs { position: absolute; }
+  .serif { font-family: "Instrument Serif", Georgia, serif; font-weight: 400; letter-spacing: -0.01em; }
+  .big { font-weight: 800; letter-spacing: -0.045em; text-transform: uppercase; line-height: .92; }
+  .ln { display: block; overflow: hidden; padding: 0.05em 0 0.1em; }
+  .ln > span { display: inline-block; will-change: transform; }
+
+  /* photo layers: duotone-style treatment so every photo sits in the brand palette */
+  .photo { position: absolute; inset: -60px; background-size: cover; background-position: center; will-change: transform; filter: grayscale(1) contrast(1.15) brightness(.9); }
+  .shade { position: absolute; inset: 0; background: linear-gradient(180deg, rgba(27,24,21,.55) 0%, rgba(27,24,21,.35) 40%, rgba(27,24,21,.88) 100%); }
+  .shade.heavy { background: rgba(27,24,21,.72); }
+
+  /* news furniture */
+  .tag { display: inline-block; background: var(--amber); color: var(--ink); font-weight: 800; letter-spacing: .12em; font-size: 30px; padding: 12px 22px; text-transform: uppercase; }
+  .src { font-size: 28px; letter-spacing: .06em; color: rgba(250,248,244,.78); text-transform: uppercase; font-weight: 600; }
+  .ticker { position: absolute; left: 0; right: 0; bottom: 0; height: 86px; background: var(--paper); color: var(--ink); overflow: hidden; display: flex; align-items: center; z-index: 5; }
+  .ticker .lbl { flex: none; background: var(--ink); color: var(--paper); height: 100%; display: flex; align-items: center; padding: 0 36px; font-weight: 800; letter-spacing: .1em; font-size: 28px; }
+  .ticker .run { white-space: nowrap; font-size: 32px; font-weight: 600; letter-spacing: -.005em; will-change: transform; }
+  .ticker .run b { color: #a3731b; font-weight: 800; }
+
+  .face { position: absolute; border-radius: 50%; background: var(--face); will-change: transform; }
+  .eye { position: absolute; background: var(--ink); border-radius: 50%; }
+  .ring { position: absolute; border-radius: 50%; border: 3px solid currentColor; will-change: transform, opacity; }
+
+  .board { background: var(--card); border: 2px solid var(--line); border-radius: 28px; overflow: hidden; box-shadow: 0 40px 80px -40px rgba(27,24,21,.35); color: var(--ink); }
+  .board-head { position: absolute; left: 56px; top: 44px; right: 56px; display: flex; justify-content: space-between; font-size: 26px; color: var(--muted); letter-spacing: .02em; }
+  .board-head b { color: var(--ink); font-weight: 700; }
+  .rule { position: absolute; left: 56px; right: 56px; height: 2px; background: #F0ECE5; }
+  .bline { position: absolute; left: 76px; font-size: 104px; line-height: 1; white-space: nowrap; }
+  .bline i { font-style: italic; }
+  .bno { position: absolute; left: 18px; font-size: 22px; color: #BDB6AA; }
+  .hl { position: absolute; left: 60px; right: 60px; height: 150px; background: var(--amber); opacity: 0; border-radius: 10px; mix-blend-mode: multiply; }
+  .caption { font-size: 46px; line-height: 1.2; letter-spacing: -0.01em; font-weight: 500; }
+  .caption.you { font-family: "Instrument Serif", Georgia, serif; font-style: italic; font-size: 60px; color: #6d665c; font-weight: 400; }
+  .cap-label { font-size: 22px; letter-spacing: .14em; text-transform: uppercase; color: var(--muted); }
+  .bars { display: flex; align-items: center; justify-content: center; gap: 8px; }
+  .bars span { display: block; width: 8px; border-radius: 4px; background: currentColor; }
+  .hw { position: absolute; left: 0; right: 0; background: var(--card); color: var(--ink); border-radius: 22px; height: 118px; padding: 0 36px; display: flex; align-items: center; gap: 28px; font-size: 40px; font-weight: 600; letter-spacing: -0.01em; box-shadow: 0 30px 60px -30px rgba(0,0,0,.6); }
+  .hw .cb { width: 44px; height: 44px; border-radius: 12px; border: 3px solid var(--ink); flex: none; }
+  .hw small { margin-left: auto; font-size: 26px; font-weight: 500; color: var(--muted); }
+  .marq { position: absolute; left: 0; white-space: nowrap; font-weight: 800; text-transform: uppercase; letter-spacing: -0.04em; line-height: 1; font-size: 170px; }
+  .marq .o { color: transparent; -webkit-text-stroke: 3px rgba(250,248,244,.55); }
+  .pill { display: inline-block; background: var(--paper); color: var(--ink); font-size: 40px; font-weight: 700; padding: 30px 70px; border-radius: 24px; letter-spacing: -0.01em; }
+  .bubble { position: absolute; padding: 28px 40px; border-radius: 34px; font-size: 52px; font-weight: 600; letter-spacing: -0.01em; max-width: 760px; }
+  .wipe { position: absolute; top: 0; bottom: 0; width: 2100px; left: 0; will-change: transform; display: none; z-index: 50; }
+  #flash { position: absolute; inset: 0; background: #fff; opacity: 0; z-index: 52; pointer-events: none; }
+  #grain { position: absolute; inset: -40px; z-index: 60; pointer-events: none; opacity: .05; mix-blend-mode: overlay; background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='300' height='300'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='2' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 1  0 0 0 0 1  0 0 0 0 1  0 0 0 .9 0'/></filter><rect width='300' height='300' filter='url(%23n)'/></svg>"); }
+  #vig { position: absolute; inset: 0; z-index: 55; pointer-events: none; background: radial-gradient(ellipse at center, rgba(0,0,0,0) 62%, rgba(0,0,0,.28) 100%); }
+</style>
+</head>
+<body>
+
+<!-- ═════════ N1 (0–2): breaking ═════════ -->
+<div class="scene" id="n1">
+  <div class="photo" id="n1-ph" style="background-image:url(photos/lecture.jpg)"></div><div class="shade"></div>
+  <div class="abs" id="n1-tag" style="left:96px; top:96px;"><span class="tag">Breaking</span></div>
+  <div class="abs src" id="n1-src" style="left:96px; top:640px;">OECD · PISA 2025 results · 8 September 2026</div>
+  <div class="abs big" id="n1-h" style="left:90px; top:690px; font-size:150px; width:1700px;">
+    <span class="ln"><span>Record lows in maths and reading.</span></span>
+  </div>
+  <div class="ticker"><div class="lbl">PISA 2025</div><div style="flex:1; overflow:hidden; height:100%; display:flex; align-items:center;"><div class="run" id="n1-run"><b>760,000 students</b> &nbsp;·&nbsp; 91 countries and economies &nbsp;·&nbsp; OECD average maths <b>463</b> &nbsp;·&nbsp; maths and reading at the lowest OECD average on record &nbsp;·&nbsp; <b>760,000 students</b> &nbsp;·&nbsp; 91 countries and economies &nbsp;·&nbsp; OECD average maths <b>463</b></div></div></div>
+</div>
+
+<!-- ═════════ N2 (2–4): maths −22 ═════════ -->
+<div class="scene" id="n2">
+  <div class="photo" id="n2-ph" style="background-image:url(photos/archive.jpg); opacity:.28"></div><div class="shade heavy" style="background:rgba(27,24,21,.82)"></div>
+  <div class="abs src" style="left:96px; top:90px;">Mathematics · OECD average</div>
+  <div class="abs big" id="n2-num" style="left:90px; top:170px; font-size:420px; color:var(--amber); letter-spacing:-0.06em;">−22</div>
+  <div class="abs" id="n2-sub" style="left:100px; top:610px; font-size:54px; line-height:1.15; width:760px; font-weight:600; letter-spacing:-0.015em;">points since 2015.<br><span style="color:rgba(250,248,244,.7); font-weight:500">Just over one year of learning.</span></div>
+  <svg class="abs" id="n2-chart" style="left:1000px; top:160px;" width="800" height="640" viewBox="0 0 800 640">
+    <g stroke="rgba(250,248,244,.16)" stroke-width="2"><line x1="40" y1="80" x2="780" y2="80"/><line x1="40" y1="240" x2="780" y2="240"/><line x1="40" y1="400" x2="780" y2="400"/><line x1="40" y1="560" x2="780" y2="560"/></g>
+    <path id="n2-line" d="M60 120 L270 80 L520 280 L740 400" fill="none" stroke="#FAF8F4" stroke-width="10" stroke-linecap="round" stroke-linejoin="round" pathLength="100" stroke-dasharray="100" stroke-dashoffset="100"/>
+    <g id="n2-dots" fill="#FAF8F4"><circle cx="60" cy="120" r="14"/><circle cx="270" cy="80" r="14"/><circle cx="520" cy="280" r="14"/><circle id="n2-last" cx="740" cy="400" r="18" fill="#F2B84B"/></g>
+    <g font-size="30" fill="rgba(250,248,244,.7)" font-family="Helvetica Neue, Helvetica, Arial" text-anchor="middle"><text x="60" y="610">2015</text><text x="270" y="610">2018</text><text x="520" y="610">2022</text><text x="740" y="610">2025</text></g>
+    <g font-size="34" font-weight="700" fill="#FAF8F4" font-family="Helvetica Neue, Helvetica, Arial" text-anchor="middle"><text x="60" y="84">485</text><text x="270" y="44">489</text><text x="520" y="244">472</text><text id="n2-v" x="740" y="364" fill="#F2B84B">463</text></g>
+  </svg>
+  <div class="abs src" style="left:96px; bottom:70px; font-size:24px; opacity:.8;">Source: OECD, PISA 2025 Results (Volume I)</div>
+</div>
+
+<!-- ═════════ N3 (4–6): reading + low performers ═════════ -->
+<div class="scene" id="n3">
+  <div class="abs src" style="left:96px; top:90px;">Reading · Low performers</div>
+  <div class="abs" id="n3a" style="left:96px; top:190px; width:820px;">
+    <div class="big" style="font-size:340px; color:var(--amber); letter-spacing:-0.06em;" id="n3a-num">−28</div>
+    <div style="font-size:54px; line-height:1.15; font-weight:600; letter-spacing:-0.015em; margin-top:10px;">points in reading since 2015.<br><span style="color:rgba(250,248,244,.7); font-weight:500">About one and a half years of learning.</span></div>
+  </div>
+  <div class="abs" id="n3b" style="left:1060px; top:170px; width:760px;">
+    <svg width="470" height="470" viewBox="0 0 470 470" style="display:block">
+      <circle cx="235" cy="235" r="200" fill="none" stroke="rgba(250,248,244,.16)" stroke-width="42"/>
+      <circle id="n3-ring" cx="235" cy="235" r="200" fill="none" stroke="#F2B84B" stroke-width="42" stroke-linecap="butt" transform="rotate(-90 235 235)" pathLength="100" stroke-dasharray="16 100"/>
+      <text id="n3-pct" x="235" y="270" text-anchor="middle" font-size="150" font-weight="800" fill="#FAF8F4" font-family="Helvetica Neue, Helvetica, Arial" letter-spacing="-6">16%</text>
+    </svg>
+    <div style="font-size:44px; line-height:1.2; font-weight:600; letter-spacing:-0.01em; margin-top:22px;">of 15-year-olds are low performers in all three subjects.<br><span style="color:rgba(250,248,244,.7); font-weight:500">Up from 16% in 2022.</span></div>
+  </div>
+  <div class="abs src" style="left:96px; bottom:70px; font-size:24px; opacity:.8;">Source: OECD, PISA 2025 Results (Volume I)</div>
+</div>
+
+<!-- ═════════ N4 (6–8): AI hands out answers ═════════ -->
+<div class="scene" id="n4">
+  <div class="photo" id="n4-ph" style="background-image:url(photos/desk.jpg)"></div><div class="shade"></div>
+  <div class="abs src" id="n4-s" style="left:96px; top:96px;">Meanwhile</div>
+  <div class="abs big" id="n4-h" style="left:90px; top:150px; font-size:172px; width:1500px;">
+    <span class="ln"><span>AI hands</span></span><span class="ln"><span>out answers.</span></span>
+  </div>
+  <div class="bubble" id="n4-b1" style="left:1120px; top:560px; background:rgba(250,248,244,.14); color:var(--paper); border:2px solid rgba(250,248,244,.35);">Solve 3x + 5 = 20</div>
+  <div class="bubble" id="n4-b2" style="left:1040px; top:730px; background:var(--paper); color:var(--ink);">x = 5. Done.</div>
+  <div class="abs" id="n4-q" style="left:96px; bottom:128px; width:1100px; font-size:38px; line-height:1.25; font-weight:600; letter-spacing:-0.01em; color:rgba(250,248,244,.92);">Leaning on AI that gives direct answers can lift task scores without lifting learning.<div class="src" style="margin-top:12px; font-size:24px;">OECD · Digital Education Outlook 2026</div></div>
+</div>
+
+<!-- ═════════ N5 (8–10): the experiment ═════════ -->
+<div class="scene" id="n5">
+  <div class="abs src" style="left:96px; top:90px;">One field experiment · Türkiye</div>
+  <div class="abs big" id="n5-h" style="left:90px; top:170px; font-size:104px; width:940px;"><span class="ln"><span>Better with AI.</span></span><span class="ln"><span>Worse without.</span></span></div>
+  <svg class="abs" style="left:1000px; top:130px;" width="820" height="780" viewBox="0 0 820 780">
+    <line x1="40" y1="400" x2="800" y2="400" stroke="rgba(250,248,244,.4)" stroke-width="3" stroke-dasharray="10 12"/>
+    <text x="800" y="384" text-anchor="end" font-size="26" fill="rgba(250,248,244,.6)" font-family="Helvetica Neue, Helvetica, Arial">without AI baseline</text>
+    <rect id="n5-b1" x="120" y="400" width="240" height="0" fill="#F2B84B" rx="8"/>
+    <rect id="n5-b2" x="460" y="400" width="240" height="0" fill="#FAF8F4" rx="8"/>
+    <text id="n5-l1" x="240" y="740" text-anchor="middle" font-size="36" font-weight="700" fill="#FAF8F4" font-family="Helvetica Neue, Helvetica, Arial">Practice with AI</text>
+    <text id="n5-l2" x="580" y="740" text-anchor="middle" font-size="36" font-weight="700" fill="#FAF8F4" font-family="Helvetica Neue, Helvetica, Arial">Exam without it</text>
+    <text id="n5-v" x="580" y="540" text-anchor="middle" font-size="84" font-weight="800" fill="#1B1815" font-family="Helvetica Neue, Helvetica, Arial" letter-spacing="-5" opacity="0">−17%</text>
+  </svg>
+  <div class="abs src" style="left:96px; bottom:70px; font-size:24px; opacity:.8;">Source: OECD, Digital Education Outlook 2026 · students given GPT-4 for practice</div>
+</div>
+
+<!-- ═════════ N6 (10–12): the turn ═════════ -->
+<div class="scene" id="n6">
+  <div class="abs" style="left:0; right:0; top:270px; text-align:center;">
+    <div class="big" style="font-size:210px; line-height:1;"><span class="ln"><span id="n6-a">AI can teach.</span></span></div>
+    <div class="serif" style="font-size:230px; font-style:italic; line-height:1.1; margin-top:20px;"><span class="ln"><span id="n6-b" style="text-transform:none;">If it makes you think.</span></span></div>
+  </div>
+  <div class="abs src" id="n6-s" style="left:0; right:0; bottom:100px; text-align:center; font-size:26px; opacity:.8;">OECD: it helps when guided by clear teaching principles</div>
+</div>
+
+<!-- ═════════ Otto: S2 (12–14) ═════════ -->
+<div class="scene light" id="s2">
+  <div id="s2-rings"></div>
+  <div class="face" id="s2-face" style="left:790px; top:210px; width:340px; height:340px;">
+    <div class="eye" id="s2-eyeL" style="left:110px; top:136px; width:34px; height:44px;"></div>
+    <div class="eye" id="s2-eyeR" style="left:196px; top:136px; width:34px; height:44px;"></div>
+  </div>
+  <div class="abs" style="left:0; right:0; top:640px; text-align:center;">
+    <span class="ln big" style="font-size:230px; display:inline-block;"><span id="s2-meet" style="font-size:230px;">Meet <i class="serif" style="font-weight:400; text-transform:none; letter-spacing:-0.02em; font-size:260px;">Otto.</i></span></span>
+  </div>
+  <div class="abs" id="s2-sub" style="left:0; right:0; top:930px; text-align:center; font-size:44px; letter-spacing:-0.01em; color:#6e675d;">The tutor that asks.</div>
+</div>
+
+<!-- ═════════ S3 (14–20): demo ═════════ -->
+<div class="scene light" id="s3">
+  <div class="abs" id="s3-cam" style="inset:0; transform-origin: 960px 540px;">
+    <div class="abs board" id="board" style="left:110px; top:150px; width:1000px; height:780px;">
+      <div class="hl" id="hl2" style="top:352px;"></div><div class="hl" id="hl3" style="top:532px;"></div>
+      <div class="board-head"><span><b>Math</b></span><span>Out loud, together</span></div>
+      <div class="rule" style="top:250px"></div><div class="rule" style="top:430px"></div><div class="rule" style="top:610px"></div>
+      <div class="bno" style="top:196px">1</div><div class="bno" style="top:376px">2</div><div class="bno" style="top:556px">3</div>
+      <div class="bline serif" id="bl1" style="top:150px; clip-path: inset(0 100% 0 0);"><i>3x</i> + 5 = 20</div>
+      <div class="bline serif" id="bl2" style="top:330px; clip-path: inset(0 100% 0 0);"><i>3x</i> = 15</div>
+      <div class="bline serif" id="bl3" style="top:510px; clip-path: inset(0 100% 0 0);"><i>x</i> = 5</div>
+      <svg id="tick" viewBox="0 0 120 120" width="120" height="120" style="position:absolute; left:430px; top:498px; opacity:0;">
+        <circle cx="60" cy="60" r="52" fill="none" stroke="#1B1815" stroke-width="5"/>
+        <path id="tickp" d="M34 62 L53 80 L88 42" fill="none" stroke="#1B1815" stroke-width="7" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="100" stroke-dashoffset="100"/>
+      </svg>
+      <div class="abs" id="found" style="left:590px; top:532px; font-size:34px; font-weight:600; opacity:0;">You found it.</div>
+      <div id="burst" class="abs" style="left:490px; top:558px;"></div>
+    </div>
+    <div class="abs" id="panel" style="left:1230px; top:150px; width:580px; height:780px; color:var(--ink);">
+      <div id="s3-rings"></div>
+      <div class="face" id="s3-face" style="left:160px; top:20px; width:260px; height:260px;">
+        <div class="eye" id="s3-eyeL" style="left:84px; top:104px; width:26px; height:34px;"></div>
+        <div class="eye" id="s3-eyeR" style="left:150px; top:104px; width:26px; height:34px;"></div>
+      </div>
+      <div class="abs cap-label" id="who" style="left:0; right:0; top:336px; text-align:center;">Otto</div>
+      <div class="abs caption" id="cap" style="left:0; right:0; top:390px; text-align:center;"></div>
+      <div class="abs bars" id="bars" style="left:0; right:0; top:680px; height:100px;"></div>
+    </div>
+  </div>
+</div>
+
+<!-- ═════════ features (20–25): one per 1.25 s, over photos ═════════ -->
+<div class="scene" id="f1">
+  <div class="photo" id="f1-ph" style="background-image:url(photos/lecture2.jpg)"></div><div class="shade"></div>
+  <div class="abs big" style="left:110px; top:90px; font-size:300px;"><span class="ln"><span id="f1-w">Voice.</span></span></div>
+  <div class="abs bars" id="f1-bars" style="left:0; right:0; top:560px; height:300px; gap:14px; color:var(--paper);"></div>
+  <div class="abs" id="f1-c" style="left:110px; top:940px; font-size:48px; font-weight:600; letter-spacing:-0.01em;">Say it out loud. Otto listens.</div>
+</div>
+<div class="scene" id="f2">
+  <div class="photo" id="f2-ph" style="background-image:url(photos/chalk.jpg)"></div><div class="shade"></div>
+  <div class="abs big" style="left:110px; top:90px; font-size:300px;"><span class="ln"><span id="f2-w">Board.</span></span></div>
+  <div class="abs board" id="f2-card" style="left:960px; top:400px; width:850px; height:520px; border-radius:24px;">
+    <div class="rule" style="top:130px; left:44px; right:44px"></div><div class="rule" style="top:260px; left:44px; right:44px"></div><div class="rule" style="top:390px; left:44px; right:44px"></div>
+    <div class="bline serif" id="f2-l1" style="left:60px; top:50px; font-size:78px; clip-path: inset(0 100% 0 0);"><i>f</i>(<i>x</i>) = <i>x</i><sup style="font-size:.5em">2</sup> + 3<i>x</i></div>
+    <div class="bline serif" id="f2-l2" style="left:60px; top:180px; font-size:78px; clip-path: inset(0 100% 0 0);"><i>f</i>′(<i>x</i>) = 2<i>x</i> + 3</div>
+    <div class="bline serif" id="f2-l3" style="left:60px; top:310px; font-size:78px; clip-path: inset(0 100% 0 0);"><i>f</i>′(2) = 7</div>
+  </div>
+  <div class="abs" id="f2-c" style="left:110px; top:940px; font-size:48px; font-weight:600; letter-spacing:-0.01em;">It writes as you think.</div>
+</div>
+<div class="scene" id="f3">
+  <div class="photo" id="f3-ph" style="background-image:url(photos/loc.jpg)"></div><div class="shade heavy"></div>
+  <div id="f3-marq"></div>
+  <div class="abs" id="f3-badge" style="left:0; right:0; top:360px; text-align:center;">
+    <div style="display:inline-block; background:var(--paper); color:var(--ink); padding:34px 80px; border-radius:30px;"><div class="big" style="font-size:150px; line-height:.95;">Built for<br>the IB.</div></div>
+  </div>
+</div>
+<div class="scene" id="f4">
+  <div class="photo" id="f4-ph" style="background-image:url(photos/jclass.jpg)"></div><div class="shade"></div>
+  <div class="abs big" style="left:110px; top:90px; font-size:300px;"><span class="ln"><span id="f4-w">Pronote.</span></span></div>
+  <div class="abs" id="f4-list" style="left:960px; top:420px; width:850px; height:470px;">
+    <div class="hw" id="hw1" style="top:0"><div class="cb"></div>Maths · exercices 4 à 9<small>pour demain</small></div>
+    <div class="hw" id="hw2" style="top:150px"><div class="cb"></div>Physique · DM chapitre 3<small>vendredi</small></div>
+    <div class="hw" id="hw3" style="top:300px"><div class="cb"></div>Anglais · essay plan<small>lundi</small></div>
+  </div>
+  <div class="abs" id="f4-c" style="left:110px; top:940px; font-size:48px; font-weight:600; letter-spacing:-0.01em;">Read-only. It never sends a thing.</div>
+</div>
+
+<!-- ═════════ finale (25–30) ═════════ -->
+<div class="scene" id="s6">
+  <div class="photo" id="s6-ph" style="background-image:url(photos/suz.jpg); filter: grayscale(1) contrast(1.1) brightness(.75) blur(6px);"></div><div class="shade heavy" style="background:rgba(27,24,21,.7)"></div>
+  <div id="s6-rings" style="color:#FAF8F4"></div>
+  <div class="face" id="s6-face" style="left:830px; top:110px; width:260px; height:260px;">
+    <div class="eye" id="s6-eyeL" style="left:84px; top:104px; width:26px; height:34px;"></div>
+    <div class="eye" id="s6-eyeR" style="left:150px; top:104px; width:26px; height:34px;"></div>
+  </div>
+  <div class="abs serif" id="s6-w" style="left:0; right:0; top:390px; text-align:center; font-size:300px; line-height:1; letter-spacing:-0.035em;">otto</div>
+  <div class="abs" id="s6-t" style="left:0; right:0; top:700px; text-align:center; font-size:62px; letter-spacing:-0.02em; font-weight:600;">Think out loud. Get it right.</div>
+  <div class="abs" id="s6-b" style="left:0; right:0; top:830px; text-align:center;"><span class="pill">Start talking</span></div>
+  <div class="abs" id="s6-u" style="left:0; right:0; top:960px; text-align:center; font-size:32px; color:rgba(250,248,244,.7); letter-spacing:.05em;">hiotto.vercel.app</div>
+  <div class="abs" id="s6-credit" style="left:0; right:0; bottom:26px; text-align:center; font-size:17px; color:rgba(250,248,244,.5); letter-spacing:.02em;">Data: OECD PISA 2025 Results (Vol. I) and Digital Education Outlook 2026. Photos via Wikimedia Commons: Yinan Chen (PD), C. C. Pierce (PD), Shixart1985 (CC BY 2.0), Guilhem Vellut (CC BY 2.0), Paul The Writer (CC0), Carol M. Highsmith (PD), Douglas P Perkins (CC BY 3.0), Guywelch2000 (CC BY 4.0).</div>
+</div>
+
+<div class="wipe" id="wipe0" style="background:#EFEBE0"></div>
+<div class="wipe" id="wipe1" style="background:#1B1815"></div>
+<div id="flash"></div><div id="vig"></div><div id="grain"></div>
+
+<script>
+  const BEAT = 0.5;
+  const clamp = (x, a = 0, b = 1) => Math.min(b, Math.max(a, x));
+  const lerp = (a, b, x) => a + (b - a) * x;
+  const easeOut = (x) => 1 - Math.pow(1 - clamp(x), 4);
+  const easeInOut = (x) => { x = clamp(x); return x < .5 ? 8 * x * x * x * x : 1 - Math.pow(-2 * x + 2, 4) / 2; };
+  const easeBack = (x) => { x = clamp(x); const c1 = 2.2, c3 = c1 + 1; return 1 + c3 * Math.pow(x - 1, 3) + c1 * Math.pow(x - 1, 2); };
+  const lin = (x) => clamp(x);
+  const seg = (t, a, b, f = easeOut) => f((t - a) / (b - a));
+  const $ = (id) => document.getElementById(id);
+  const typed = (s, t, start, cps) => s.slice(0, Math.max(0, Math.min(s.length, Math.floor((t - start) * cps))));
+
+  const scenes = { n1: [0, 2], n2: [2, 4], n3: [4, 6], n4: [6, 8], n5: [8, 10], n6: [10, 12], s2: [12, 14], s3: [14, 20], f1: [20, 21.25], f2: [21.25, 22.5], f3: [22.5, 23.75], f4: [23.75, 25], s6: [25, 30] };
+  const wipes = [[2, .36, 1], [4, .36, 0], [6, .36, 1], [8, .36, 0], [10, .36, 1], [20, .36, 1], [21.25, .3, 0], [22.5, .3, 1], [23.75, .3, 0], [25, .4, 1]];
+
+  const slam = (el, t, at, dur = 0.42) => { const k = seg(t, at, at + dur, easeBack); el.style.transform = `translateY(${(1 - k) * 118}%)`; el.style.opacity = t < at ? 0 : 1; };
+  const beatPulse = (t, start = 0) => { const p = ((t - start) % BEAT + BEAT) % BEAT / BEAT; return Math.exp(-p * 6); };
+  // slow push on a photo (Ken Burns)
+  const kb = (el, u, dur, s0, s1, x0 = 0, y0 = 0, x1 = 0, y1 = 0) => { const k = clamp(u / dur); el.style.transform = `translate(${lerp(x0, x1, k)}px, ${lerp(y0, y1, k)}px) scale(${lerp(s0, s1, k)})`; };
+  function blink(t, eyes, times) { let k = 1; for (const b of times) { const d = Math.abs(t - b); if (d < 0.1) k = Math.min(k, 0.1 + 0.9 * (d / 0.1)); } eyes.forEach((e) => { e.style.transform = `scaleY(${k})`; }); }
+  const look = (eyes, dx, dy) => eyes.forEach((e) => { e.style.translate = `${dx}px ${dy}px`; });
+  function makeRings(host, n, size) { for (let i = 0; i < n; i++) { const r = document.createElement("div"); r.className = "ring"; r.style.width = r.style.height = size + "px"; host.appendChild(r); } return [...host.children]; }
+  function updateRings(rings, t, start, cx, cy, size, maxScale = 3.4, color) {
+    rings.forEach((r, i) => {
+      const k = (((t - start) / BEAT - i) % rings.length + rings.length) % rings.length; const a = k / rings.length;
+      r.style.left = (cx - size / 2) + "px"; r.style.top = (cy - size / 2) + "px"; if (color) r.style.color = color;
+      r.style.transform = `scale(${1 + a * maxScale})`; r.style.opacity = t < start ? 0 : (1 - a) * 0.4;
+    });
+  }
+  function buildBars(host, n, w) { for (let i = 0; i < n; i++) { const s = document.createElement("span"); if (w) s.style.width = w + "px"; host.appendChild(s); } return [...host.children]; }
+  function wave(bars, t, amp, maxH, tint) { bars.forEach((b, i) => { const env = Math.sin((i / (bars.length - 1)) * Math.PI); const v = (0.5 + 0.5 * Math.sin(t * 11 + i * 0.9)) * (0.55 + 0.45 * Math.sin(t * 6.1 + i * 1.7)); b.style.height = `${6 + amp * env * v * maxH}px`; if (tint) b.style.background = tint; }); }
+
+  const eyes2 = [$("s2-eyeL"), $("s2-eyeR")], eyes3 = [$("s3-eyeL"), $("s3-eyeR")], eyes6 = [$("s6-eyeL"), $("s6-eyeR")];
+  const rings2 = makeRings($("s2-rings"), 4, 340), rings3 = makeRings($("s3-rings"), 3, 260), rings6 = makeRings($("s6-rings"), 4, 260);
+  const bars3 = buildBars($("bars"), 31), barsF1 = buildBars($("f1-bars"), 41, 18);
+  const SUBJECTS = ["Mathematics AA", "Physics", "Chemistry", "Biology", "Economics", "History", "Computer Science", "Theory of Knowledge", "English A", "Languages"];
+  const marqRows = [];
+  for (let r = 0; r < 5; r++) { const d = document.createElement("div"); d.className = "marq"; d.style.top = (-20 + r * 215) + "px"; const list = [...SUBJECTS.slice(r * 2), ...SUBJECTS.slice(0, r * 2)]; d.innerHTML = list.concat(list).map((s, i) => `<span class="${(i + r) % 2 ? "o" : ""}" style="margin-right:70px">${s}</span>`).join(""); $("f3-marq").appendChild(d); marqRows.push(d); }
+  const burst = $("burst"); const parts = [];
+  for (let i = 0; i < 26; i++) { const p = document.createElement("i"); p.style.cssText = "position:absolute; display:block; border-radius:50%; will-change:transform,opacity;"; const s = 10 + (i * 7) % 16; p.style.width = p.style.height = s + "px"; p.style.background = i % 3 === 0 ? "#1B1815" : "#F2B84B"; burst.appendChild(p); parts.push({ el: p, a: (i / 26) * Math.PI * 2 + (i % 3) * 0.2, v: 360 + (i * 53) % 420 }); }
+
+  const OTTO_1 = "What do you get if you take 5 away from both sides?", YOU_1 = "“Three x equals fifteen?”", OTTO_2 = "Yes. What undoes the times three?", YOU_2 = "“Divide by three. So x is five.”";
+
+  function render(t) {
+    for (const [id, [a, b]] of Object.entries(scenes)) $(id).style.display = t >= a && t < b ? "block" : "none";
+    wipes.forEach(([c, d, w], i) => { const el = $("wipe" + w); const p = (t - (c - d / 2)) / d; if (p > 0 && p < 1) { el.style.display = "block"; el.style.transform = `translateX(${lerp(-2100, 1920, easeInOut(p))}px)`; el.dataset.w = i; } else if (el.dataset.w == i || !el.dataset.w) el.style.display = "none"; });
+    // the drop: a white flash that snaps away
+    $("flash").style.opacity = t >= 11.97 && t < 12.4 ? 0.9 * (1 - seg(t, 12.0, 12.4, lin)) : 0;
+
+    // ───────── N1 breaking (0–2) ─────────
+    if (t < 2) {
+      kb($("n1-ph"), t, 2, 1.0, 1.16, 0, 0, -30, 0);
+      $("n1-tag").style.opacity = t < 0.1 ? 0 : (Math.floor(t * 4) % 2 ? 1 : 0.55);
+      slam($("n1-h").querySelector("span span"), t, 0.35, 0.5);
+      $("n1-src").style.opacity = seg(t, 0.2, 0.5);
+      $("n1-run").style.transform = `translateX(${60 - t * 520}px)`;
+    }
+    // ───────── N2 maths (2–4) ─────────
+    if (t >= 2 && t < 4) {
+      const u = t - 2; kb($("n2-ph"), u, 2, 1.05, 1.2);
+      const k = seg(t, 2.15, 3.25, easeInOut); $("n2-num").textContent = "−" + Math.round(22 * k);
+      $("n2-num").style.transform = `scale(${1 + 0.05 * beatPulse(t, 2)})`; $("n2-num").style.transformOrigin = "0 50%";
+      $("n2-sub").style.opacity = seg(t, 2.5, 2.9); $("n2-sub").style.transform = `translateY(${(1 - seg(t, 2.5, 2.9)) * 24}px)`;
+      $("n2-line").style.strokeDashoffset = 100 - 100 * seg(t, 2.2, 3.4, easeInOut);
+      [...$("n2-dots").children].forEach((c, i) => { const s = seg(t, 2.2 + i * 0.38, 2.5 + i * 0.38, easeBack); c.style.transformOrigin = `${c.getAttribute("cx")}px ${c.getAttribute("cy")}px`; c.style.transform = `scale(${s})`; });
+      $("n2-last").style.transform += ` scale(${1 + 0.25 * beatPulse(t, 3.5)})`;
+    }
+    // ───────── N3 reading + low performers (4–6) ─────────
+    if (t >= 4 && t < 6) {
+      const ka = seg(t, 4.1, 4.7, easeBack); $("n3a").style.opacity = clamp(ka * 2); $("n3a").style.transform = `translateX(${(1 - ka) * -160}px)`;
+      $("n3a-num").textContent = "−" + Math.round(28 * seg(t, 4.2, 5.0, easeInOut));
+      const kb2 = seg(t, 4.4, 5.0, easeBack); $("n3b").style.opacity = clamp(kb2 * 2); $("n3b").style.transform = `translateX(${(1 - kb2) * 160}px)`;
+      const g = seg(t, 4.9, 5.5, easeInOut); const pct = lerp(16, 20, g);
+      $("n3-ring").setAttribute("stroke-dasharray", `${pct} 100`); $("n3-pct").textContent = Math.round(pct) + "%";
+    }
+    // ───────── N4 AI hands out answers (6–8) ─────────
+    if (t >= 6 && t < 8) {
+      kb($("n4-ph"), t - 6, 2, 1.0, 1.18, 0, 0, 0, -20);
+      $("n4-s").style.opacity = seg(t, 6.05, 6.3);
+      const lines = [...$("n4-h").querySelectorAll(".ln > span")]; slam(lines[0], t, 6.15, 0.4); slam(lines[1], t, 6.5, 0.4);
+      const b1 = seg(t, 6.9, 7.2, easeBack); $("n4-b1").style.opacity = clamp(b1 * 3); $("n4-b1").style.transform = `scale(${0.7 + 0.3 * b1})`;
+      const b2 = seg(t, 7.25, 7.55, easeBack); $("n4-b2").style.opacity = clamp(b2 * 3); $("n4-b2").style.transform = `scale(${0.7 + 0.3 * b2})`;
+      $("n4-q").style.opacity = seg(t, 6.6, 6.9);
+    }
+    // ───────── N5 the experiment (8–10) ─────────
+    if (t >= 8 && t < 10) {
+      const lines = [...$("n5-h").querySelectorAll(".ln > span")]; slam(lines[0], t, 8.1, 0.4); slam(lines[1], t, 8.55, 0.4);
+      const h1 = seg(t, 8.4, 9.0, easeBack) * 300; $("n5-b1").setAttribute("y", 400 - h1); $("n5-b1").setAttribute("height", h1);
+      const h2 = seg(t, 9.1, 9.5, easeBack) * 230; $("n5-b2").setAttribute("height", h2);
+      $("n5-v").setAttribute("opacity", seg(t, 9.4, 9.6)); 
+      $("n5-l1").setAttribute("opacity", seg(t, 8.6, 8.9)); $("n5-l2").setAttribute("opacity", seg(t, 9.2, 9.5));
+    }
+    // ───────── N6 the turn (10–12) ─────────
+    if (t >= 10 && t < 12) {
+      slam($("n6-a"), t, 10.1, 0.45); slam($("n6-b"), t, 10.75, 0.55);
+      $("n6-s").style.opacity = seg(t, 11.0, 11.3);
+      // the whole card pushes in as the drop approaches
+      $("n6").style.transform = `scale(${1 + 0.05 * seg(t, 10, 12, lin)})`;
+    } else $("n6").style.transform = "";
+
+    // ───────── Otto S2 (12–14) ─────────
+    if (t >= 12 && t < 14) {
+      const pop = seg(t, 12.0, 12.55, easeBack); const squash = 1 + 0.06 * beatPulse(t, 12.0);
+      $("s2-face").style.transform = `scale(${pop * squash}) translateY(${Math.sin(t * 3) * 6 - (t > 13.55 ? seg(t, 13.55, 14, easeInOut) * 60 : 0)}px)`;
+      look(eyes2, Math.sin(t * 2.4) * 14, 0); blink(t, eyes2, [13.2]);
+      updateRings(rings2, t, 12.0, 960, 380, 340, 3.2, "#1B1815");
+      slam($("s2-meet"), t, 12.25, 0.5);
+      const sub = $("s2-sub"); sub.style.opacity = seg(t, 12.95, 13.3); sub.style.transform = `translateY(${(1 - seg(t, 12.95, 13.3)) * 20}px)`;
+    }
+    // ───────── S3 demo (14–20) ─────────
+    if (t >= 14 && t < 20) {
+      const u = t - 14;
+      $("s3-cam").style.transform = `scale(${1.10 - 0.10 * seg(u, 0, 2.5, easeInOut) + 0.035 * seg(u, 5.0, 5.9, easeInOut)}) translate(${lerp(-40, 0, seg(u, 0, 2.5, easeInOut))}px, 0)`;
+      const bIn = seg(u, 0, 0.5, easeBack); $("board").style.transform = `translateY(${(1 - bIn) * 220}px)`; $("board").style.opacity = clamp(bIn * 3);
+      const pIn = seg(u, 0.15, 0.7, easeBack); $("panel").style.transform = `translateX(${(1 - pIn) * 200}px)`; $("panel").style.opacity = clamp(pIn * 3);
+      blink(t, eyes3, [14 + 2.7, 14 + 4.9]);
+      $("bl1").style.clipPath = `inset(0 ${100 - seg(u, 0.45, 0.85, easeInOut) * 100}% 0 0)`;
+      $("bl2").style.clipPath = `inset(0 ${100 - seg(u, 3.0, 3.3, easeInOut) * 100}% 0 0)`;
+      $("bl3").style.clipPath = `inset(0 ${100 - seg(u, 5.0, 5.25, easeInOut) * 100}% 0 0)`;
+      $("hl2").style.opacity = 0.9 * Math.sin(Math.PI * seg(u, 3.0, 3.7, lin)); $("hl3").style.opacity = 0.9 * Math.sin(Math.PI * seg(u, 5.0, 5.8, lin));
+      let who = "Otto", text = "", cls = "caption", amp = 0.05, tint = "#1B1815", lookX = 0;
+      if (u >= 0.9 && u < 2.0) { text = typed(OTTO_1, u, 0.9, 52); amp = 0.95; }
+      else if (u >= 2.0 && u < 3.2) { text = OTTO_1; amp = u < 2.15 ? 0.5 : 0.1; if (u >= 2.2) { who = "You"; cls = "caption you"; text = typed(YOU_1, u, 2.25, 26); amp = 0.8; tint = "#8A8379"; lookX = -8; } }
+      else if (u >= 3.2 && u < 4.3) { text = typed(OTTO_2, u, 3.25, 38); amp = 0.95; }
+      else if (u >= 4.3 && u < 5.3) { who = "You"; cls = "caption you"; text = typed(YOU_2, u, 4.35, 30); amp = 0.8; tint = "#8A8379"; lookX = -8; }
+      else if (u >= 5.3) { text = "Yes."; amp = 0.4; }
+      $("who").textContent = who; $("cap").className = "abs " + cls; $("cap").textContent = text;
+      wave(bars3, t, amp, 90, tint); look(eyes3, lookX, 0);
+      updateRings(rings3, t, 14.7, 290, 150, 260, 1.6, "#1B1815");
+      const tk = seg(u, 5.2, 5.55, easeBack); $("tick").style.opacity = clamp(tk * 2); $("tick").style.transform = `scale(${0.5 + 0.5 * tk})`;
+      $("tickp").style.strokeDashoffset = 100 - 100 * seg(u, 5.3, 5.6);
+      $("found").style.opacity = seg(u, 5.5, 5.8); $("found").style.transform = `translateX(${(1 - seg(u, 5.5, 5.8)) * -20}px)`;
+      parts.forEach((p) => { const k = seg(u, 5.25, 6.0, (x) => 1 - Math.pow(1 - clamp(x), 3)); const d = p.v * k; p.el.style.transform = `translate(${Math.cos(p.a) * d}px, ${Math.sin(p.a) * d + 160 * k * k}px) scale(${1 - k})`; p.el.style.opacity = u < 5.25 ? 0 : 1 - k; });
+    }
+    // ───────── features (20–25) ─────────
+    if (t >= 20 && t < 21.25) { const u = t - 20; kb($("f1-ph"), u, 1.25, 1.0, 1.12); slam($("f1-w"), t, 20.0, 0.32); wave(barsF1, t, 0.55 + 0.45 * beatPulse(t, 20), 300, null); $("f1-c").style.opacity = seg(t, 20.35, 20.6); }
+    if (t >= 21.25 && t < 22.5) {
+      const u = t - 21.25; kb($("f2-ph"), u, 1.25, 1.0, 1.12); slam($("f2-w"), t, 21.25, 0.32);
+      const ci = seg(t, 21.3, 21.65, easeBack); $("f2-card").style.transform = `translateX(${(1 - ci) * 500}px) rotate(${(1 - ci) * 4}deg)`;
+      [[21.55, 21.72], [21.75, 21.92], [21.95, 22.12]].forEach(([a, b], i) => { $("f2-l" + (i + 1)).style.clipPath = `inset(0 ${100 - seg(t, a, b, easeInOut) * 100}% 0 0)`; });
+      $("f2-c").style.opacity = seg(t, 21.6, 21.85);
+    }
+    if (t >= 22.5 && t < 23.75) {
+      const u = t - 22.5; kb($("f3-ph"), u, 1.25, 1.0, 1.1);
+      marqRows.forEach((m, i) => { const dir = i % 2 ? 1 : -1; m.style.transform = `translateX(${dir * u * (420 + i * 90) - (dir > 0 ? 3200 : 0)}px)`; });
+      const b = seg(t, 22.6, 22.95, easeBack); $("f3-badge").style.transform = `scale(${0.6 + 0.4 * b}) rotate(${(1 - b) * -6}deg)`; $("f3-badge").style.opacity = clamp(b * 2);
+    }
+    if (t >= 23.75 && t < 25) {
+      const u = t - 23.75; kb($("f4-ph"), u, 1.25, 1.0, 1.12); slam($("f4-w"), t, 23.75, 0.32);
+      ["hw1", "hw2", "hw3"].forEach((id, i) => { const k = seg(t, 23.85 + i * 0.18, 24.2 + i * 0.18, easeBack); $(id).style.transform = `translateX(${(1 - k) * 700}px)`; $(id).style.opacity = clamp(k * 2); $(id).querySelector(".cb").style.background = t > 24.4 + i * 0.12 ? "#1B1815" : "transparent"; });
+      $("f4-c").style.opacity = seg(t, 24.1, 24.35);
+    }
+    // ───────── finale (25–30) ─────────
+    if (t >= 25) {
+      kb($("s6-ph"), t - 25, 5, 1.0, 1.1);
+      const f = seg(t, 25.0, 25.5, easeBack);
+      $("s6-face").style.transform = `scale(${f * (1 + 0.04 * beatPulse(t, 25))}) translateY(${Math.sin(t * 2.4) * 5}px)`;
+      look(eyes6, Math.sin(t * 2) * 10, 0); blink(t, eyes6, [27.3]);
+      updateRings(rings6, t, 25.0, 960, 240, 260, 3.6);
+      const w = $("s6-w"); const k = seg(t, 25.3, 25.8, easeBack); w.style.transform = `translateY(${(1 - k) * 90}px) scale(${0.9 + 0.1 * k})`; w.style.opacity = clamp(k * 2);
+      const tg = seg(t, 25.9, 26.3); $("s6-t").style.opacity = tg; $("s6-t").style.transform = `translateY(${(1 - tg) * 26}px)`;
+      const bt = seg(t, 26.4, 26.85, easeBack); $("s6-b").style.opacity = clamp(bt * 2); $("s6-b").style.transform = `translateY(${(1 - bt) * 40}px) scale(${1 + 0.03 * beatPulse(t, 27)})`;
+      $("s6-u").style.opacity = seg(t, 27.0, 27.4); $("s6-credit").style.opacity = seg(t, 27.4, 27.9);
+    }
+    const gi = Math.floor(t * 24); $("grain").style.transform = `translate(${(gi * 37) % 40}px, ${(gi * 53) % 40}px)`;
+  }
+  window.render = render; render(0);
+</script>
+</body>
+</html>
