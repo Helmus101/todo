@@ -176,6 +176,77 @@ export const QUESTION_BANK: BankQuestion[] = [
     scheme: ["(a) C1 (10/20)^2 + (5/20)^2 + (5/20)^2 = 0.25 + 0.0625 + 0.0625 = 0.375; A1 D = 1 - 0.375 = 0.625.", "(b) R1 high diversity: many species with relatively even numbers, so a randomly chosen pair of individuals is likely to be of different species."],
     check: () => near(1 - ((10 / 20) ** 2 + (5 / 20) ** 2 + (5 / 20) ** 2), 0.625, 1e-12),
   },
+  // ---------------------------------------------------------------- more Maths AA
+  {
+    id: "aa-log-equation", subject: "math-aa", level: "both", topic: "Logarithms", paper: "Paper 1 style (no calculator)", marks: 5,
+    question: "Solve log2(x) + log2(x - 2) = 3, for x > 2. [5]",
+    scheme: ["M1 combine with the product law: log2(x(x - 2)) = 3.", "M1 convert to exponential form: x(x - 2) = 2^3 = 8.", "A1 x^2 - 2x - 8 = 0.", "M1 solve: (x - 4)(x + 2) = 0.", "A1 x = 4, with x = -2 rejected because it is not in the domain (x > 2)."],
+    check: () => near(Math.log2(4) + Math.log2(4 - 2), 3, 1e-12) && 4 * 4 - 2 * 4 - 8 === 0 && (-2) * (-2) - 2 * -2 - 8 === 0,
+  },
+  {
+    id: "aa-arithmetic-series", subject: "math-aa", level: "both", topic: "Sequences and series", paper: "Paper 1 style (no calculator)", marks: 4,
+    question: "An arithmetic sequence has first term 7 and common difference 3.\n(a) Find the 20th term. [2]\n(b) Find the sum of the first 20 terms. [2]",
+    scheme: ["(a) M1 u20 = 7 + 19 x 3; A1 64.", "(b) M1 S20 = 20/2 (7 + 64) or 20/2 (2 x 7 + 19 x 3); A1 710."],
+    check: () => 7 + 19 * 3 === 64 && (20 / 2) * (7 + 64) === 710 && (20 / 2) * (2 * 7 + 19 * 3) === 710,
+  },
+  {
+    id: "aa-area-between", subject: "math-aa", level: "both", topic: "Integration: area between curves", paper: "Paper 1 style (no calculator)", marks: 5,
+    question: "The curves y = x and y = x^2 enclose a region between their points of intersection.\n(a) Find the x-coordinates of the points of intersection. [2]\n(b) Find the exact area of the region. [3]",
+    scheme: ["(a) M1 set x = x^2; A1 x = 0 and x = 1.", "(b) M1 area = integral from 0 to 1 of (x - x^2) dx (the line is above the curve on this interval); A1 [x^2/2 - x^3/3] from 0 to 1; A1 1/6."],
+    check: () => { let a = 0; const n = 200000; for (let i = 0; i < n; i++) { const x = (i + 0.5) / n; a += (x - x * x) / n; } return near(a, 1 / 6, 1e-9) && 1 / 2 - 1 / 3 === 1 / 6 || near(1 / 2 - 1 / 3, 1 / 6, 1e-12); },
+  },
+  {
+    id: "aa-conditional", subject: "math-aa", level: "both", topic: "Probability: conditional and independent events", paper: "Paper 1 style (no calculator)", marks: 4,
+    question: "For events A and B, P(A) = 0.4, P(B) = 0.5 and P(A and B) = 0.2.\n(a) Find P(A given B). [2]\n(b) Determine whether A and B are independent, justifying your answer. [2]",
+    scheme: ["(a) M1 P(A | B) = P(A and B) / P(B) = 0.2 / 0.5; A1 0.4.", "(b) M1 compare P(A) P(B) = 0.4 x 0.5 = 0.2 with P(A and B) = 0.2 (or P(A | B) = P(A)); R1 they are equal, so A and B are independent (a conclusion with no comparison earns no mark)."],
+    check: () => near(0.2 / 0.5, 0.4, 1e-12) && near(0.4 * 0.5, 0.2, 1e-12),
+  },
+  {
+    id: "aa-binomial-dist", subject: "math-aa", level: "both", topic: "The binomial distribution", paper: "Paper 2 style (calculator allowed)", marks: 4,
+    question: "A factory makes bulbs and 30% of them are faulty, independently. A box holds 10 bulbs. Let X be the number of faulty bulbs in a box.\n(a) State the distribution of X. [1]\n(b) Find P(X = 3). [1]\n(c) Find the probability that more than 3 bulbs in a box are faulty. [2]",
+    scheme: ["(a) A1 X ~ B(10, 0.3).", "(b) A1 0.267 (3 s.f.).", "(c) M1 P(X >= 4) = 1 - P(X <= 3); A1 0.350 (3 s.f.). A calculator setup (the function used and its parameters) should be written down."],
+    check: () => { const C = (n: number, k: number) => { let r = 1; for (let i = 1; i <= k; i++) r = (r * (n - k + i)) / i; return r; }; const pmf = (k: number) => C(10, k) * 0.3 ** k * 0.7 ** (10 - k); return near(pmf(3), 0.2668, 0.0001) && near(1 - [0, 1, 2, 3].reduce((a, k) => a + pmf(k), 0), 0.3504, 0.0001); },
+  },
+  {
+    id: "aa-vector-angle", subject: "math-aa", level: "HL", topic: "Vectors: scalar product", paper: "Paper 1 style (no calculator)", marks: 4,
+    question: "Let a = (1, 2, 2) and b = (2, -1, 2) as column vectors.\n(a) Find a . b (the scalar product). [1]\n(b) Find the exact value of the cosine of the angle between a and b. [2]\n(c) Hence find the angle, in degrees, correct to 3 significant figures. [1]",
+    scheme: ["(a) A1 a . b = 2 - 2 + 4 = 4.", "(b) M1 cos(theta) = a . b / (|a||b|) with |a| = 3 and |b| = 3; A1 4/9.", "(c) A1 theta = 63.6 degrees."],
+    check: () => 1 * 2 + 2 * -1 + 2 * 2 === 4 && Math.hypot(1, 2, 2) === 3 && Math.hypot(2, -1, 2) === 3 && near((Math.acos(4 / 9) * 180) / Math.PI, 63.6, 0.05),
+  },
+  // ---------------------------------------------------------------- more Maths AI
+  {
+    id: "ai-exponential-double", subject: "math-ai", level: "both", topic: "Exponential models", paper: "Paper 2 style (calculator allowed)", marks: 3,
+    question: "The population of a colony of bacteria is modelled by P = 500 x 1.04^t, where t is the time in hours.\n(a) State the initial population and the hourly percentage growth. [1]\n(b) Find how long it takes for the population to double. Give your answer in hours, correct to 3 significant figures. [2]",
+    scheme: ["(a) A1 500 bacteria and 4% growth per hour.", "(b) M1 solve 500 x 1.04^t = 1000 (graph intersection or logarithms: t = ln 2 / ln 1.04); A1 17.7 hours."],
+    check: () => near(Math.log(2) / Math.log(1.04), 17.67, 0.01) && near(500 * 1.04 ** (Math.log(2) / Math.log(1.04)), 1000, 1e-6),
+  },
+  // ---------------------------------------------------------------- more Physics
+  {
+    id: "phys-ideal-gas", subject: "physics", level: "both", topic: "B.3 Gas laws", paper: "Paper 2 style (short answer)", marks: 3,
+    question: "A fixed amount of 2.0 mol of an ideal gas is held at a temperature of 300 K in a container of volume 0.020 m^3. The molar gas constant is 8.31 J mol^-1 K^-1.\n(a) Calculate the pressure of the gas. [2]\n(b) The gas is heated at constant volume until its temperature is 600 K. State the new pressure. [1]",
+    scheme: ["(a) C1 pV = nRT, so p = nRT / V; A1 2.0 x 8.31 x 300 / 0.020 = 2.5 x 10^5 Pa (249 300 Pa).", "(b) A1 doubled: 5.0 x 10^5 Pa (pressure is proportional to the kelvin temperature at constant volume)."],
+    check: () => near((2 * 8.31 * 300) / 0.02, 249300, 1e-6) && near((2 * 8.31 * 600) / 0.02, 2 * 249300, 1e-6),
+  },
+  {
+    id: "phys-electron-speed", subject: "physics", level: "HL", topic: "D.3 Motion in electromagnetic fields", paper: "Paper 2 style (short answer)", marks: 3,
+    question: "An electron, starting at rest, is accelerated through a potential difference of 200 V. The electron charge is 1.60 x 10^-19 C and its mass is 9.11 x 10^-31 kg. Ignore relativistic effects.\n(a) Calculate the kinetic energy gained by the electron, in joules. [1]\n(b) Calculate its final speed. [2]",
+    scheme: ["(a) A1 E = qV = 1.60 x 10^-19 x 200 = 3.2 x 10^-17 J.", "(b) C1 1/2 m v^2 = qV; A1 v = sqrt(2 x 3.2 x 10^-17 / 9.11 x 10^-31) = 8.4 x 10^6 m s^-1."],
+    check: () => near(1.6e-19 * 200, 3.2e-17, 1e-30) && near(Math.sqrt((2 * 3.2e-17) / 9.11e-31), 8.38e6, 0.01e6),
+  },
+  // ---------------------------------------------------------------- more Chemistry
+  {
+    id: "chem-titration", subject: "chemistry", level: "both", topic: "Titration calculations", paper: "Paper 2 style (short answer)", marks: 3,
+    question: "25.0 cm^3 of sodium hydroxide solution is exactly neutralised by 20.0 cm^3 of 0.100 mol dm^-3 hydrochloric acid: NaOH + HCl -> NaCl + H2O.\n(a) Calculate the amount, in mol, of hydrochloric acid used. [1]\n(b) State the amount of sodium hydroxide that reacted. [1]\n(c) Calculate the concentration of the sodium hydroxide solution. [1]",
+    scheme: ["(a) A1 0.100 x 0.0200 = 2.00 x 10^-3 mol.", "(b) A1 2.00 x 10^-3 mol (1 : 1 ratio).", "(c) A1 2.00 x 10^-3 / 0.0250 = 0.0800 mol dm^-3."],
+    check: () => near(0.1 * 0.02, 0.002, 1e-12) && near(0.002 / 0.025, 0.08, 1e-12),
+  },
+  // ---------------------------------------------------------------- more Biology
+  {
+    id: "bio-surface-volume", subject: "biology", level: "both", topic: "Surface area to volume ratio", paper: "Paper 2 style (short answer)", marks: 3,
+    question: "A cube-shaped cell has sides of 1 micrometre. A second cube-shaped cell has sides of 2 micrometres.\n(a) Calculate the surface area to volume ratio of each cell. [2]\n(b) Explain why the larger cell would find it harder to exchange materials with its surroundings. [1]",
+    scheme: ["(a) C1 surface area = 6 x side^2 and volume = side^3; A1 the 1 micrometre cell has 6 : 1 (6 per micrometre) and the 2 micrometre cell has 24 : 8 = 3 : 1.", "(b) R1 the ratio falls as size rises, so there is less surface for each unit of volume, and diffusion distances are longer, so supply of materials and removal of waste cannot keep up."],
+    check: () => (6 * 1 ** 2) / 1 ** 3 === 6 && (6 * 2 ** 2) / 2 ** 3 === 3,
+  },
 ];
 
 const SUBJECT_TEST: [BankSubject, RegExp][] = [
