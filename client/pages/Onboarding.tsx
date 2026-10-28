@@ -63,6 +63,7 @@ export function Onboarding({ status, onStatus, onDone, mode = "full" }: { status
   // Year + subjects: the last things the basic flow collects (the page guides cover everything else).
   const [year, setYear] = useState("");
   const [ibSubs, setIbSubs] = useState<IbSubject[]>([]);
+  const [aim, setAim] = useState("");
   // Any grade is allowed: the chips are shortcuts, "Other" opens a free-text box (also used for a saved grade that is not a chip).
   const YEAR_CHIPS = ["IB DP1", "IB DP2"];
   const [yearOther, setYearOther] = useState(false);
@@ -84,6 +85,7 @@ export function Onboarding({ status, onStatus, onDone, mode = "full" }: { status
     try {
       const dp = /DP\s?([12])/i.exec(year); // "IB DP1" / "IB DP2"
       await api.setIbSubjects(ibSubs, dp ? (`DP${dp[1]}` as "DP1" | "DP2") : undefined);
+      if (aim.trim()) await api.notebook({ action: "set-me", goal: aim.trim() }).catch(() => undefined);
       await onStatus();
     } catch { notify("Your subjects didn't save — you can set them later in Settings.", "error"); }
     setStep(3);
@@ -149,7 +151,9 @@ export function Onboarding({ status, onStatus, onDone, mode = "full" }: { status
             </div>
             <p className="onboard-lead mt-4">{"Your subjects"}</p>
             <IbSubjectPicker value={ibSubs} onChange={setIbSubs} />
-            <p className="muted small">{"Optional. Change it any time in Settings."}</p>
+            <p className="onboard-lead mt-4">{"What are you aiming for?"}</p>
+            <input className="addinput" style={{ width: "100%" }} maxLength={160} placeholder={"e.g. a 7 in Physics, 38 points, medicine"} value={aim} onChange={(e) => setAim(e.target.value)} aria-label="What are you aiming for?" />
+            <p className="muted small">{"Optional. Otto uses it to choose what to practise. Change it any time in Settings, under What Otto knows about you."}</p>
             <div className="onboard-actions onboard-actions-split">
               <button className="btn ghost" onClick={() => setStep(0)}>{"Back"}</button>
               <button className="btn primary" onClick={() => void saveYearSubjects()}>{"Continue"}</button>

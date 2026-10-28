@@ -350,7 +350,7 @@ export function backgroundBlock(c: TutorContext): string {
     personalizationBlock(p, c.subject, new Date(), { tz: p?.timezone, bestHour: learnedProductiveHour(p) }),
     personalContextLine(p),
     milestoneLine(p, c.subject),
-    learningStyleLine(p),
+    (p?.notebook?.filter((i) => i.kind === "landed").length || 0) >= 2 ? "" : learningStyleLine(p), // what has demonstrably worked beats a self-declared label
     // "How Otto sees you" (Settings): the synthesized read, refreshed at most daily and after sessions. Background only.
     (p?.studentModel?.summary ? `HOW OTTO SEES THEM (a synthesized read of this student, from their activity — background, they can see and reset it in Settings): ${String(p.studentModel.summary).slice(0, 1200)}` : ""),
     hintDensityLine(p),
