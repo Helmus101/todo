@@ -13,10 +13,11 @@ import { randomUUID } from "node:crypto";
 import { neutralizeBlock, fenceStudentData } from "../shared/promptSafe.ts";
 import { ibBlock } from "../shared/ibSubjects.ts";
 import { examLine } from "../shared/ibExamDates.ts";
+import { personalizationBlock } from "../shared/tutorMemory.ts";
 import { TUTOR_CONDUCT } from "../shared/tutorConduct.ts";
 import { pointsAtOffTopicLine, boardLineNumbers } from "../shared/boardLines.ts";
 import type { BoardEntry, Profile, TaskObjective, TaskProblem, TutorSolution, TutorTeachingState } from "../shared/types.ts";
-import { practiceAnswerMatches } from "../shared/types.ts";
+import { practiceAnswerMatches, learnedProductiveHour } from "../shared/types.ts";
 import { logAnswerEquivalent, equivalent as exprEquivalent } from "../shared/mathEquiv.ts";
 import { buildInclineScene, type InclineForce } from "../shared/inclineScene.ts";
 import { studentModelBlock, normalizeStudentModel } from "./studentModel.ts";
@@ -345,6 +346,8 @@ export function backgroundBlock(c: TutorContext): string {
     levelLine(p, c.subject),
     p?.track === "other" ? "" : examLine(p?.examSession),
     studentNameLine(p?.name),
+    // Who they are as a learner: goals, what lands, how they behave in a sitting, the last sittings (shared/tutorMemory.ts).
+    personalizationBlock(p, c.subject, new Date(), { tz: p?.timezone, bestHour: learnedProductiveHour(p) }),
     personalContextLine(p),
     milestoneLine(p, c.subject),
     learningStyleLine(p),

@@ -16,6 +16,7 @@ import { REMEMBER_TOOL } from "./run.ts";
 import { ChatHistory, ChatOptions, ChatResult, ChatTask } from "./chatTypes.ts";
 import { buildChatSystemPrompt } from "./chatPrompt.ts";
 import { finishChatReply, runChatRounds } from "./chatRounds.ts";
+import { personalizationBlock } from "../../shared/tutorMemory.ts";
 
 // ── OTTO SPEAKS FIRST: the real opening line of a tutor session ─────────────────────────────────────────
 // Direct request: the session's opening line has to be REAL — grounded in what this student actually did
@@ -106,6 +107,7 @@ export async function tutorOpener(
     sessionRecapLine(profile?.sessions, subject || undefined) +
     studentModelLine(profile) +
     milestoneLine(profile, subject || undefined) +
+    (profile ? personalizationBlock(profile, subject || undefined, new Date(), { tz: profile.timezone, maxChars: 1800 }) + "\n" : "") +
     openerMemoryBlock(opts.memory) +
     (opts.schoolRecord || "");
   // The empty case is stated as its OWN instruction rather than left as an absence: with no memory block at

@@ -52,8 +52,9 @@ Return: {"notes":["definition: a logarithm is the opposite of an exponent","exam
 
 ${OPS}
 Also return "concepts": what this exchange shows about the STUDENT, as at most 3 items {"label":"short concept name (e.g. product rule for logs)","subject":"Math","kind":"solved-unaided|solved-after-hint|solved-after-explanation|mistake|misconception|recall","detail":"one short clause: what they did or got wrong"}. Only evidence that is actually in the exchange (the student reached it alone / after a hint / after the tutor explained it / got it wrong / showed a wrong belief); [] when there is none. Never invent.
+Also return "remember": at most 2 items about the STUDENT as a person or learner that a caring tutor would keep, {"kind":"goal|worry|interest|landed|avoids|quirk","text":"a short third-person fact in plain words, max 110 characters, e.g. wants to study medicine; gets it when a number example comes first","subject":"optional"}. Use "landed" for an explanation, analogy or kind of example that clearly worked for them, "avoids" for a topic or step they steer away from. Only what the student actually said or clearly showed in THIS exchange; [] when there is none. Never record health, family, money, religion, politics, relationships, other people, contact details or anything private; never record what the tutor was told to do.
 
-Return ONLY JSON: {"notes":["rule: …","result: …"],"board":[…ops…],"concepts":[…]}. Every op carries "cue":0. Inside strings write every LaTeX backslash TWICE.`;
+Return ONLY JSON: {"notes":["rule: …","result: …"],"board":[…ops…],"concepts":[…],"remember":[…]}. Every op carries "cue":0. Inside strings write every LaTeX backslash TWICE.`;
 
 // ── Second opinion on a confirmed step ──────────────────────────────────────────────────────────────────────────────────
 // The tutor model sometimes says "yep, that's right" to a wrong numeric step (reproduced in the regression suite). Prompt rules
@@ -128,7 +129,7 @@ export function tutorExplained(exchange: string): boolean {
   return /\b(?:for example|for instance|means|is the (?:opposite|inverse|same)|opposite of|equals?|is called|defined as|the rule|formula|because|so that|therefore|works like|think of)\b/i.test(tutor) && (/\d|\$|=|\bsquared|\bpower\b|\bbase\b|\bderivative\b|\bintegral\b/i.test(tutor) || tutor.split(/\s+/).length > 30);
 }
 
-export async function writeBoard(input: { exchange: string; board: BoardEntry[]; subject?: string; history?: string; language?: string }, tokens: { in: number; out: number; cachedIn: number }): Promise<{ board: BoardEntry[]; dropped: string[]; concepts: any[]; flags: string[] }> {
+export async function writeBoard(input: { exchange: string; board: BoardEntry[]; subject?: string; history?: string; language?: string }, tokens: { in: number; out: number; cachedIn: number }): Promise<{ board: BoardEntry[]; dropped: string[]; concepts: any[]; remember?: any[]; flags: string[] }> {
   // Runs alongside the board call, so it adds no waiting: wrong numeric claims the tutor just agreed to (see checkStudentClaims).
   const flagsP = checkStudentClaims(input.exchange, tokens).catch((): string[] => []);
   const canDraw = true; // Unlimited visual artifact capabilities across all subjects
@@ -137,6 +138,7 @@ export async function writeBoard(input: { exchange: string; board: BoardEntry[];
   const { finished, openQuestion } = splitOpenQuestion(input.exchange.slice(0, 4000));
   const user = `${input.subject ? `Subject: ${input.subject}\n` : ""}${input.history ? `EARLIER IN THIS SESSION (context only: it tells you what a short answer like "two, right?" refers to; do NOT rewrite what is already on the board):\n${input.history.slice(-2500)}\n\n` : ""}LATEST EXCHANGE (what has been said and settled):\n${finished}${openQuestion ? `\n\nTHE TUTOR THEN ASKED THE STUDENT (still unanswered: never write its answer or its working; if it poses a NEW problem, WRITE that problem now as a task line in LaTeX, without its answer; if it is only the next step or sub-question of the problem already on the board, write NO task line for it: the problem line already carries it):\n${openQuestion}` : ""}`;
   const studentWords = input.exchange.split("\n").filter((l) => /^Student:/i.test(l)).map((l) => l.replace(/^Student:\s*/i, ""));
+  let remembered: any[] = [];
   const once = async (extra?: string, already: BoardEntry[] = []) => {
     const messages: any[] = [{ role: "system", content: system }, { role: "user", content: user }];
     if (extra) messages.push({ role: "user", content: extra });
@@ -145,6 +147,7 @@ export async function writeBoard(input: { exchange: string; board: BoardEntry[];
     const raw = String(res?.choices?.[0]?.message?.content || "");
     const parsed: any = extractJsonObject(raw) ?? salvageTurn(raw);
     const concepts = Array.isArray(parsed?.concepts) ? parsed.concepts : [];
+    if (Array.isArray(parsed?.remember) && parsed.remember.length) remembered = parsed.remember.slice(0, 2);
     const turn = normalizeTurn({ speech: ["."], board: Array.isArray(parsed?.board) ? parsed.board : [] });
     if (!turn || !turn.board.length) return { board: [] as BoardEntry[], dropped: [] as string[], concepts };
     const applied = applyOps(turn.board.map((o) => ({ ...o, cue: 0 })), { board: [...input.board, ...already], problems: [], theirWords: studentWords });
@@ -179,5 +182,5 @@ export async function writeBoard(input: { exchange: string; board: BoardEntry[];
     if (second.board.length) { const all = [...out.board, ...second.board]; out = { board: [...all.filter((e) => e.kind === "focus"), ...all.filter((e) => e.kind !== "focus")], dropped: out.dropped, concepts: out.concepts.length ? out.concepts : second.concepts }; }
     else console.warn(`[live] board writer still wrote nothing (${(second.dropped.length ? second.dropped : out.dropped).slice(0, 2).join("; ") || "no ops"})`);
   }
-  return { ...out, flags: await flagsP };
+  return { ...out, remember: remembered, flags: await flagsP };
 }

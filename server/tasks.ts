@@ -1,6 +1,7 @@
 import { selectJournal } from "./journal.ts";
 import { randomUUID } from "node:crypto";
 import type { WebTask, Quadrant, TaskLink, Profile, Sendable, AddUsageCategory, TaskStep, BoardEntry } from "../shared/types.ts";
+import { mergeNotebook, mergePatterns, SESSION_LOG_CAP, type SessionNote } from "../shared/tutorMemory.ts";
 import { BOARD_EVENT_CAP } from "../shared/agentTypes.ts";
 import { dedupeFacts, sameFact, canonStatus, sortWithinQuadrant, addUsage, isHandled, tzOf, deadlineEpoch, normalizeWhen, gradesBySubject } from "../shared/types.ts";
 import { loadPronoteConnection } from "./store.ts";
@@ -959,6 +960,21 @@ export function mergeProfileStates(p1: Profile, p2: Profile): Profile {
       if (!t1 && !t2) return { subjects: p2.subjects ?? p1.subjects, ibSubjects: p2.ibSubjects ?? p1.ibSubjects };
       const side = t2 >= t1 ? p2 : p1;
       return { subjects: side.subjects, ibSubjects: side.ibSubjects, ibSubjectsAt: side.ibSubjectsAt };
+    })(),
+    // What Otto has learned about them: items union by id minus what they deleted or cleared; sittings union by id; the counters
+    // that have counted more sittings win.
+    tutorPrefs: (p1.tutorPrefs?.length || p2.tutorPrefs?.length) ? [...new Set([...(p1.tutorPrefs || []), ...(p2.tutorPrefs || [])])].slice(-6) : undefined,
+    notebookGone: [...new Set([...(p1.notebookGone || []), ...(p2.notebookGone || [])])].slice(-60),
+    notebookEpoch: [p1.notebookEpoch, p2.notebookEpoch].filter(Boolean).sort().pop(),
+    ...(() => {
+      const gone = [...new Set([...(p1.notebookGone || []), ...(p2.notebookGone || [])])];
+      const epoch = [p1.notebookEpoch, p2.notebookEpoch].filter(Boolean).sort().pop();
+      const nb = mergeNotebook(p1.notebook, p2.notebook, gone, epoch);
+      const log = new Map<string, SessionNote>();
+      for (const n of [...(p1.sessionLog || []), ...(p2.sessionLog || [])]) log.set(n.id, n);
+      const sl = [...log.values()].filter((n) => !epoch || n.at > epoch).sort((a, b) => a.at.localeCompare(b.at)).slice(-SESSION_LOG_CAP);
+      const pt = mergePatterns(p1.patterns, p2.patterns);
+      return { notebook: nb.length ? nb : undefined, sessionLog: sl.length ? sl : undefined, patterns: pt && epoch && (pt.lastAt || "") <= epoch ? undefined : pt };
     })(),
     manualExams: (p1.manualExams?.length || p2.manualExams?.length)
       ? [...new Map([...(p1.manualExams || []), ...(p2.manualExams || [])].map((e) => [e.id, e])).values()]

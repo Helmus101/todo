@@ -440,9 +440,11 @@ export function SettingsPage({ status, tasks, onSignOut, onChanged, onTasksChang
         )}
       </section>
 
+      <KnownPanel profile={profile} onProfile={(p) => { setProfile(p); }} />
+
       <section className="settings-sec reveal">
         <h3>{"Where your data goes"}</h3>
-        <p className="settings-hint">{"Your tutoring sessions, boards and drawings are saved only in this browser, unless you switch on Help improve Otto below. Your account keeps a small profile and the learning notes above. What leaves your device:"}</p>
+        <p className="settings-hint">{"Your tutoring sessions, boards and drawings are saved only in this browser, unless you switch on Help improve Otto below. Your account keeps your profile, the learning notes above and short notes about how you learn (goals, what works, how your sittings go), all visible and deletable here. What leaves your device:"}</p>
         <ul className="settings-hint" style={{ paddingLeft: 18, margin: "4px 0 8px" }}>
           <li>{"Your voice goes from the browser straight to Google (Gemini Live), or to OpenAI (Realtime) as a backup, which send back a transcript."}</li>
           <li>{"To show your words on screen as you speak, Chrome's built-in speech recognition also listens during a call. Chrome sends that audio to Google; Otto never stores it."}</li>
@@ -828,6 +830,63 @@ function AddRow({ placeholder, onAdd }: { placeholder: string; onAdd: (v: string
   );
 }
 
+
+/** What Otto knows about the student as a person: the three things they can say about themselves, what Otto has noticed (each removable), and the counts behind how it paces them. */
+function KnownPanel({ profile, onProfile }: { profile: Profile | null; onProfile: (p: Profile) => void }) {
+  const notify = useNotify();
+  const [open, setOpen] = useState(false);
+  const mine = (id: string) => profile?.notebook?.find((i) => i.id === id)?.text || "";
+  const [goal, setGoal] = useState(mine("me:goal")), [worry, setWorry] = useState(mine("me:worry")), [interest, setInterest] = useState(mine("me:interest"));
+  useEffect(() => { setGoal(mine("me:goal")); setWorry(mine("me:worry")); setInterest(mine("me:interest")); }, [profile?.notebook]); // eslint-disable-line react-hooks/exhaustive-deps
+  const apply = (r: Awaited<ReturnType<typeof api.notebook>>) => onProfile({ ...(profile as Profile), notebook: r.notebook.length ? r.notebook : undefined, sessionLog: r.sessionLog.length ? r.sessionLog : undefined, patterns: r.patterns || undefined });
+  const run = async (b: Parameters<typeof api.notebook>[0]) => { try { apply(await api.notebook(b)); } catch (e: any) { notify(e?.message || "That didn't save — give it another try.", "error"); } };
+  const noticed = (profile?.notebook || []).filter((i) => i.source !== "student");
+  const label: Record<string, string> = { goal: "Aiming for", worry: "Worried about", interest: "Into", landed: "What works for you", avoids: "Tends to avoid", quirk: "How you are" };
+  const pt = profile?.patterns;
+  const field = (name: string, hint: string, value: string, set: (v: string) => void, key: "goal" | "worry" | "interest") => (
+    <label className="set-row" style={{ display: "block" }}>
+      <span className="set-text"><b>{name}</b></span>
+      <input className="addinput" style={{ width: "100%" }} maxLength={160} placeholder={hint} value={value} onChange={(e) => set(e.target.value)}
+        onBlur={() => { if (value.trim() !== mine(`me:${key}`)) void run({ action: "set-me", [key]: value.trim() } as any); }} />
+    </label>
+  );
+  return (
+    <section className="settings-sec reveal">
+      <button className="sec-toggle" aria-expanded={open} onClick={() => setOpen((v) => !v)}>
+        <h3>{"What Otto knows about you"}</h3>
+        <span className={`caret ${open ? "open" : ""}`} aria-hidden="true">›</span>
+      </button>
+      {open && (
+        <div className="settings-reveal">
+          <p className="settings-hint">{"Otto gets to know you the way a good tutor does, so each session starts from you and not from zero. Tell it what matters, and see, change or delete anything it has picked up. It never keeps health, family, money, religion, politics or contact details. Only short notes are saved to your account, never a transcript."}</p>
+          {field("What you're aiming for", "e.g. a 7 in Physics HL, medicine at university", goal, setGoal, "goal")}
+          {field("What worries you", "e.g. timing in Paper 2, the Extended Essay", worry, setWorry, "worry")}
+          {field("What you're into", "e.g. football, coding, music", interest, setInterest, "interest")}
+          {noticed.length > 0 && (
+            <div style={{ marginTop: 12 }}>
+              <p className="settings-hint"><b>{"What Otto has noticed"}</b></p>
+              <ul className="known-list" style={{ listStyle: "none", padding: 0, margin: 0, display: "flex", flexDirection: "column", gap: 6 }}>
+                {noticed.map((i) => (
+                  <li key={i.id} style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "baseline" }}>
+                    <span>{`${label[i.kind] || i.kind}: ${i.text}`}</span>
+                    <button type="button" className="btn xs ghost" aria-label={`Forget: ${i.text}`} onClick={() => void run({ action: "delete", id: i.id })}>{"Forget"}</button>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+          {pt && pt.sessions >= 2 && (
+            <p className="settings-hint" style={{ marginTop: 12 }}>{`How Otto paces you: ${pt.sessions} sittings, about ${Math.round(pt.minutes / pt.sessions)} minutes each${pt.left ? `, ${pt.left} ended by leaving early` : ""}. These are counts, not judgments, and they only ever make Otto more careful about what to ask next.`}</p>
+          )}
+          <div style={{ display: "flex", gap: 8, marginTop: 12, flexWrap: "wrap" }}>
+            {noticed.length > 0 && <button type="button" className="btn xs ghost" onClick={() => void run({ action: "clear-noticed" })}>{"Clear what Otto noticed"}</button>}
+            {(profile?.notebook?.length || profile?.sessionLog?.length || profile?.patterns) && <button type="button" className="btn xs ghost" onClick={() => { if (window.confirm("Forget everything Otto has learned about you? Your subjects and settings stay.")) void run({ action: "clear-all" }); }}>{"Forget everything"}</button>}
+          </div>
+        </div>
+      )}
+    </section>
+  );
+}
 
 /** What the tutor has seen of the student, concept by concept: how solid it is, what keeps going wrong, when to revisit. Built from their sessions. */
 function ConceptsPanel({ profile }: { profile: Profile | null }) {

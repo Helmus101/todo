@@ -6,6 +6,7 @@ import { useCallback, useContext, useEffect, useRef, useState } from "react";
 import { ChevronRight, ChevronDown, Maximize2, Minimize2, MessageSquare, Mic } from "lucide-react";
 import type { WebTask, TaskProblem, BoardEntry } from "../../shared/types.ts";
 import { api } from "../api.ts";
+import { summarizeSession } from "../../shared/tutorMemory.ts";
 import { setLocalObjectives, getLocalThread, setLocalChat, setLocalBoard, setLocalProblems } from "../localChatBoard.ts";
 import { useLang, LangContext } from "../ui.tsx";
 import { AskOttoPanel } from "../study/AskOttoPanel.tsx";
@@ -487,6 +488,20 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
   // The call's conversation is kept on this device like every other turn: the transcript lands in the chat history as it is said.
   const taskRef = useRef(task);
   taskRef.current = task;
+  // What Otto keeps about a sitting: a small structured summary (never the transcript) sent when it ends or the student leaves. The server counts
+  // one sitting once however many times it is reported, so ending and then closing the page is safe.
+  const sessionStartRef = useRef<string | null>(null);
+  sessionStartRef.current = sessionStart;
+  const reportSitting = useCallback((t: WebTask | null | undefined, started: string | null | undefined, ending: "ended" | "left") => {
+    if (!t || t.source !== "freestudy") return;
+    const sum = summarizeSession({ subject: t.sourceSubject, startedAt: started || t.createdAt, endedAt: new Date().toISOString(), chat: t.chat || [], board: t.board || [], ending });
+    if (sum) void api.closeSitting({ sessionId: t.id, ...sum });
+  }, []);
+  useEffect(() => {
+    const onHide = () => reportSitting(taskRef.current, sessionStartRef.current, "left");
+    window.addEventListener("pagehide", onHide);
+    return () => { window.removeEventListener("pagehide", onHide); onHide(); }; // leaving the tutor screen counts as leaving the sitting
+  }, [reportSitting]);
   const turnsRef = useRef<{ who: "you" | "otto"; text: string }[]>([]);
   const boardQueueRef = useRef<Promise<void>>(Promise.resolve());
   const endedTaskRef = useRef<WebTask | null>(null);
@@ -732,6 +747,7 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
       try { liveRef.current.stop(); } catch { /* not on a call */ }
       try { await Promise.race([boardQueueRef.current, new Promise((r) => setTimeout(r, 2500))]); } catch { /* best effort */ }
       const latest = taskRef.current || endedTaskRef.current || task;
+      reportSitting(latest, sessionStart || latest.createdAt, "ended");
       if (statusRef_trainingShare()) void api.archiveTutor(latest.id, latest.sourceSubject, latest.chat || [], latest.board || []).catch(() => {});
       try { saveAndClose(latest, sessionStart || latest.createdAt || new Date().toISOString(), reflection); } catch (e) { console.warn("[tutor] couldn't save the session summary:", e); }
     } finally {
@@ -746,7 +762,7 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
       // Closing the session on the server happens after the student is already gone (it marks the session ended on this device first).
       void dismissWithRetry(task.id).catch(() => { /* ghost-cleanup in peekForActiveSession covers it */ });
     }
-  }, [task, sessionStart, endingSession, saveAndClose]);
+  }, [task, sessionStart, endingSession, saveAndClose, reportSitting]);
 
   // Any past session can be picked up again at any point: its board and conversation come back exactly as they were (this browser holds the
   // record), and the next thing said or typed continues it. There is no "session in progress" prompt any more.

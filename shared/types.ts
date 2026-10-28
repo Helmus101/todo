@@ -1,5 +1,6 @@
 // Shared task model — imported by both the Express backend and the React client.
 import type { TableSpec, SourceSpec } from "./boardTable.ts";
+import { cleanNotebook, cleanSessionLog, cleanPatterns, type NotebookItem, type SessionNote, type Patterns } from "./tutorMemory.ts";
 import { cleanIbSubjects } from "./ibSubjectList.ts";
 import { normalizeCoursework, type CourseworkDoc } from "./coursework.ts";
 // The adaptive-agent layer's shapes (the persistent student model, the concept graph, the app-owned session
@@ -337,6 +338,15 @@ export interface Profile {
   ibSubjects?: { name: string; level: "HL" | "SL" }[];
   /** The IB exam session they are aiming for ("2027-05"): the tutor paces revision by it (shared/ibExamDates.ts). Set in Settings. */
   examSession?: string;
+  /** What Otto has learned about them as a person and a learner (shared/tutorMemory.ts): goals, worries, interests, what landed. They see and edit it in Settings. */
+  notebook?: NotebookItem[];
+  /** Ids of notebook items they deleted, and the moment they last cleared what Otto noticed: so a stale copy cannot bring them back. */
+  notebookGone?: string[];
+  notebookEpoch?: string;
+  /** The last sittings in short form (not transcripts): so memory follows them to a new device. */
+  sessionLog?: SessionNote[];
+  /** Counters over all sittings: how long, how it ended, how often stuck or asking for the answer (code-counted). */
+  patterns?: Patterns;
   /** When ibSubjects was last changed: the newer side wins a merge, and an emptied list is a real change, not a missing value. */
   ibSubjectsAt?: string;
   /** The student's actual school year/grade — e.g. "Terminale", "Grade 10", "DP1", "Year 12". Free text,
@@ -591,6 +601,12 @@ export function normalizeProfile(p: any): Profile {
     learningStyle: ["visual", "auditory", "reading", "kinesthetic", "mixed"].includes(p?.learningStyle) ? p.learningStyle : undefined,
     hintDensity: ["steps", "hints", "balanced"].includes(p?.hintDensity) ? p.hintDensity : undefined,
     examSession: typeof p?.examSession === "string" && /^\d{4}-(05|11)$/.test(p.examSession) ? p.examSession : undefined,
+    notebook: (() => { const l = cleanNotebook(p?.notebook); return l.length ? l : undefined; })(),
+    notebookGone: Array.isArray(p?.notebookGone) ? p.notebookGone.filter((x: unknown) => typeof x === "string").slice(-60) : undefined,
+    notebookEpoch: typeof p?.notebookEpoch === "string" ? p.notebookEpoch : undefined,
+    sessionLog: (() => { const l = cleanSessionLog(p?.sessionLog); return l.length ? l : undefined; })(),
+    patterns: cleanPatterns(p?.patterns),
+    tutorPrefs: Array.isArray(p?.tutorPrefs) && p.tutorPrefs.length ? p.tutorPrefs.filter((x: unknown) => typeof x === "string" && x.trim()).map((x: string) => x.trim().slice(0, 60)).slice(-6) : undefined,
     betaFeatures: typeof p?.betaFeatures === "boolean" ? p.betaFeatures : undefined,
     focusStats: p?.focusStats && typeof p.focusStats === "object" ? {
       totalTrackedSessions: Number(p.focusStats.totalTrackedSessions) || 0,

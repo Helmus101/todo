@@ -459,6 +459,9 @@ export const api = {
   /** Opening /full: this account sees the whole app from now on. */
   enableFullApp: (): Promise<{ ok: boolean }> => post("/api/full-access"),
   pronoteContext: (fresh = false): Promise<{ connected: boolean; homework: { id: string; subject: string; deadline: string; text: string; files: string[] }[]; lessons: { id: string; subject: string; date: string; title?: string; category?: string; text: string; files: string[] }[] }> => req(`/api/pronote/context${fresh ? "?fresh=1" : ""}`).then(j),
+  /** A sitting ended or the student left: the small structured summary (never a transcript). keepalive so it survives the page closing. */
+  closeSitting: (b: Record<string, unknown>): Promise<void> => { try { return fetch("/api/tutor/session-close", { method: "POST", keepalive: true, headers: { "content-type": "application/json", ...(csrfToken ? { "x-csrf-token": csrfToken } : {}) }, body: JSON.stringify(b) }).then(() => undefined).catch(() => undefined); } catch { return Promise.resolve(); } },
+  notebook: (b: { action: "set-me"; goal?: string; worry?: string; interest?: string } | { action: "delete"; id: string } | { action: "clear-noticed" } | { action: "clear-all" }): Promise<{ ok: boolean; notebook: import("../shared/tutorMemory.ts").NotebookItem[]; sessionLog: import("../shared/tutorMemory.ts").SessionNote[]; patterns: import("../shared/tutorMemory.ts").Patterns | null }> => post("/api/profile/notebook", b),
   reportVoiceSeconds: (seconds: number): Promise<{ ok: boolean }> => post("/api/tutor/live/usage", { seconds }),
   requestMoreUsage: (note?: string): Promise<{ ok: boolean }> => post("/api/usage/request", { note }),
   sendFeedback: (b: { helpful: "yes" | "somewhat" | "no"; comment: string; publish: boolean; name?: string; level?: string }): Promise<{ ok: boolean }> => post("/api/feedback", b),

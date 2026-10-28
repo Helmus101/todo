@@ -14,6 +14,7 @@ import * as integrations from "../integrations.ts";
 import { M, ah, commit, isAdmin, isPaused, rateLimit, requireAuth } from "../http.ts";
 import { listUsageRequests, grantExtraUsage, setFullAccessFor, listAdminUsers } from "../store.ts";
 import { weekKeyOf } from "../../shared/types.ts";
+import { setMe, ME_IDS } from "../../shared/tutorMemory.ts";
 
 // ── Profile (who the user is) — available once logged in ───────────────────────
 const listKey = (c: string) => (c === "preference" ? "preferences" : c === "person" ? "people" : c === "project" ? "projects" : c === "course" ? "courses" : "");
@@ -342,6 +343,37 @@ export function registerProfileRoutes(app: express.Express): void {
     p.subjects = [...new Set<string>(list.map((s: unknown) => String(s).trim().slice(0, 60)).filter(Boolean))].slice(0, 14);
     await commit(req, { awaitCloud: true });
     res.json({ ok: true, subjects: p.subjects });
+  }));
+
+  // What Otto knows about them: what they typed about themselves (goal, worry, what they are into), and the controls to remove one thing, everything Otto
+  // noticed, or all of it. Removals leave a marker so a stale copy of the profile cannot bring them back.
+  app.post("/api/profile/notebook", requireAuth, rateLimit(30, 60_000), ah(async (req, res) => {
+    const p = (req.session.profile ||= emptyProfile());
+    const now = new Date();
+    const action = String(req.body?.action || "");
+    if (action === "set-me") {
+      for (const k of ["goal", "worry", "interest"] as const) {
+        if (typeof req.body?.[k] !== "string") continue;
+        p.notebook = setMe(p.notebook, k, req.body[k], now);
+        const gone = (p.notebookGone || []).filter((x) => x !== ME_IDS[k]);
+        p.notebookGone = req.body[k].trim() ? gone : [...gone, ME_IDS[k]].slice(-60);
+      }
+    } else if (action === "delete") {
+      const id = String(req.body?.id || "").slice(0, 90);
+      if (!id) { res.status(400).json({ error: "id required" }); return; }
+      p.notebook = (p.notebook || []).filter((i) => i.id !== id);
+      p.notebookGone = [...new Set([...(p.notebookGone || []), id])].slice(-60);
+    } else if (action === "clear-noticed") {
+      p.notebook = (p.notebook || []).filter((i) => i.source === "student");
+      p.notebookEpoch = now.toISOString();
+    } else if (action === "clear-all") {
+      p.notebook = undefined; p.sessionLog = undefined; p.patterns = undefined; p.tutorPrefs = undefined;
+      p.notebookEpoch = now.toISOString();
+      p.notebookGone = [...new Set([...(p.notebookGone || []), ...Object.values(ME_IDS)])].slice(-60);
+    } else { res.status(400).json({ error: "Unknown action." }); return; }
+    p.notebook = p.notebook?.length ? p.notebook : undefined;
+    await commit(req, { awaitCloud: true });
+    res.json({ ok: true, notebook: p.notebook || [], sessionLog: p.sessionLog || [], patterns: p.patterns || null });
   }));
 
   // The student's IB subjects with their level (HL or SL): the tutor's start screen, the subject packs and the question level all follow it.

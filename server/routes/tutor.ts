@@ -7,7 +7,7 @@ import { schoolRecordLine } from "../schoolRecord.ts";
 import { aiReady, visionReady, describeWhiteboard, describeUploadedPhoto, synthesizeSpeech, TTS_MAX_TEXT, tutorOpener } from "../claude.ts";
 import { recordEvent, loadBanditState, saveBanditState, saveTutorArchive, archiveEnabled, scrubArchiveText } from "../store.ts";
 import { M, ah, commit, dailyCap, isAdmin, isTutorBlocked, overWeeklyCap, rateLimit, requireAuth } from "../http.ts";
-import { backgroundBlock } from "../tutor.ts";
+import { backgroundBlock, learningPrefsFrom, mergePrefs } from "../tutor.ts";
 import { selectJournal } from "../journal.ts";
 import { writeBoard } from "../tutorTurn/boardWriter.ts";
 import { normalizeStudentModel, emptyStudentModel, recordConceptEvidence } from "../studentModel.ts";
@@ -16,6 +16,8 @@ import { validNoteTag } from "../../shared/noteTag.ts";
 import { liveInstructions } from "../../shared/liveTutor.ts";
 import { isLangCode, languageName } from "../../shared/languages.ts";
 import { createTutorChat, usageOf } from "../claude.ts";
+import { cleanSessionNote, addSessionNote, recordSession, noteItems } from "../../shared/tutorMemory.ts";
+import { classifySafety } from "../../shared/safety.ts";
 
 // Interface translations: fixed UI strings only (never anything the student wrote), cached per language so each string is translated once.
 // Public (the landing's language picker runs before login), so it is bounded two ways: the Map is capped
@@ -226,6 +228,16 @@ export function registerTutorRoutes(app: express.Express): void {
         }
         if (changed) { profile.conceptModel = m; req.session.profile = profile; }
       } catch { /* tracking is a bonus */ }
+      // What a caring tutor would keep about them as a person (their goals, what they are into, what landed): from the exchange only, filtered.
+      try {
+        const said = exchange.split("\n").filter((l: string) => /^Student:/i.test(l)).join(" ");
+        if (!classifySafety(said)) {
+          const prefs = learningPrefsFrom(said);
+          if (prefs.length) { profile.tutorPrefs = mergePrefs(profile.tutorPrefs, prefs); req.session.profile = profile; }
+          const items = noteItems(profile.notebook, (Array.isArray(out.remember) ? out.remember : []).map((r: any) => ({ kind: r?.kind, text: r?.text, subject: r?.subject || subject })));
+          if (items.length !== (profile.notebook || []).length || items.some((i, k) => i !== (profile.notebook || [])[k])) { profile.notebook = items; req.session.profile = profile; }
+        }
+      } catch { /* the notebook is a bonus */ }
       await commit(req);
       res.json({ board: out.board, ...(out.flags?.length ? { flags: out.flags } : {}) });
     } catch (e: any) {
@@ -245,6 +257,21 @@ export function registerTutorRoutes(app: express.Express): void {
     const board = (Array.isArray(req.body?.board) ? req.body.board : []).slice(-200).filter((e: any) => e && typeof e === "object").map((e: any) => ({ id: typeof e.id === "string" ? e.id.slice(0, 60) : undefined, kind: typeof e.kind === "string" ? e.kind.slice(0, 30) : undefined, title: typeof e.title === "string" ? scrubArchiveText(e.title.slice(0, 200)) : undefined, text: typeof e.text === "string" ? scrubArchiveText(e.text.slice(0, 2000)) : undefined, at: typeof e.at === "string" ? e.at.slice(0, 40) : undefined }));
     const ok = await saveTutorArchive(req.session.user!, { sessionId, subject: typeof req.body?.subject === "string" ? req.body.subject.slice(0, 80) : undefined, chat, board });
     res.json({ ok });
+  }));
+
+  // A sitting ended (or the student left): a small structured summary, never a transcript. It becomes a row in the sitting log and moves the
+  // pattern counters. The same sitting reported twice (ended, then the page closed) replaces its row and is counted once.
+  app.post("/api/tutor/session-close", requireAuth, rateLimit(20, 60_000), ah(async (req, res) => {
+    const id = String(req.body?.sessionId || "").replace(/[^\w-]/g, "").slice(0, 80);
+    const note = cleanSessionNote(req.body, id);
+    if (!note) { res.json({ ok: true, skipped: true }); return; }
+    const p = (req.session.profile ||= emptyProfile());
+    const counted = (p.sessionLog || []).some((n) => n.id === id);
+    p.sessionLog = addSessionNote(p.sessionLog, counted ? { ...note, at: p.sessionLog!.find((n) => n.id === id)!.at } : note);
+    if (!counted) p.patterns = recordSession(p.patterns, note, p.timezone);
+    p.lastTutorActivityAt = new Date().toISOString();
+    await commit(req, { awaitCloud: true });
+    res.json({ ok: true });
   }));
 
   // The browser reports how long a voice call lasted; it is metered at the estimated voice price (plus a small charge when a call starts, so a missing report is not free).
