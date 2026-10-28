@@ -225,6 +225,8 @@ export function registerProfileRoutes(app: express.Express): void {
         p.learningStyle = value; p.preferencesUpdatedAt = new Date().toISOString();
       } else if (key === "hintDensity" && ["steps", "hints", "balanced"].includes(value)) {
         p.hintDensity = value; p.preferencesUpdatedAt = new Date().toISOString();
+      } else if (key === "examSession" && (value === "" || (typeof value === "string" && /^\d{4}-(05|11)$/.test(value)))) {
+        p.examSession = value || undefined; p.preferencesUpdatedAt = new Date().toISOString();
       } else if (key === "yearLevel" && typeof value === "string" && value.trim()) {
         p.yearLevel = value.trim().slice(0, 40); p.preferencesUpdatedAt = new Date().toISOString();
       } else {

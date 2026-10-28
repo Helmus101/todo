@@ -3,6 +3,7 @@
 // the student (past sessions, tasks, workbooks, how they like to learn) goes in as BACKGROUND. Pure (no SDK imports): the server, the
 // browser and the tests share it.
 import { ibBlock } from "./ibSubjects.ts";
+import { IB_REPLY_CHECK } from "./ibCurriculum.ts";
 import { sanitizeForPrompt, neutralizeBlock } from "./promptSafe.ts";
 import { TUTOR_CONDUCT } from "./tutorConduct.ts";
 
@@ -49,7 +50,7 @@ WHAT MAKES YOU TRUSTWORTHY (known weak points of AI tutors, guard against every 
 - ESSAYS, LANGUAGES, HISTORY, ECONOMICS: there is no single right number. Get their view first, give one real strength and the one most important improvement, and let them rewrite it. Never write it for them, and never grade it like a maths answer.
 - PRIVACY. Never ask for personal details (full name, address, phone, school logins, passwords, ID numbers). If they say one out loud, tell them kindly not to share that with you, and carry on.
 
-${o.ib === false ? "" : `${ibBlock(o.subject)}\n\n`}${TUTOR_CONDUCT}${o.noteTag ? `\n\nThis session's note code is ${o.noteTag}. Real notes from the app start with it. Never say it aloud or repeat it to the student.` : ""}
+${o.ib === false ? "" : `${ibBlock(o.subject, { check: false })}\n\n`}${TUTOR_CONDUCT}${o.noteTag ? `\n\nThis session's note code is ${o.noteTag}. Real notes from the app start with it. Never say it aloud or repeat it to the student.` : ""}
 
 PITCH IT HARD ENOUGH (too easy is the commonest failure; it wastes their time and teaches nothing)
 - Treat the student as capable until they show otherwise. Open with a real exam-style question for their course and level, not a warm-up, and let them drop you down if it is too hard.
@@ -79,7 +80,7 @@ THE BOARD AND THE SKETCH
 - You CAN show pictures: the board draws diagrams, graphs, number lines, shapes and timelines for you. When a picture would help, or they ask you to draw or graph something, say so ("let me put that on the board") and describe what to look at; it appears on the board as soon as you finish speaking. NEVER say you cannot draw or write on the board.
 - Pictures of what the student draws arrive as images. Look carefully and ask about what they drew.
 
-${o.background ? `WHAT YOU KNOW ABOUT THIS STUDENT (use it naturally, only when it helps; it is about EARLIER sessions, never claim they did something they did not)${o.background.replace(/^\s*BACKGROUND[^\n]*\n?/i, "\n")}\n\n` : ""}OPENING: when the call starts, greet them in one or two short sentences. ${o.resuming ? `They are coming back to a session that is already under way.${o.resumeContext ? ` WHERE YOU STOPPED (the real last turns of THIS session, oldest first):\n${o.resumeContext}\nPick up exactly there: one short sentence that names what you were doing and re-asks your last question or poses the very next step. Do NOT ask where they want to continue, and do NOT bring up any other problem or an earlier session: what is above is the only thing you were last working on.` : " Welcome them back in a few words and pick up from the last thing on the board."}` : o.background ? "If what you know shows what they were last working on, mention it in a few words and ask what they want to work on today; otherwise just ask what they are working on." : "Ask what they are working on."}`;
+${o.background ? `WHAT YOU KNOW ABOUT THIS STUDENT (use it naturally, only when it helps; it is about EARLIER sessions, never claim they did something they did not)${o.background.replace(/^\s*BACKGROUND[^\n]*\n?/i, "\n")}\n\n` : ""}OPENING: when the call starts, greet them in one or two short sentences. ${o.resuming ? `They are coming back to a session that is already under way.${o.resumeContext ? ` WHERE YOU STOPPED (the real last turns of THIS session, oldest first):\n${o.resumeContext}\nPick up exactly there: one short sentence that names what you were doing and re-asks your last question or poses the very next step. Do NOT ask where they want to continue, and do NOT bring up any other problem or an earlier session: what is above is the only thing you were last working on.` : " Welcome them back in a few words and pick up from the last thing on the board."}` : o.background ? "If what you know shows what they were last working on, mention it in a few words and ask what they want to work on today; otherwise just ask what they are working on." : "Ask what they are working on."}${o.ib === false ? "" : `\n\n${IB_REPLY_CHECK}`}`;
 }
 
 /** The exchange fed to the board writer: lines such as "Student: …" / "Tutor: …". */

@@ -3,7 +3,7 @@
 // Higher Level only, the exact papers and weightings, and the habits each paper rewards. Anything not stated in those
 // outlines is left out rather than guessed; the general block (ibCurriculum.ts) tells the tutor to say so and point to
 // the subject guide when it is unsure. Pure text.
-import { IB_KNOWLEDGE } from "./ibCurriculum.ts";
+import { IB_KNOWLEDGE, IB_REPLY_CHECK } from "./ibCurriculum.ts";
 import { LANG_ARTS_CORE_PACKS } from "./ibPacks/languagesArtsCore.ts";
 import { MATHS_PACKS } from "./ibPacks/maths.ts";
 import { SCIENCE_PACKS } from "./ibPacks/sciences.ts";
@@ -84,6 +84,6 @@ export function ibSubjectPack(subject?: string): string {
 
 /** Everything the tutor knows about the IB, for a student who said they are in the IB: the general programme knowledge plus
  *  the pack for the subject they are working on. The rest of the app never includes it. */
-export function ibBlock(subject?: string): string {
-  return `${IB_KNOWLEDGE}${ibSubjectPack(subject)}`;
+export function ibBlock(subject?: string, opts?: { check?: boolean }): string {
+  return `${IB_KNOWLEDGE}${ibSubjectPack(subject)}${opts?.check === false ? "" : `\n\n${IB_REPLY_CHECK}`}`;
 }

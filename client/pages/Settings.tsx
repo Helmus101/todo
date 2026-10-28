@@ -1,6 +1,7 @@
 import { LanguagePicker } from "../LanguagePicker.tsx";
 import { masteryState, MASTERY_LABEL } from "../../shared/masteryState.ts";
 import { IbSubjectPicker } from "./IbSubjectPicker.tsx";
+import { examSessionOptions } from "../../shared/ibExamDates.ts";
 import type { IbSubject } from "../../shared/ibSubjectList.ts";
 import { FeedbackForm } from "./FeedbackForm.tsx";
 import { StudyStatsSection } from "./StudyStats.tsx";
@@ -129,9 +130,18 @@ function PreferencesFields({ profile, onChanged }: { profile: Profile | null; on
   return (
     <>
       <div className="set-row" style={{ display: "block" }}>
-        <span className="set-text"><b>{"Your IB subjects"}</b><span className="settings-hint">{"Otto is built only for the IB Diploma. Your subjects and levels decide the papers, command terms and mark schemes it teaches to."}</span></span>
+        <span className="set-text"><b>{"Your IB subjects"}</b><span className="settings-hint">{"Otto is built for the IB Diploma. Your subjects and levels decide the papers, command terms and mark schemes it teaches to."}</span></span>
         <IbSubjectPicker value={ibSubs} onChange={saveIbSubjects} />
       </div>
+      {profile?.track !== "other" && (
+        <label className="set-row">
+          <span className="set-text"><b>{"Your exam session"}</b><span className="settings-hint">{"Otto paces your revision by how long you have: understanding first, then past papers under time, then the weakest marks. Approximate; your school's timetable decides."}</span></span>
+          <select className="addinput" style={{ maxWidth: 180 }} value={profile?.examSession || ""} onChange={(e) => { void api.setProfilePreference("examSession", e.target.value).then((np) => onChanged?.({ ...(profile as Profile), examSession: np.examSession })).catch((err) => notify(err?.message || "That didn't save — give it another try.", "error")); }}>
+            <option value="">{"Not set"}</option>
+            {examSessionOptions().map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+          </select>
+        </label>
+      )}
       <label className="set-row">
         <span className="set-text"><b>{"I'm not in the IB"}</b><span className="settings-hint">{"Otto is built for the IB, but it also works for any other curriculum. Turn this on and it teaches your own courses and exams."}</span></span>
         <input type="checkbox" checked={profile?.track === "other"} onChange={(e) => { const v = e.target.checked ? "other" : "ib"; void api.setProfilePreference("track", v).then((np) => onChanged?.({ ...(profile as Profile), track: np.track })).catch((err) => notify(err?.message || "That didn't save — give it another try.", "error")); }} />

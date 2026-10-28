@@ -901,6 +901,7 @@ export function mergeProfileStates(p1: Profile, p2: Profile): Profile {
         yearLevel: side.yearLevel ?? fallback.yearLevel,
         uiDensity: side.uiDensity ?? fallback.uiDensity,
         hintDensity: side.hintDensity ?? fallback.hintDensity,
+        examSession: side.examSession ?? fallback.examSession,
         betaFeatures: side.betaFeatures ?? fallback.betaFeatures,
         preferencesUpdatedAt: side.preferencesUpdatedAt ?? fallback.preferencesUpdatedAt,
       };

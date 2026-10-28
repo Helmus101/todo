@@ -335,6 +335,8 @@ export interface Profile {
   track?: "ib" | "ap" | "bac" | "other"; // Otto is IB-only: normalizeProfile always sets this to "ib" (the other values exist only in old saved profiles)
   /** The student's IB subjects with their level (HL or SL), chosen in onboarding or Settings. */
   ibSubjects?: { name: string; level: "HL" | "SL" }[];
+  /** The IB exam session they are aiming for ("2027-05"): the tutor paces revision by it (shared/ibExamDates.ts). Set in Settings. */
+  examSession?: string;
   /** When ibSubjects was last changed: the newer side wins a merge, and an emptied list is a real change, not a missing value. */
   ibSubjectsAt?: string;
   /** The student's actual school year/grade — e.g. "Terminale", "Grade 10", "DP1", "Year 12". Free text,
@@ -588,6 +590,7 @@ export function normalizeProfile(p: any): Profile {
     yearLevel: typeof p?.yearLevel === "string" ? p.yearLevel.trim().slice(0, 40) || undefined : undefined,
     learningStyle: ["visual", "auditory", "reading", "kinesthetic", "mixed"].includes(p?.learningStyle) ? p.learningStyle : undefined,
     hintDensity: ["steps", "hints", "balanced"].includes(p?.hintDensity) ? p.hintDensity : undefined,
+    examSession: typeof p?.examSession === "string" && /^\d{4}-(05|11)$/.test(p.examSession) ? p.examSession : undefined,
     betaFeatures: typeof p?.betaFeatures === "boolean" ? p.betaFeatures : undefined,
     focusStats: p?.focusStats && typeof p.focusStats === "object" ? {
       totalTrackedSessions: Number(p.focusStats.totalTrackedSessions) || 0,

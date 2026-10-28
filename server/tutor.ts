@@ -12,6 +12,7 @@
 import { randomUUID } from "node:crypto";
 import { neutralizeBlock, fenceStudentData } from "../shared/promptSafe.ts";
 import { ibBlock } from "../shared/ibSubjects.ts";
+import { examLine } from "../shared/ibExamDates.ts";
 import { TUTOR_CONDUCT } from "../shared/tutorConduct.ts";
 import { pointsAtOffTopicLine, boardLineNumbers } from "../shared/boardLines.ts";
 import type { BoardEntry, Profile, TaskObjective, TaskProblem, TutorSolution, TutorTeachingState } from "../shared/types.ts";
@@ -342,6 +343,7 @@ export function backgroundBlock(c: TutorContext): string {
   const p = c.profile;
   const parts = [
     levelLine(p, c.subject),
+    p?.track === "other" ? "" : examLine(p?.examSession),
     studentNameLine(p?.name),
     personalContextLine(p),
     milestoneLine(p, c.subject),
