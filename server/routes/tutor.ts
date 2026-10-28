@@ -17,7 +17,7 @@ import { liveInstructions } from "../../shared/liveTutor.ts";
 import { isLangCode, languageName } from "../../shared/languages.ts";
 import { createTutorChat, usageOf, synthesizeStudentModel } from "../claude.ts";
 import { shouldRefreshStudentModel } from "../jobs.ts";
-import { cleanSessionNote, addSessionNote, recordSession, noteItems } from "../../shared/tutorMemory.ts";
+import { cleanSessionNote, addSessionNote, recordSession, noteItems, bumpCause } from "../../shared/tutorMemory.ts";
 import { classifySafety } from "../../shared/safety.ts";
 
 // Interface translations: fixed UI strings only (never anything the student wrote), cached per language so each string is translated once.
@@ -224,6 +224,7 @@ export function registerTutorRoutes(app: express.Express): void {
         for (const c of (out.concepts || []).slice(0, 3)) {
           const label = typeof c?.label === "string" ? c.label.trim().slice(0, 80) : "";
           if (!label || !kinds.includes(c?.kind)) continue;
+          if (c.kind === "mistake" || c.kind === "misconception") profile.patterns = bumpCause(profile.patterns, typeof c.subject === "string" ? c.subject : subject, c.cause);
           m = recordConceptEvidence(m, { label, subject: typeof c.subject === "string" ? c.subject.slice(0, 40) : subject, kind: c.kind, ...(typeof c.detail === "string" && c.detail.trim() ? { detail: c.detail.trim().slice(0, 160) } : {}) }, new Date());
           changed = true;
         }

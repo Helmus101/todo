@@ -731,6 +731,17 @@ check("structured settings survive merge", pm.responseStyle === "concise");
   const srcT = readFileSync(new URL("../server/routes/tutor.ts", import.meta.url), "utf8"), srcP = readFileSync(new URL("../server/routes/profile.ts", import.meta.url), "utf8");
   check("routes: the sitting is closed with an awaited cloud write and counted once; the notebook route waits for the account row; the board route files what a caring tutor would keep through the same filters", /\/api\/tutor\/session-close[\s\S]{0,1800}awaitCloud: true/.test(srcT) && /counted/.test(srcT) && /\/api\/profile\/notebook[\s\S]{0,2200}awaitCloud: true/.test(srcP) && /noteItems\(/.test(srcT) && /classifySafety\(said\)/.test(srcT));
 }
+{
+  const tm = await import("../shared/tutorMemory.ts");
+  const now = new Date("2026-10-28T12:00:00Z");
+  let p = undefined;
+  for (const c of ["units", "units", "units", "method", "bogus", 42]) p = tm.bumpCause(p, "Physics HL", c);
+  check("lost-mark causes: only known causes are counted, per subject, and the subject's level is dropped", p.causes.Physics.units === 3 && p.causes.Physics.method === 1 && !("bogus" in p.causes.Physics));
+  check("lost-mark causes: with enough slips the top cause is named in the prompt as a hypothesis, and not before", /units and significant figures \(3 of 4 slips noticed\)/.test(tm.patternsBlock(p, "Physics HL", now)) && tm.patternsBlock(tm.bumpCause(undefined, "Physics", "units"), "Physics", now) === "");
+  const rt = tm.cleanPatterns(JSON.parse(JSON.stringify(p)));
+  check("lost-mark causes: survive save/load and the side that has recorded more wins a merge", rt.causes.Physics.units === 3 && tm.mergePatterns(undefined, p).causes.Physics.units === 3 && tm.mergePatterns(p, tm.bumpCause(undefined, "Physics", "units")).causes.Physics.units === 3);
+  check("the board writer is asked for a cause and the route files it", /"cause":"for a mistake or misconception only/.test(readFileSync(new URL("../server/tutorTurn/boardWriter.ts", import.meta.url), "utf8")) && /bumpCause\(profile\.patterns/.test(readFileSync(new URL("../server/routes/tutor.ts", import.meta.url), "utf8")));
+}
 const pmLang = mergeProfileStates(
   { ...emptyProfile(), language: "en", languageSetAt: newer },
   { ...emptyProfile(), language: "fr" }, // stale session, never itself touched the language toggle

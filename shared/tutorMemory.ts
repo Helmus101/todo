@@ -64,8 +64,26 @@ export interface Patterns {
   days: string[];
   lastAt?: string;
   bySubject: Record<string, SubjectPattern>;
+  /** Why marks or steps were lost, by subject: how many times each cause was seen (see CAUSES). */
+  causes?: Record<string, Record<string, number>>;
 }
 
+/** The reasons an answer loses marks, as the IB mark scheme sees them: the tutor files each mistake under one. */
+export const CAUSES = ["knowledge", "command-term", "method", "arithmetic", "units", "time"] as const;
+export type Cause = typeof CAUSES[number];
+const CAUSE_WORDS: Record<Cause, string> = { knowledge: "gaps in the content itself", "command-term": "not answering what the command term asked", method: "choosing or setting up the method", arithmetic: "arithmetic and algebra slips", units: "units and significant figures", time: "running out of time" };
+
+export function bumpCause(p: Patterns | undefined, subject: string | undefined, cause: unknown): Patterns | undefined {
+  if (typeof cause !== "string" || !(CAUSES as readonly string[]).includes(cause)) return p;
+  const key = sanitizeForPrompt(subject || "General", 60).replace(/\s+(HL|SL)$/i, "") || "General";
+  const out: Patterns = { ...emptyPatterns(), ...(p || {}), bySubject: { ...(p?.bySubject || {}) }, days: [...(p?.days || [])] };
+  const causes = { ...(out.causes || {}) };
+  causes[key] = { ...(causes[key] || {}), [cause]: ((causes[key] || {})[cause] || 0) + 1 };
+  const keys = Object.keys(causes);
+  if (keys.length > SUBJECT_PATTERN_CAP) delete causes[keys[0]];
+  out.causes = causes;
+  return out;
+}
 export const NOTEBOOK_CAP = 30;
 export const SESSION_LOG_CAP = 24;
 export const SUBJECT_PATTERN_CAP = 12;
@@ -191,11 +209,18 @@ export function cleanPatterns(raw: any): Patterns | undefined {
     const s: any = v;
     p.bySubject[sanitizeForPrompt(k, 60)] = { sessions: clampN(s?.sessions, 100000), minutes: clampN(s?.minutes, 1_000_000), stuck: clampN(s?.stuck, 100000), asked: clampN(s?.asked, 100000), lastAt: typeof s?.lastAt === "string" ? s.lastAt : "" };
   }
-  return p.sessions ? p : undefined;
+  for (const [k, v] of Object.entries(raw.causes || {}).slice(0, SUBJECT_PATTERN_CAP)) {
+    const row: Record<string, number> = {};
+    for (const c of CAUSES) { const n = clampN((v as any)?.[c], 100000); if (n) row[c] = n; }
+    if (Object.keys(row).length) (p.causes ||= {})[sanitizeForPrompt(k, 60)] = row;
+  }
+  return p.sessions || p.causes ? p : undefined;
 }
 
+const causeTotal = (p?: Patterns) => Object.values(p?.causes || {}).reduce((a, r) => a + Object.values(r).reduce((x, y) => x + y, 0), 0);
+
 /** The two sides of a merge: the one that has counted more sittings is the newer one (the counters only grow). */
-export const mergePatterns = (a?: Patterns, b?: Patterns): Patterns | undefined => ((a?.sessions || 0) >= (b?.sessions || 0) ? a ?? b : b ?? a);
+export const mergePatterns = (a?: Patterns, b?: Patterns): Patterns | undefined => ((a?.sessions || 0) * 100 + causeTotal(a) >= (b?.sessions || 0) * 100 + causeTotal(b) ? a ?? b : b ?? a);
 
 /** Consecutive calendar days up to the last sitting. */
 export function streakDays(days: string[]): number {
@@ -297,8 +322,18 @@ export function notebookBlock(list: NotebookItem[] | undefined, subject: string 
 
 /** How they behave in a sitting, as hypotheses with the evidence, from code-counted sittings. "" until there are enough to say anything. */
 export function patternsBlock(p: Patterns | undefined, subject: string | undefined, now = new Date(), tz?: string, bestHour?: number | null): string {
-  if (!p || p.sessions < 2) return "";
+  if (!p || (p.sessions < 2 && !causeTotal(p))) return "";
   const lines: string[] = [];
+  // Where marks go: the cause that costs this student the most in this subject (or overall), once it has been seen enough to mean something.
+  {
+    const key = (subject || "").replace(/\s+(HL|SL)$/i, "").toLowerCase();
+    const mine = Object.entries(p.causes || {}).find(([k]) => k.toLowerCase() === key)?.[1];
+    const pool = mine || Object.values(p.causes || {}).reduce<Record<string, number>>((a, r) => { for (const [c, n] of Object.entries(r)) a[c] = (a[c] || 0) + n; return a; }, {});
+    const total = Object.values(pool).reduce((x, y) => x + y, 0);
+    const top = Object.entries(pool).sort((x, y) => y[1] - x[1])[0];
+    if (total >= 4 && top && top[1] / total >= 0.4) lines.push(`- most of the marks and steps they lose ${mine ? "in this subject" : "overall"} come from ${CAUSE_WORDS[top[0] as Cause]} (${top[1]} of ${total} slips noticed): when you mark, look for it first and say it kindly`);
+  }
+  if (p.sessions < 2) return lines.length ? `HOW THEY USUALLY BEHAVE (patterns counted from their past sittings; they are hypotheses, so check one against what is happening now before acting on it, and never mention counts out loud):\n${lines.join("\n")}` : "";
   const avg = Math.round(p.minutes / p.sessions);
   if (avg >= 3) lines.push(`- a typical sitting is about ${avg} minutes (${p.sessions} sittings so far): plan one real piece of work that fits, and finish it`);
   if (bestHour !== null && bestHour !== undefined) lines.push(`- they are most often at the screen around ${bestHour}:00 (their own activity)`);
