@@ -352,7 +352,7 @@ export function backgroundBlock(c: TutorContext): string {
     milestoneLine(p, c.subject),
     learningStyleLine(p),
     // "How Otto sees you" (Settings): the synthesized read, refreshed at most daily and after sessions. Background only.
-    (p?.studentModel?.summary ? `HOW OTTO SEES THEM (a synthesized read of this student, from their activity — background, they can see and reset it in Settings): ${String(p.studentModel.summary).slice(0, 700)}` : ""),
+    (p?.studentModel?.summary ? `HOW OTTO SEES THEM (a synthesized read of this student, from their activity — background, they can see and reset it in Settings): ${String(p.studentModel.summary).slice(0, 1200)}` : ""),
     hintDensityLine(p),
     (p?.tutorPrefs?.length ? `HOW THEY LIKE TO LEARN (from what they've asked for before — honour it unless it would hand over the answer): ${p.tutorPrefs.join("; ")}.` : ""),
     // What they've PROVED (code-verified evidence per skill, server/studentModel.ts) — where to start, what to skip.

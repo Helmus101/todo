@@ -15,7 +15,8 @@ import * as pronoteSvc from "../pronote.ts";
 import { validNoteTag } from "../../shared/noteTag.ts";
 import { liveInstructions } from "../../shared/liveTutor.ts";
 import { isLangCode, languageName } from "../../shared/languages.ts";
-import { createTutorChat, usageOf } from "../claude.ts";
+import { createTutorChat, usageOf, synthesizeStudentModel } from "../claude.ts";
+import { shouldRefreshStudentModel } from "../jobs.ts";
 import { cleanSessionNote, addSessionNote, recordSession, noteItems } from "../../shared/tutorMemory.ts";
 import { classifySafety } from "../../shared/safety.ts";
 
@@ -217,7 +218,7 @@ export function registerTutorRoutes(app: express.Express): void {
       addUsage(profile, tokens, "chat");
       // What the exchange showed about the student feeds their concept record (Settings shows it; the voice is told it next session).
       try {
-        const kinds = ["solved-unaided", "solved-after-hint", "solved-after-explanation", "mistake", "misconception", "recall"];
+        const kinds = ["solved-unaided", "solved-after-hint", "solved-after-explanation", "mistake", "misconception", "recall", "recall-miss", "self-corrected", "transfer-success", "transfer-fail"];
         let m = normalizeStudentModel(profile.conceptModel) || emptyStudentModel();
         let changed = false;
         for (const c of (out.concepts || []).slice(0, 3)) {
@@ -270,6 +271,14 @@ export function registerTutorRoutes(app: express.Express): void {
     p.sessionLog = addSessionNote(p.sessionLog, counted ? { ...note, at: p.sessionLog!.find((n) => n.id === id)!.at } : note);
     if (!counted) p.patterns = recordSession(p.patterns, note, p.timezone);
     p.lastTutorActivityAt = new Date().toISOString();
+    // The daily background sweep skips accounts that only use the tutor, so their read on the student would never refresh: do the same
+    // once-a-day synthesis here, from this sitting's data (one small model call, gated by the same shouldRefreshStudentModel).
+    if (aiReady() && shouldRefreshStudentModel(p)) {
+      try {
+        const synth = await synthesizeStudentModel(p, req.session.tasks || []);
+        if (synth) { p.studentModel = { summary: synth.summary, updatedAt: new Date().toISOString(), basedOnActivityAt: p.lastTutorActivityAt }; addUsage(p, synth.tokens, "student_model"); }
+      } catch { /* the note is a bonus */ }
+    }
     await commit(req, { awaitCloud: true });
     res.json({ ok: true });
   }));

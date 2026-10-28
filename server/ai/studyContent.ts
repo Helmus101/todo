@@ -9,6 +9,8 @@ import { leadingArm, CHAT_STYLE_ARMS, POMODORO_ARMS, ORDERING_ARMS, contextKey a
 import { DAILY_DECK_CARD_CAP, MONTHLY_DECK_CARD_CAP, makeDeck, makeQuiz, scrubAnswerLeak } from "./board.ts";
 import { DEEPSEEK_MODEL, OUT, deepseekClient, firstJson, retryRequest, usageOf } from "./client.ts";
 import { languageLine, trackLine } from "./context.ts";
+import { personalizationBlock } from "../../shared/tutorMemory.ts";
+import { normalizeStudentModel, studentModelBlock } from "../studentModel.ts";
 
 /** ONE free-response practice problem — validated the same defensive way as makeDeck/makeQuiz. Both
  *  `problem` and `answer` are required (a problem with no stored answer can never be checked; an "answer"
@@ -47,7 +49,7 @@ const STUDENT_MODEL_SYS =
   `think/reason (not just what subjects they're in), any recurring misconception or pattern of mistake worth ` +
   `watching for, what kind of explanation or approach has actually worked for them before, a genuine interest ` +
   `or project worth drawing a future analogy from, and how they seem to be growing/changing over time (don't ` +
-  `just restate today's snapshot). When the data below shows real per-subject signal for two or more subjects ` +
+  `just restate today's snapshot; when previous notes are given, revise them instead of starting over). When the data below shows real per-subject signal for two or more subjects ` +
   `(a correct-rate trend, a mistake pattern, a focus-time pattern), structure part of the summary around those ` +
   `subjects individually (e.g. "In Math HL specifically: ...") instead of one undifferentiated paragraph — but ` +
   `never manufacture a per-subject aside when the data doesn't actually support one. Write it as if for a ` +
@@ -81,6 +83,12 @@ function buildStudentModelInputs(profile: Profile, list: WebTask[], banditStates
     parts.push(`Per-subject correct-rate from recent flashcard/quiz activity (trend where known):\n` +
       subjectSignals.map((s) => `- ${s.subject}: ${Math.round(s.correctRate * 100)}% correct over ${s.attempts} attempts${s.trend ? ` (trending ${s.trend})` : ""}`).join("\n"));
   }
+  // What the tutor has actually seen them do (concept evidence: alone / after a hint / after an explanation, live misconceptions) and what it has
+  // learned about them as a person (goals, what landed, how their sittings go): the richest inputs, which this note used to ignore.
+  try { const cm = studentModelBlock(normalizeStudentModel(profile.conceptModel), { limit: 8 }); if (cm) parts.push(cm); } catch { /* the concept record is a bonus */ }
+  const personal = personalizationBlock(profile, undefined, new Date(), { tz: profile.timezone, bestHour: null, maxChars: 2400 });
+  if (personal) parts.push(personal);
+  if (profile.studentModel?.summary) parts.push(`YOUR PREVIOUS NOTES on this student (revise them: keep what still holds, correct what the new data changes, and say what has shifted since):\n${profile.studentModel.summary.slice(0, 1800)}`);
   if (profile.about?.trim()) parts.push(`What they've told Otto about themselves: ${profile.about.trim()}`);
   if (profile.projects?.length) parts.push(`Projects/interests on record: ${profile.projects.slice(0, 5).join("; ")}`);
   // Real working rhythm (server/patterns.ts) — when confident, gives the synthesis something concrete to
