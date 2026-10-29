@@ -251,7 +251,7 @@ export async function writeBoard(input: { exchange: string; board: BoardEntry[];
       if (typeof e.text !== "string") return true;
       const kind = String(e.kind);
       if (input.early && !SETUP.has(kind)) { applied.dropped.push(`${kind}: held back until the student has said it, not written yet: ${e.text.slice(0, 80)}`); return false; }
-      if (!["result", "summary", "step", "insight"].includes(kind)) return true;
+      if (!["result", "summary", "step", "insight", "note", "strategy", "gap"].includes(kind)) return true;
       const stripped = plainDigits(e.text).replace(/\\text\{[^}]*\}/g, " ").replace(/\\[a-zA-Z]+/g, " ").replace(/_\{[^}]*\}|_\d+|\^\{[^}]*\}|\^\d+/g, " ").replace(/[A-Za-z]\d+|\d+[A-Za-z]/g, " ");
       const unsaid = [...stripped.matchAll(/\d+(?:\.\d+)?/g)].map((m) => Number(m[0])).filter((n) => n > 1 && !studentKnown.has(n));
       if (unsaid.length) { applied.dropped.push(`${kind}: it holds numbers the student has not said (${unsaid.join(", ")}), not written yet: ${e.text.slice(0, 80)}`); return false; }
