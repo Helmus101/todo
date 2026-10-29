@@ -242,7 +242,22 @@ export async function writeBoard(input: { exchange: string; board: BoardEntry[];
     });
     // The answer to the question the tutor has just asked must not already be on the paper (reported in simulation: "what is 0.0500 times 22.7?" was
     // answered on the board with "= 1.14" before the student said a word).
-    const noPreempt = grounded.filter((e) => {
+    // While Otto is still speaking only the setup goes up (problem, heading, definition, formula, figure): a result, step or summary waits for the pass after the turn, when the
+    // student has said it. Otherwise the paper shows the answer the tutor is in the middle of announcing, before the student has reached it.
+    const SETUP = new Set(["focus", "given", "definition", "formula", "graph", "svg", "diagram", "geometry", "flow", "table", "numberline", "topic", "source"]);
+    // A result, step or summary may only hold numbers the STUDENT said (or already on the paper): the tutor announcing "x equals sixteen" is not the student reaching it.
+    const studentKnown = numbersSaid(`${studentWords.join(" ")} ${(input.history || "").split("\n").filter((l) => /^Student:/i.test(l)).join(" ")} ${input.board.map((e) => e.text || "").join(" ")}`);
+    const earned = grounded.filter((e) => {
+      if (typeof e.text !== "string") return true;
+      const kind = String(e.kind);
+      if (input.early && !SETUP.has(kind)) { applied.dropped.push(`${kind}: held back until the student has said it, not written yet: ${e.text.slice(0, 80)}`); return false; }
+      if (!["result", "summary", "step", "insight"].includes(kind)) return true;
+      const stripped = plainDigits(e.text).replace(/\\text\{[^}]*\}/g, " ").replace(/\\[a-zA-Z]+/g, " ").replace(/_\{[^}]*\}|_\d+|\^\{[^}]*\}|\^\d+/g, " ").replace(/[A-Za-z]\d+|\d+[A-Za-z]/g, " ");
+      const unsaid = [...stripped.matchAll(/\d+(?:\.\d+)?/g)].map((m) => Number(m[0])).filter((n) => n > 1 && !studentKnown.has(n));
+      if (unsaid.length) { applied.dropped.push(`${kind}: it holds numbers the student has not said (${unsaid.join(", ")}), not written yet: ${e.text.slice(0, 80)}`); return false; }
+      return true;
+    });
+    const noPreempt = earned.filter((e) => {
       if (!openQuestion || typeof e.text !== "string" || !["result", "formula", "step", "gap"].includes(String(e.kind))) return true;
       if (!answersOpenQuestion(e.text, openQuestion, known)) return true;
       applied.dropped.push(`${e.kind}: it gives the answer to the question the tutor just asked, not written: ${String(e.text).slice(0, 80)}`);
