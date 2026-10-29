@@ -809,6 +809,13 @@ check("structured settings survive merge", pm.responseStyle === "concise");
   const q = QUESTION_BANK.find((x) => x.id === "ai-regression");
   check("the bank question a conversation is about is found from its wording, so its scheme can referee", findBankQuestion(`Tutor: Here is one. ${q.question.replace(/\n/g, " ")}`, "Math AI SL")?.id === "ai-regression" && !findBankQuestion("Tutor: what is the derivative of x squared?", "Math AI SL"));
 }
+{
+  const bw = await import("../server/tutorTurn/boardWriter.ts");
+  const nm = await import("../server/tutorTurn/numbers.ts");
+  check("numbers: superscripts and subscripts count as digits (x², CO₂), so a formula is not 'a number nobody said'", nm.numbersSaid("sin(3x²) and CaCO₃ plus 2HCl").has(2) && nm.numbersSaid("CaCO₃").has(3) && nm.plainDigits("CO₂ x²") === "CO2 x2");
+  check("pre-empting: a board line that uses the numbers of the question just asked and ends in an unsaid result is the answer; the formula alone is not", bw.answersOpenQuestion("$V = 0.0500 \\times 22.7 = 1.14\\ \\text{dm}^3$", "So what's 0.0500 times 22.7?", new Set([0.05, 22.7])) && !bw.answersOpenQuestion("$V = n \\times 22.7$", "So what's 0.0500 times 22.7?", new Set([0.05, 22.7])) && !bw.answersOpenQuestion("$V = 0.0500 \\times 22.7 = 1.14$", "So what's 0.0500 times 22.7?", new Set([0.05, 22.7, 1.14])));
+  check("the writer is told to write a multi-part question whole, each part on its own line, with the tutor's exact numbers", /A MULTI-PART QUESTION/.test(readFileSync(new URL("../server/tutorTurn/boardWriter.ts", import.meta.url), "utf8")) && /gives the answer to the question the tutor just asked/.test(readFileSync(new URL("../server/tutorTurn/boardWriter.ts", import.meta.url), "utf8")));
+}
 const pmLang = mergeProfileStates(
   { ...emptyProfile(), language: "en", languageSetAt: newer },
   { ...emptyProfile(), language: "fr" }, // stale session, never itself touched the language toggle

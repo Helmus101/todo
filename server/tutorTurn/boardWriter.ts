@@ -7,7 +7,7 @@ import { extractJsonObject, normalizeTurn, salvageTurn } from "../../shared/tuto
 import { boardSurfaceBlock } from "../boardEvents.ts";
 import { createTutorChat, usageOf } from "../claude.ts";
 import { applyOps } from "./apply.ts";
-import { numbersSaid, claimIsGrounded } from "./numbers.ts";
+import { numbersSaid, claimIsGrounded, plainDigits } from "./numbers.ts";
 import { verifyConfirmedStep } from "./verifier.ts";
 export { numbersSaid, claimIsGrounded };
 import { boardLineIsWrong, stripUnaskedUnit } from "../boardMath.ts";
@@ -27,6 +27,7 @@ FIRST, in "notes", list in a few words each thing in this exchange that qualifie
 Then put the ops for every item you listed in "board". If a box has nothing, say so in "notes" and write nothing for it.
 
 WRITE ONLY:
+0. A MULTI-PART QUESTION (an exam question with parts (a), (b), (c) and marks, or a data table): write the whole of it, the data and the setup as one "given" line and EACH part as its own "given" line with its marks in brackets, using exactly the numbers and units the tutor said and never a changed or invented value. Chemical formulae keep their subscripts (CaCO_3). Never write the answer to a part.
 1. THE PROBLEM, once, when the student states it: a "topic" op for a new problem or topic, then a "given" step with the full statement, cleanly typeset (maths in $…$). Never their raw words, never a "how would I solve this" lead-in.
 2. THE STUDENT'S OWN STEPS and results, as they say them, ONLY when they are right: first recompute each one yourself. Write it as your own clean typeset line (kind "result" or "formula"), with no "why". A step that is wrong or unclear: write nothing for it, and never write the correction.
 3. WHAT THE TUTOR EXPLAINED OR DEMONSTRATED: whenever the tutor gives a definition, a rule, a formula, an identity or a worked example, WRITE IT, as clean lines (kind "definition", "formula" or "result"; typeset maths in $…$; add a short "why" only when the reason is not obvious). The student should be able to look back at it: if the tutor said "since 2 to the power of 3 is 8, the log base 2 of 8 is 3", the board gets the definition and that example. Write the explanation and the example the tutor used, NOT the question the tutor then asks. When in doubt about an explanation, write it.
@@ -167,6 +168,22 @@ export function problemOnBoard(question: string, board: { kind?: string; text?: 
   });
 }
 
+/** Does this board line already carry the answer to the question just asked? The question names its numbers ("what is 0.0500 times 22.7?"); a line that uses all of them and
+ *  ends in "= <a number nobody has said>" is the answer. Pure. */
+export function answersOpenQuestion(line: string, question: string, known: Set<number>): boolean {
+  const qn = [...new Set([...String(plainDigits(question)).matchAll(/\d+(?:\.\d+)?/g)].map((m) => Number(m[0])))].filter((n) => n !== 1 && n !== 0);
+  if (qn.length < 2 && !/[=]/.test(question)) return false;
+  const text = plainDigits(line);
+  const eq = text.lastIndexOf("=");
+  if (eq < 0) return false;
+  const rhs = [...text.slice(eq + 1).matchAll(/-?\d+(?:\.\d+)?/g)].map((m) => Number(m[0]));
+  if (!rhs.length) return false;
+  const lhsNums = new Set([...text.slice(0, eq).matchAll(/\d+(?:\.\d+)?/g)].map((m) => Number(m[0])));
+  const usesQuestion = qn.length >= 2 ? qn.every((n) => lhsNums.has(n)) : false;
+  const value = rhs[rhs.length - 1];
+  return usesQuestion && !known.has(value) && !qn.includes(value);
+}
+
 /** The tutor says it is putting something on the board (or that it is there). Pure. */
 export function promisesBoard(tutorText: string): boolean {
   return /\b(?:put|putting|write|writing|wrote|written|draw|drawing|drew|add|adding|added|up)\b[^.?!]{0,40}\bboard\b|\bon the board\b|\bon the paper\b|\bon the whiteboard\b|\bsur le tableau\b/i.test(String(tutorText || ""));
@@ -216,15 +233,25 @@ export async function writeBoard(input: { exchange: string; board: BoardEntry[];
     const known = numbersSaid(`${input.exchange} ${input.history || ""} ${input.board.map((e) => e.text || "").join(" ")}`);
     const grounded = board.filter((e) => {
       if (e.kind !== "given" || typeof e.text !== "string") return true;
-      const bad = [...e.text.replace(/\\[a-zA-Z]+/g, " ").matchAll(/\d+(?:\.\d+)?/g)].map((m) => Number(m[0])).filter((n) => n > 1 && !known.has(n));
+      // Chemical formulae and units are not numbers anybody "said": drop \text{...} bodies, subscripts and digits glued to letters (CaCO_3, CO$_2$, H₂O).
+      const stripped = plainDigits(e.text).replace(/\\text\{[^}]*\}/g, " ").replace(/\\[a-zA-Z]+/g, " ").replace(/_\{[^}]*\}|_\d+|\^\{[^}]*\}|\^\d+/g, " ").replace(/[A-Za-z]\d+|\d+[A-Za-z]/g, " ");
+      const bad = [...stripped.matchAll(/\d+(?:\.\d+)?/g)].map((m) => Number(m[0])).filter((n) => n > 1 && !known.has(n));
       if (bad.length) { applied.dropped.push(`given: it contains numbers nobody said (${bad.join(", ")}), not written: ${String(e.text).slice(0, 80)}`); console.warn(`[live] task line dropped, number not said (${bad.join(", ")}): ${String(e.text).slice(0, 100)}`); return false; }
       return true;
+    });
+    // The answer to the question the tutor has just asked must not already be on the paper (reported in simulation: "what is 0.0500 times 22.7?" was
+    // answered on the board with "= 1.14" before the student said a word).
+    const noPreempt = grounded.filter((e) => {
+      if (!openQuestion || typeof e.text !== "string" || !["result", "formula", "step", "gap"].includes(String(e.kind))) return true;
+      if (!answersOpenQuestion(e.text, openQuestion, known)) return true;
+      applied.dropped.push(`${e.kind}: it gives the answer to the question the tutor just asked, not written: ${String(e.text).slice(0, 80)}`);
+      return false;
     });
     // The tutor is asking about the unit: a unit the student has not said must not already be on the board.
     const askedUnit = /\bunits?\b/i.test(openQuestion);
     const finalBoard = askedUnit
-      ? grounded.map((e) => (typeof e.text === "string" && ["result", "formula", "step", "given"].includes(String(e.kind)) ? { ...e, text: stripUnaskedUnit(e.text, studentWords.join(" ")) } : e))
-      : grounded;
+      ? noPreempt.map((e) => (typeof e.text === "string" && ["result", "formula", "step", "given"].includes(String(e.kind)) ? { ...e, text: stripUnaskedUnit(e.text, studentWords.join(" ")) } : e))
+      : noPreempt;
     return { board: finalBoard, dropped: applied.dropped, concepts };
   };
   let out = await once();
