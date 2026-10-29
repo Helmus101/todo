@@ -551,7 +551,9 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
         // EGRESS/CPU: the writer only needs the recent lines, not the whole paper, and never the drawings.
         const lean = (t.board || []).slice(-16).map((e: any) => (e && e.svg ? { ...e, svg: undefined } : e));
         // A slow board call must never hold up the ones behind it: after 40 s it is given up on.
-        const r = await Promise.race([api.liveBoard(exchangeText(turns), lean, t.sourceSubject, exchangeText((t.chat || []).slice(-14, Math.max(0, (t.chat || []).length - inChat)).map((m) => ({ who: m.role === "user" ? "you" as const : "otto" as const, text: String(m.text || "").slice(0, 400) }))), getLanguage(), early), new Promise<{ board: any[] }>((_, rej) => setTimeout(() => rej(new Error("board timeout")), 40_000))]);
+        const callBoard = () => Promise.race([api.liveBoard(exchangeText(turns), lean, t.sourceSubject, exchangeText((t.chat || []).slice(-14, Math.max(0, (t.chat || []).length - inChat)).map((m) => ({ who: m.role === "user" ? "you" as const : "otto" as const, text: String(m.text || "").slice(0, 400) }))), getLanguage(), early), new Promise<{ board: any[] }>((_, rej) => setTimeout(() => rej(new Error("board timeout")), 40_000))]);
+        // One quiet retry: a slow or failed pass must not leave the paper behind the conversation (the problem just posed would never appear).
+        const r = await callBoard().catch(async (e: any) => { if (e?.status === 429) throw e; await new Promise((res) => setTimeout(res, 1200)); return callBoard(); });
         setBoardNote(null);
         // Second opinion: the tutor just agreed to a numeric step that does not hold (checked in code). Tell it privately so it
         // walks the agreement back, once per claim.

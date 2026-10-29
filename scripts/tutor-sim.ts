@@ -116,7 +116,7 @@ async function runPersona(p: Persona): Promise<{ flags: { turn: number; kind: st
     const lean = board.slice(-16);
     const turnsNow = [{ who: "you" as const, text: student }, { who: "otto" as const, text: reply }];
     // Pass 1, while the tutor is still speaking: the whole sentences said so far (as the app does once enough has been said).
-    const sentences = reply.match(/[^.?!]+[.?!]+(?:\s|$)/g) || [];
+    const sentences = reply.split(/(?<=[.?!])\s+/).map((x) => x + " ");
     let partial = "";
     for (const s of sentences) { partial += s; if (partial.length >= 90 && partial.split(/\s+/).length >= 16 && partial.trim().length < reply.trim().length - 20) break; }
     if (partial && partial.trim().length < reply.trim().length - 20) {
