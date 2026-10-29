@@ -15,11 +15,16 @@ const LEGACY_DEEPSEEK_MODEL_MAP: Record<string, string> = { "deepseek-chat": "de
 // keeps its exact current behavior. Switching back is just unsetting AI_PROVIDER (or setting it back to
 // "deepseek") — DEEPSEEK_API_KEY/DEEPSEEK_MODEL stay untouched either way, nothing about the DeepSeek path
 // is removed or altered.
-const AI_PROVIDER = (process.env.AI_PROVIDER || "deepseek").toLowerCase();
+// AI_PROVIDER=gemini routes every AI call (tasks, chat, study content, the tutor) through Gemini's OpenAI-compatible endpoint with
+// GEMINI_API_KEY; it is also the default when only a Gemini key is configured. GEMINI_APP_MODEL picks the model (default flash-lite).
+const AI_PROVIDER = (process.env.AI_PROVIDER || (!process.env.DEEPSEEK_API_KEY && process.env.GEMINI_API_KEY ? "gemini" : "deepseek")).toLowerCase();
 
 const USING_NVIDIA = AI_PROVIDER === "nvidia";
+export const USING_GEMINI = AI_PROVIDER === "gemini";
 
-export const DEEPSEEK_MODEL = USING_NVIDIA
+export const DEEPSEEK_MODEL = USING_GEMINI
+  ? (process.env.GEMINI_APP_MODEL || "gemini-3.5-flash-lite")
+  : USING_NVIDIA
   ? (process.env.NVIDIA_MODEL || "mistralai/mistral-nemotron")
   : (LEGACY_DEEPSEEK_MODEL_MAP[process.env.DEEPSEEK_MODEL || ""] || process.env.DEEPSEEK_MODEL || "deepseek-v4-flash");
 // The meter prices calls at the configured model's rates; DEEPSEEK_PRICING (JSON) corrects them without a deploy.
@@ -62,7 +67,7 @@ export const OUT = { classify: 8000, generate: 8000, run: 8000, rescue: 8000, pi
 
 export function aiReady(): boolean {
   // Gemini alone is enough for the tutor (it is the first provider tried), so a Gemini-only deployment is "ready" too.
-  return !!process.env[USING_NVIDIA ? "NVIDIA_API_KEY" : "DEEPSEEK_API_KEY"] || !!process.env.GEMINI_API_KEY;
+  return !!process.env[USING_NVIDIA ? "NVIDIA_API_KEY" : USING_GEMINI ? "GEMINI_API_KEY" : "DEEPSEEK_API_KEY"] || !!process.env.GEMINI_API_KEY;
 }
 
 // Whiteboard vision — a SEPARATE provider from the rest of this file on purpose. DeepSeek (the model behind
@@ -101,6 +106,11 @@ export function usageOf(res: any): { in: number; out: number; cachedIn: number }
 // across this file just want "the active chat-completions client," and this is a straight swap on which
 // provider that resolves to, not a new concept worth threading a rename through every call site for.
 export function deepseekClient(): OpenAI {
+  if (USING_GEMINI) {
+    const apiKey = process.env.GEMINI_API_KEY;
+    if (!apiKey) throw new Error("Set GEMINI_API_KEY in web/.env (or set AI_PROVIDER=deepseek).");
+    return new OpenAI({ apiKey, baseURL: "https://generativelanguage.googleapis.com/v1beta/openai/", timeout: 90_000, maxRetries: 0 });
+  }
   if (USING_NVIDIA) {
     const apiKey = process.env.NVIDIA_API_KEY;
     if (!apiKey) throw new Error("Set NVIDIA_API_KEY in web/.env (or unset AI_PROVIDER to go back to DeepSeek).");
@@ -196,6 +206,7 @@ function tutorProviders(): { name: string; client: OpenAI; model: string }[] {
   const out: { name: string; client: OpenAI; model: string }[] = [];
   const geminiKey = process.env.GEMINI_API_KEY;
   if (geminiKey) out.push({ name: "gemini", client: geminiClient(geminiKey), model: GEMINI_TUTOR_MODEL });
+  if (USING_GEMINI) return out; // the whole app is on Gemini: no second provider to fall back to
   try {
     out.push({ name: USING_NVIDIA ? "nvidia" : "deepseek", client: deepseekClient(), model: DEEPSEEK_MODEL === "deepseek-v4-pro" ? "deepseek-v4-flash" : DEEPSEEK_MODEL });
   } catch (e: any) {
@@ -287,7 +298,7 @@ async function createChatFast(client: OpenAI, params: any, fast: boolean, timeou
   // `timeoutMs`: a hung provider must fail over in seconds, not after the SDK's 10-minute default — the tutor turn
   // is interactive, so a stalled request is the single biggest source of "it took 30+ seconds".
   const opts = timeoutMs ? { timeout: timeoutMs, maxRetries: 0 } : undefined;
-  if (!fast || USING_NVIDIA || thinkingToggleRejected || process.env.TUTOR_THINKING === "on") return client.chat.completions.create(params, opts);
+  if (!fast || USING_NVIDIA || USING_GEMINI || thinkingToggleRejected || process.env.TUTOR_THINKING === "on") return client.chat.completions.create(params, opts);
   try {
     return await client.chat.completions.create({ ...params, thinking: { type: "disabled" } } as any, opts);
   } catch (e: any) {

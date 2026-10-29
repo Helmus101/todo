@@ -42,13 +42,35 @@ const PERSONAS: Persona[] = [
     who: "You are an Economics SL student who drifts: you mention your weekend, a game, how tired you are, then come back to elasticity. You confuse PED with the gradient of the demand curve and mix up elastic and inelastic. Speak casually." },
   { id: "show-that-shortcut", subject: "Math AA HL", level: "IB DP2", opener: "I have a show that question about derivatives",
     who: "You are a Math AA HL student working on a 'show that' question. You try to start from the answer and work backwards, skip algebra lines, and assume the tutor will accept it. You get frustrated when told to show every step but then do it. Speak in short spoken sentences." },
+  { id: "strong-wants-challenge", subject: "Math AA HL", level: "IB DP2", opener: "I'm aiming for a 7, give me something properly hard on calculus",
+    who: "You are a strong Math AA HL student aiming for a 7. You get most things right quickly and get bored by baby steps; you say 'yeah that's obvious, next' if over-scaffolded. Occasionally you make a subtle slip (a missed chain-rule factor, a sign) and need it pointed at, not fixed for you. Speak briefly and confidently." },
+  { id: "anxious-says-stupid", subject: "Math AA SL", level: "IB DP1", opener: "um I'm really bad at this, can we do quadratics",
+    who: "You are an anxious Math AA SL student who says 'I'm so stupid', 'I always get this wrong', 'sorry' often. You can actually do part of the work but doubt yourself, and you freeze when the tutor sounds disappointed. You get more confident when you succeed at something small. Speak softly in short sentences." },
+  { id: "physics-heavier-falls-faster", subject: "Physics SL", level: "IB DP1", opener: "why do heavy things fall faster",
+    who: "You are a Physics SL student with a firm mental model that heavier objects fall faster and that a force is needed to keep anything moving. You defend it with everyday examples (a feather, a bowling ball) until an experiment or argument you can follow changes your mind. You ask 'but why' a lot." },
+  { id: "chem-stoich-units", subject: "Chemistry HL", level: "IB DP2", opener: "I keep losing marks on stoichiometry calculations",
+    who: "You are a Chemistry HL student who can balance equations but mixes cm3 and dm3, forgets to convert grams to moles, and rounds too early. You say numbers aloud as words. You get the idea fast once the unit slip is named." },
+  { id: "stats-pvalue-meaning", subject: "Math AI HL", level: "IB DP2", opener: "what does a p-value actually mean, I only know to compare it to 0.05",
+    who: "You are a Math AI HL student who can run the test on the calculator but believes a p-value is the probability that the null hypothesis is true. You are curious and ask for 'a real example'." },
+  { id: "chain-rule-why", subject: "Math AA SL", level: "IB DP1", opener: "I can do chain rule but I don't know why it works",
+    who: "You are a Math AA SL student who can apply the chain rule mechanically but wants to know why. You answer 'but why does it multiply?' whenever the tutor states a rule, and you like pictures and rates (speed of a car, etc). You sometimes confuse which function is inside." },
+  { id: "exam-tomorrow-wants-answer", subject: "Math AA HL", level: "IB DP2", opener: "exam tomorrow, I never understood integration by parts, just show me",
+    who: "You are a panicking Math AA HL student with an exam tomorrow. You say 'just show me one', and then actually learn if the tutor works a short example in front of you and then makes you try a similar one. You make a LIATE ordering mistake or lose the minus sign on your own attempt." },
 ];
 
 type Turn = { who: "student" | "tutor"; text: string };
 
 async function chat(messages: any[], opts: { temperature?: number; max_tokens?: number; json?: boolean } = {}): Promise<string> {
-  const res: any = await createTutorChat({ messages, temperature: opts.temperature ?? 0.7, max_tokens: opts.max_tokens ?? 500, ...(opts.json ? { response_format: { type: "json_object" } } : {}) }, true);
-  return String(res?.choices?.[0]?.message?.content || "").trim();
+  // Rate limits (429) and timeouts are normal on a free Gemini key: wait and try again instead of losing the whole session.
+  for (let attempt = 0; ; attempt++) {
+    try {
+      const res: any = await createTutorChat({ messages, temperature: opts.temperature ?? 0.7, max_tokens: opts.max_tokens ?? 500, ...(opts.json ? { response_format: { type: "json_object" } } : {}) }, true);
+      return String(res?.choices?.[0]?.message?.content || "").trim();
+    } catch (e: any) {
+      if (attempt >= 5 || /402|Insufficient/i.test(String(e?.message || e))) throw e;
+      await new Promise((r) => setTimeout(r, 6000 * (attempt + 1)));
+    }
+  }
 }
 
 const boardText = (board: any[]): string => board.length ? board.map((e, i) => `${i + 1}. [${e.kind}] ${String(e.text || "").replace(/\s+/g, " ")}`).join("\n") : "(the board is empty)";
@@ -89,6 +111,16 @@ async function judge(p: Persona, history: Turn[], before: any[], after: any[]): 
     return JSON.parse(raw.replace(/^```(?:json)?|```$/g, ""));
   } catch { return { judge_failed: true }; }
 }
+
+const RUBRIC_SYS = `You review a whole voice tutoring session between a tutor (Otto) and an IB student, as a master teacher would. Score 1 to 5 each (5 = indistinguishable from an outstanding human tutor), quoting a short line from the transcript as evidence for each score. Return ONLY JSON:
+{"explains_when_stuck":{"score":1,"evidence":""},"adapts":{"score":1,"evidence":""},"diagnoses_misconception":{"score":1,"evidence":""},"natural_voice":{"score":1,"evidence":""},"truthful":{"score":1,"evidence":""},"hints_not_answers":{"score":1,"evidence":""},"self_corrects":{"score":1,"evidence":"or \"n/a: no error occurred\""},"biggest_weakness":"one sentence","one_better_line":"what the tutor should have said at the weakest moment"}
+Criteria. explains_when_stuck: when the student fails twice or says they are lost, the tutor gives a clear worked step, concrete example or picture and then checks understanding, instead of asking another question of the same kind; a student who is NOT stuck is not over-explained. adapts: the tutor's level, pace, length, tone and analogy visibly follow the student's signals (rushed, anxious, strong, confused, curious, drifting). diagnoses_misconception: it finds the real wrong model behind the errors and addresses that, not just the symptom. natural_voice: one to three short spoken sentences, warm and direct, no repeated question, no filler praise ("great question", "perfect!") for wrong or trivial things, no lecture. truthful: no false statement, no confirming a wrong step, no claim about the board that is not so. hints_not_answers: the tutor does not hand over a formula, rule or method before the student has had a real chance to reach or recall it (it first asks what they think, offers a nudge or a concrete case, and surfaces the misconception behind a wrong idea by getting the student to see the conflict themselves); it suggests, points at the next move or asks a pointed question instead of stating the answer the student is meant to find; once the student has truly tried and failed it may show a worked step, but still not the final answer to their own problem. self_corrects: when the tutor itself said something wrong or agreed to a wrong step it says so plainly and calmly and fixes it, never defensively and never by doubting a correct step; score 5 with evidence "n/a" if no error occurred and it never needlessly backed down.`;
+async function rubric(p: Persona, history: Turn[]): Promise<any> {
+  const convo = history.map((t) => `${t.who === "student" ? "Student" : "Tutor"}: ${t.text}`).join("\n").slice(-9000);
+  try { return JSON.parse((await chat([{ role: "system", content: RUBRIC_SYS }, { role: "user", content: `Subject: ${p.subject} (${p.level}). Student profile: ${p.who.slice(0, 300)}\n\n${convo}` }], { temperature: 0, max_tokens: 900, json: true })).replace(/^```(?:json)?|```$/g, "")); } catch { return null; }
+}
+const norm = (t: string) => t.toLowerCase().replace(/[^a-z0-9 ]+/g, " ").replace(/\s+/g, " ").trim();
+const lastQuestion = (t: string) => { const q = t.split(/(?<=[.?!])\s+/).filter((x) => x.includes("?")).pop(); return q ? norm(q) : ""; };
 
 const cut = (s: string, n = 160) => s.replace(/\s+/g, " ").slice(0, n);
 
@@ -151,6 +183,22 @@ async function runPersona(p: Persona): Promise<{ flags: { turn: number; kind: st
     if (turn < turnsN) student = await studentSays(p, history, board);
   }
   console.log(`\nBOARD AT THE END:\n${boardText(board)}`);
+  // Whole-session checks: a question asked twice running is a loop; reply length is a voice-quality signal.
+  const tutorTurns = history.filter((t) => t.who === "tutor");
+  let repeats = 0;
+  for (let i = 1; i < tutorTurns.length; i++) { const a = lastQuestion(tutorTurns[i - 1].text), b = lastQuestion(tutorTurns[i].text); if (a && b && (a === b || (a.length > 20 && (a.includes(b) || b.includes(a))))) { repeats++; flags.push({ turn: i, kind: "CODE: same question asked twice running", text: cut(b, 160) }); } }
+  const words = tutorTurns.map((t) => t.text.split(/\s+/).length);
+  const avgWords = Math.round(words.reduce((a, b) => a + b, 0) / Math.max(1, words.length));
+  const longest = Math.max(...words);
+  if (longest > 90) flags.push({ turn: 0, kind: "CODE: a reply over 90 words (too long to listen to)", text: `${longest} words` });
+  const r = await rubric(p, history);
+  if (r) {
+    const sc = (k: string) => Number(r[k]?.score) || 0;
+    console.log(`\nTEACHING: explains ${sc("explains_when_stuck")}  adapts ${sc("adapts")}  diagnoses ${sc("diagnoses_misconception")}  voice ${sc("natural_voice")}  truthful ${sc("truthful")}  hints ${sc("hints_not_answers")}  self-corrects ${sc("self_corrects")}   | avg ${avgWords} words/reply, ${repeats} repeated question(s)`);
+    for (const k of ["explains_when_stuck", "adapts", "diagnoses_misconception", "natural_voice", "truthful", "hints_not_answers", "self_corrects"]) if (sc(k) && sc(k) <= 3) console.log(`   ${k} ${sc(k)}: ${cut(String(r[k]?.evidence || ""), 200)}`);
+    console.log(`   weakest: ${cut(String(r.biggest_weakness || ""), 220)}\n   better: ${cut(String(r.one_better_line || ""), 260)}`);
+    scores.push({ id: p.id, explains: sc("explains_when_stuck"), adapts: sc("adapts"), diagnoses: sc("diagnoses_misconception"), voice: sc("natural_voice"), truthful: sc("truthful"), hints: sc("hints_not_answers"), selfc: sc("self_corrects"), words: avgWords, repeats });
+  }
   return { flags, turns: turnsN };
 }
 
@@ -161,6 +209,7 @@ if (!process.env.GEMINI_API_KEY && !process.env.DEEPSEEK_API_KEY) { console.erro
 const summary: Record<string, number> = {};
 let total = 0;
 const perPersona: { id: string; n: number }[] = [];
+const scores: { id: string; explains: number; adapts: number; diagnoses: number; voice: number; truthful: number; hints: number; selfc: number; words: number; repeats: number }[] = [];
 for (const p of picked) {
   for (let r = 0; r < runs; r++) {
     try {
@@ -174,4 +223,10 @@ for (const p of picked) {
 console.log(`\n===== SUMMARY: ${total} flag(s) across ${perPersona.length} run(s) of ${turnsN} turns =====`);
 for (const [k, v] of Object.entries(summary).sort((a, b) => b[1] - a[1])) console.log(`${String(v).padStart(3)}  ${k}`);
 for (const r of perPersona) console.log(`${String(r.n).padStart(3)} flag(s)  ${r.id}`);
+if (scores.length) {
+  console.log("\nTEACHING SCORES (1-5): explains adapts diagnoses voice truthful hints self-corrects | words/reply repeats");
+  for (const r of scores) console.log(`  ${r.id.padEnd(30)} ${r.explains} ${r.adapts} ${r.diagnoses} ${r.voice} ${r.truthful} ${r.hints} ${r.selfc} | ${r.words} ${r.repeats}`);
+  const avg = (k: "explains" | "adapts" | "diagnoses" | "voice" | "truthful" | "hints" | "selfc") => (scores.reduce((a, r) => a + r[k], 0) / scores.length).toFixed(2);
+  console.log(`  ${"AVERAGE".padEnd(30)} ${avg("explains")} ${avg("adapts")} ${avg("diagnoses")} ${avg("voice")} ${avg("truthful")} ${avg("hints")} ${avg("selfc")}`);
+}
 console.log("\nThe judge is a model: read the flagged lines in the transcript before acting on a flag. A flag is a lead, not a verdict.");

@@ -61,10 +61,13 @@ if (PROD) {
   // AI_PROVIDER=nvidia routes every AI call through NVIDIA's NIM endpoint instead (see claude.ts's own
   // AI_PROVIDER comment) — require whichever key that active choice actually needs, not always DeepSeek's,
   // so a deployment that's fully switched to NVIDIA (no DEEPSEEK_API_KEY set at all) doesn't fail to boot.
-  const usingNvidia = (process.env.AI_PROVIDER || "").toLowerCase() === "nvidia";
-  if (usingNvidia ? !process.env.NVIDIA_API_KEY : !process.env.DEEPSEEK_API_KEY) {
+  const provider = (process.env.AI_PROVIDER || (!process.env.DEEPSEEK_API_KEY && process.env.GEMINI_API_KEY ? "gemini" : "")).toLowerCase();
+  const usingNvidia = provider === "nvidia", usingGemini = provider === "gemini";
+  if (usingNvidia ? !process.env.NVIDIA_API_KEY : usingGemini ? !process.env.GEMINI_API_KEY : !process.env.DEEPSEEK_API_KEY) {
     throw new Error(usingNvidia
       ? "NVIDIA_API_KEY must be set in production when AI_PROVIDER=nvidia — required for AI task generation and execution."
+      : usingGemini
+      ? "GEMINI_API_KEY must be set in production when AI_PROVIDER=gemini — required for AI task generation and execution."
       : "DEEPSEEK_API_KEY must be set in production — required for AI task generation and execution.");
   }
   if (!process.env.COMPOSIO_API_KEY) {
