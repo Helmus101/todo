@@ -20,7 +20,7 @@ import type { BoardEntry, Profile, TaskObjective, TaskProblem, TutorSolution, Tu
 import { practiceAnswerMatches, learnedProductiveHour } from "../shared/types.ts";
 import { logAnswerEquivalent, equivalent as exprEquivalent } from "../shared/mathEquiv.ts";
 import { buildInclineScene, type InclineForce } from "../shared/inclineScene.ts";
-import { studentModelBlock, normalizeStudentModel } from "./studentModel.ts";
+import { studentModelBlock, knownGroundBlock, normalizeStudentModel } from "./studentModel.ts";
 import { buildTrigScene } from "../shared/trigScene.ts";
 import { sanitizeSvg, svgText } from "../shared/svgSafe.ts";
 import { type SpokenRepair } from "../shared/spokenMath.ts";
@@ -356,6 +356,7 @@ export function backgroundBlock(c: TutorContext): string {
     hintDensityLine(p),
     (p?.tutorPrefs?.length ? `HOW THEY LIKE TO LEARN (from what they've asked for before — honour it unless it would hand over the answer): ${p.tutorPrefs.join("; ")}.` : ""),
     // What they've PROVED (code-verified evidence per skill, server/studentModel.ts) — where to start, what to skip.
+    (() => { try { return knownGroundBlock(normalizeStudentModel(p?.conceptModel), c.subject); } catch { return ""; } })(),
     (() => { try { return studentModelBlock(normalizeStudentModel(p?.conceptModel), { subject: c.subject, limit: 6 }); } catch { return ""; } })(),
     errorLogLine(p, c.subject),
     recentJournalLine(c.journal, c.subject, c.journalMeta),

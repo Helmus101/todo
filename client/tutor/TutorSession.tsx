@@ -536,9 +536,11 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
     setTask((prev) => (prev ? { ...prev, chat } : prev));
   }, [userId]);
   // After each spoken exchange the board writer decides what goes on the paper (one at a time, in order).
-  const onLiveTurnComplete = useCallback(() => {
-    const turns = turnsRef.current.splice(0);
+  // `early`: the same pass while Otto is still speaking, on what has been said so far (whole sentences only), so the paper keeps up with the
+  // voice. The pass after the turn repeats nothing: it sees the lines the early pass wrote.
+  const queueBoard = useCallback((turns: { who: "you" | "otto"; text: string }[], early: boolean) => {
     if (!turns.length) return;
+    const inChat = early ? turnsRef.current.length : turns.length;
     setBoardPending((n) => n + 1);
     const forId = taskRef.current?.id; // lines belong to the session they were said in, even if it has ended or another has started
     const sessionTask = () => (taskRef.current?.id === forId ? taskRef.current : endedTaskRef.current?.id === forId ? endedTaskRef.current : null);
@@ -549,14 +551,14 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
         // EGRESS/CPU: the writer only needs the recent lines, not the whole paper, and never the drawings.
         const lean = (t.board || []).slice(-16).map((e: any) => (e && e.svg ? { ...e, svg: undefined } : e));
         // A slow board call must never hold up the ones behind it: after 40 s it is given up on.
-        const r = await Promise.race([api.liveBoard(exchangeText(turns), lean, t.sourceSubject, exchangeText((t.chat || []).slice(-14, Math.max(0, (t.chat || []).length - turns.length)).map((m) => ({ who: m.role === "user" ? "you" as const : "otto" as const, text: String(m.text || "").slice(0, 400) }))), getLanguage()), new Promise<{ board: any[] }>((_, rej) => setTimeout(() => rej(new Error("board timeout")), 40_000))]);
+        const r = await Promise.race([api.liveBoard(exchangeText(turns), lean, t.sourceSubject, exchangeText((t.chat || []).slice(-14, Math.max(0, (t.chat || []).length - inChat)).map((m) => ({ who: m.role === "user" ? "you" as const : "otto" as const, text: String(m.text || "").slice(0, 400) }))), getLanguage(), early), new Promise<{ board: any[] }>((_, rej) => setTimeout(() => rej(new Error("board timeout")), 40_000))]);
         setBoardNote(null);
         // Second opinion: the tutor just agreed to a numeric step that does not hold (checked in code). Tell it privately so it
         // walks the agreement back, once per claim.
         for (const claim of (("flags" in r && r.flags) || []).slice(0, 2)) {
           if (flaggedClaimsRef.current.has(claim) || liveRef.current.status !== "live") continue;
           flaggedClaimsRef.current.add(claim);
-          liveRef.current.sendText(`[${sessionNoteTag}] (Private note for you, not from the student: you just agreed with a step that is wrong. As numbers it does not hold: ${claim}. Say plainly that you were wrong to agree, and ask them to recheck that exact step. Do not give them the corrected value.)`);
+          liveRef.current.sendText(`[${sessionNoteTag}] (Private note for you, not from the student: an automatic check read the step you just agreed to as the numbers ${claim}, and that does not hold. The check can mis-hear a spoken step, so FIRST recompute that exact step yourself from what the student really said and what is on the board. If it is truly wrong, say plainly that you were wrong to agree and ask them to recheck that exact step, without giving the corrected value. If it is actually right, say nothing about this note and carry on exactly as you were; never doubt a correct step, and never undo a correct confirmation.)`);
         }
         if (!r.board?.length) return;
         const cur = sessionTask();
@@ -569,6 +571,19 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
       } catch (e: any) { setBoardNote(e?.status === 429 ? "Today's board limit is reached — the voice still works." : "The board couldn't be updated just now."); }
     }).finally(() => { setBoardPending((n) => Math.max(0, n - 1)); setBoardPromised(false); });
   }, [userId]);
+  const onLiveTurnComplete = useCallback(() => { queueBoard(turnsRef.current.splice(0), false); earlyRef.current = { len: 0, at: 0, turn: earlyRef.current.turn + 1 }; }, [queueBoard]);
+  // While Otto talks: once enough whole sentences have been said since the last pass (and not more often than every 3.5 s), the board writer runs on them.
+  const earlyRef = useRef({ len: 0, at: 0, turn: 0 });
+  const earlyBoard = useCallback((you: string, otto: string) => {
+    const e = earlyRef.current;
+    if (!otto || Date.now() - e.at < 3500) return;
+    const end = Math.max(otto.lastIndexOf(". "), otto.lastIndexOf("? "), otto.lastIndexOf("! "), /[.?!]$/.test(otto) ? otto.length - 1 : -1);
+    if (end < 0) return;
+    const said = otto.slice(0, end + 1).trim();
+    if (said.length - e.len < 90 || said.split(/\s+/).length < 16) return;
+    earlyRef.current = { len: said.length, at: Date.now(), turn: e.turn };
+    queueBoard([...turnsRef.current, ...(you.trim() ? [{ who: "you" as const, text: you.trim() }] : []), { who: "otto" as const, text: said }], true);
+  }, [queueBoard]);
   // Sharing a worksheet, a PDF or a photo of the problem: it is read, kept with the student's coursework (so Otto knows it in later sessions
   // too) and handed to Otto, who starts from it.
   const [attaching, setAttaching] = useState(false);
@@ -584,6 +599,7 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
       // Live words of whoever is talking: Otto's once it answers, otherwise the student's as they speak. When a turn
       // finishes (both empty) the student's last words stay up until the next thing is said, instead of a placeholder.
       setCaption((prev) => (otto ? { who: "otto", text: otto } : you ? (Date.now() - heardByBrowserRef.current < 4000 && prev?.who === "you" ? prev : { who: "you", text: you }) : prev?.who === "you" ? prev : null));
+      earlyBoard(you, otto);
       if (otto && /\b(on|onto|to) the board\b|\blet me (draw|write|sketch|show)\b|\bI'?ll (draw|write|sketch)\b/i.test(otto)) setBoardPromised(true);
     },
   });

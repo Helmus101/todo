@@ -5,7 +5,7 @@
 //
 // The SHAPES live in shared/agentTypes.ts (the client's transparency panel and the profile need them, and a
 // server import there would drag server code into the browser bundle). This module is the behaviour.
-import { ibPrerequisites } from "../shared/ibGraphs.ts";
+import { ibPrerequisites, graphFor } from "../shared/ibGraphs.ts";
 import { masteryState, MASTERY_LABEL } from "../shared/masteryState.ts";
 //
 // Two design rules from the spec are load-bearing:
@@ -402,16 +402,19 @@ export function findConcept(model: StudentModelShape | undefined, labelOrKey: st
 
 /* ── reading the model back out (the prompt path) ───────────────────────────────────────────────────── */
 
+/** "Physics HL" and "Physics" are the same subject for the student's record: the level is not part of the name. */
+const baseSubject = (s?: string): string => String(s || "").toLowerCase().replace(/\s+(hl|sl)$/i, "").trim();
+
 /** Concepts worth telling the tutor about this turn: subject-matched first (a Maths session shouldn't open
  *  with the student's History misconceptions), then by weakness — a weak concept is the one most likely to be
  *  the REAL problem behind what they're asking about (§4/§5). Only concepts with actual evidence are returned:
  *  a record created by a stray mention must never be presented as a belief. */
 function relevantConcepts(model: StudentModelShape, opts: { subject?: string; limit?: number; now?: Date } = {}): ConceptRecord[] {
   const now = opts.now || new Date();
-  const subject = (opts.subject || "").toLowerCase();
+  const subject = baseSubject(opts.subject);
   const all = Object.values(model.concepts).filter((c) => c.confidence > 0 || c.evidence.length > 0);
   const score = (c: ConceptRecord): number => {
-    const subjectMatch = subject && (c.subject || "").toLowerCase() === subject ? 2 : 0;
+    const subjectMatch = subject && baseSubject(c.subject) === subject ? 2 : 0;
     const live = liveMisconceptions(c, now).length > 0 ? 1 : 0;
     return subjectMatch + live;
   };
@@ -472,4 +475,40 @@ export function studentModelBlock(model: StudentModelShape | undefined, opts: { 
     `evidence is thin, say so honestly ("I'm not sure that's the issue — let's test it") rather than ` +
     `confidently teaching the wrong thing.\n`
   );
+}
+
+
+/** Where this student stands in a subject, from everything their record shows, so a session never restarts from the beginning: what is solid
+ *  (build on it, do not re-teach or re-diagnose it), what is still developing or shaky, what is due a quick check, and what they are ready
+ *  to meet next (an idea whose prerequisites are solid and that is not yet solid itself, from the subject's prerequisite map).
+ *  Silent below two evidenced concepts in the subject: with nothing known, an entry-point question is the right start. */
+export function knownGroundBlock(model: StudentModelShape | undefined, subject: string | undefined, now: Date = new Date()): string {
+  if (!model || !subject) return "";
+  const base = baseSubject(subject);
+  const mine = Object.values(model.concepts).filter((c) => (c.attempts > 0 || c.recalls > 0) && baseSubject(c.subject) === base);
+  if (mine.length < 2) return "";
+  const solidState = (c: ConceptRecord) => { const m = masteryState(c); return m === "provisional" || m === "retained"; };
+  const live = (c: ConceptRecord) => liveMisconceptions(c, now).length > 0;
+  const due = (c: ConceptRecord) => !!c.nextReview && Date.parse(c.nextReview) <= now.getTime();
+  const solid = mine.filter((c) => solidState(c) && !live(c));
+  const shaky = mine.filter((c) => live(c) || (c.mastery < 0.45 && c.attempts >= 2));
+  const developing = mine.filter((c) => !solid.includes(c) && !shaky.includes(c));
+  const dueNow = solid.filter(due).concat(developing.filter(due)).slice(0, 4);
+  const list = (cs: ConceptRecord[], n: number) => cs.sort((a, b) => b.mastery - a.mastery).slice(0, n).map((c) => c.label).join("; ");
+  const graph = graphFor(subject);
+  const nodeOf = (c: ConceptRecord) => graph.find((n) => n.match.test(c.label));
+  const solidIds = new Set(solid.map((c) => nodeOf(c)?.id).filter((x): x is string => !!x));
+  const seenIds = new Set(mine.map((c) => nodeOf(c)?.id).filter((x): x is string => !!x));
+  const ready = graph.filter((n) => !solidIds.has(n.id) && !seenIds.has(n.id) && n.needs.length > 0 && n.needs.every((d) => solidIds.has(d))).slice(0, 5).map((n) => n.title);
+  const hlShown = graph.filter((n) => n.hl && solidIds.has(n.id)).map((n) => n.title).slice(0, 5);
+  const lines: string[] = [];
+  lines.push(`- tracked so far: ${mine.length} ideas, ${solid.length} solid (shown alone more than once, with no live misconception), ${developing.length} developing, ${shaky.length} shaky`);
+  if (solid.length) lines.push(`- SOLID, so build on it and go beyond it (never re-teach it, never quiz them on whether they know it): ${list([...solid], 12)}`);
+  if (hlShown.length) lines.push(`- Higher Level ideas they have already shown: ${hlShown.join("; ")}`);
+  if (developing.length) lines.push(`- developing (worked on, not yet reliable alone): ${list([...developing], 8)}`);
+  if (shaky.length) lines.push(`- shaky or a live misconception (check the idea underneath first): ${list([...shaky], 6)}`);
+  if (dueNow.length) lines.push(`- due for a quick retrieval check (not shown for a while): ${dueNow.map((c) => c.label).join("; ")}`);
+  if (ready.length) lines.push(`- ready to meet next (what they rest on is solid): ${ready.join("; ")}`);
+  return `\nWHERE THEY ARE IN ${subject.replace(/\s+(HL|SL)$/i, "").toUpperCase()} (everything they have shown across all past sittings, kept by the app so that no session starts from the beginning):\n${lines.join("\n")}\n` +
+    `HOW TO USE IT: begin at the edge of what they can do, not at the start of the topic. Open with ONE short retrieval question on a due or solid idea you are about to build on (a few seconds, not an interview and never a list of questions about what they know); if they get it, go straight to the next idea; if not, step down one level and say what you are doing. Never ask what they have covered or what level they are: you know, and the list above is the answer. When they name a topic that is listed as solid, take it further (a harder variant, an unfamiliar context, an exam-style multi-step question) instead of explaining it again. Evidence can fade: treat the list as a good guess that one question can overturn, and when they show something is stronger or weaker than listed, trust what they show.\n`;
 }

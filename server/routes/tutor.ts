@@ -201,7 +201,7 @@ export function registerTutorRoutes(app: express.Express): void {
 
   // THE BOARD FOR THE LIVE VOICE: after each spoken exchange the browser sends what was said and the board as it stands; one call decides
   // what goes on the paper (the problem, the student's correct steps as Otto's own lines, a takeaway of what was explained, figures).
-  app.post("/api/tutor/live/board", requireAuth, rateLimit(30, 60_000), dailyCap("live-board", Number(process.env.TUTOR_DAILY_LIVE_BOARD) || 400), ah(async (req, res) => {
+  app.post("/api/tutor/live/board", requireAuth, rateLimit(30, 60_000), dailyCap("live-board", Number(process.env.TUTOR_DAILY_LIVE_BOARD) || 900), ah(async (req, res) => {
     if (overWeeklyCap(req)) { res.status(429).json({ error: "This week's AI allowance is used up. Ask for more usage and it comes back as soon as it's approved.", code: "weekly_cap" }); return; }
     if (isTutorBlocked(req)) { res.status(429).json({ error: "This week's AI allowance is used up. Ask for more usage and it comes back as soon as it's approved.", code: "weekly_cap" }); return; }
     if (!aiReady()) { res.status(503).json({ error: "AI isn't configured." }); return; }
@@ -213,9 +213,11 @@ export function registerTutorRoutes(app: express.Express): void {
     try {
       const history = typeof req.body?.history === "string" ? req.body.history.slice(-3000) : "";
       const language = isLangCode(req.body?.lang) && req.body.lang !== "en" ? languageName(req.body.lang) : "";
-      const out = await writeBoard({ exchange, board, subject, history, language }, tokens);
+      const early = req.body?.early === true; // written while Otto is still speaking: the board only, the checks and the record come with the pass after the turn
+      const out = await writeBoard({ exchange, board, subject, history, language, early }, tokens);
       const profile = req.session.profile || emptyProfile();
       addUsage(profile, tokens, "chat");
+      if (early) { await commit(req); res.json({ board: out.board }); return; }
       // What the exchange showed about the student feeds their concept record (Settings shows it; the voice is told it next session).
       try {
         const kinds = ["solved-unaided", "solved-after-hint", "solved-after-explanation", "mistake", "misconception", "recall", "recall-miss", "self-corrected", "transfer-success", "transfer-fail"];
