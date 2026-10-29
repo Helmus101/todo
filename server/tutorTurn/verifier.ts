@@ -22,7 +22,8 @@ export function affirmedStep(exchange: string): { student: string; tutor: string
     const prev = lines.slice(0, i).reverse().find((l) => /^Student:/i.test(l));
     if (!prev) return null;
     const student = prev.replace(/^Student:\s*/i, "");
-    return MATHISH.test(student) && student.split(/\s+/).length >= 2 ? { student, tutor } : null;
+    // A checkable claim has a number or an equals sign in it; a method choice ("use the quotient rule") or a half-heard phrase is not worth a correction.
+    return MATHISH.test(student) && /\d|=|\bequals?\b/i.test(student) && student.split(/\s+/).length >= 3 && !/\b(?:rule|method|approach|idea|formula|substitut\w*|common base)\b/i.test(student.replace(/\d+/g, "")) ? { student, tutor } : null;
   }
   return null;
 }
@@ -55,6 +56,9 @@ export async function verifyConfirmedStep(input: { exchange: string; history?: s
   if (!bad(a) || !bad(b)) return "";
   // A "correction" that is just what the student said is not a correction.
   const flat = (t: string) => t.toLowerCase().replace(/[^a-z0-9.]+/g, "");
+  // Two runs that both say "wrong" but disagree on what is right are guessing: stay silent.
+  const fa = flat(a!.correct_value), fb = flat(b!.correct_value);
+  if (!fa || !fb || !(fa === fb || fa.includes(fb) || fb.includes(fa))) return "";
   if (flat(a!.correct_value) === flat(hit.student) || flat(hit.student).includes(flat(a!.correct_value))) return "";
   return `VERIFIED: the step "${hit.student.slice(0, 160)}" that you just agreed with does not hold; it should be ${a!.correct_value}${a!.why ? ` (${a!.why})` : ""}`;
 }

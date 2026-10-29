@@ -538,6 +538,7 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
   // After each spoken exchange the board writer decides what goes on the paper (one at a time, in order).
   // `early`: the same pass while Otto is still speaking, on what has been said so far (whole sentences only), so the paper keeps up with the
   // voice. The pass after the turn repeats nothing: it sees the lines the early pass wrote.
+  const boardPassRef = useRef(100), lastFlagPassRef = useRef(0);
   const queueBoard = useCallback((turns: { who: "you" | "otto"; text: string }[], early: boolean) => {
     if (!turns.length) return;
     const inChat = early ? turnsRef.current.length : turns.length;
@@ -545,6 +546,7 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
     const forId = taskRef.current?.id; // lines belong to the session they were said in, even if it has ended or another has started
     const sessionTask = () => (taskRef.current?.id === forId ? taskRef.current : endedTaskRef.current?.id === forId ? endedTaskRef.current : null);
     boardQueueRef.current = boardQueueRef.current.then(async () => {
+      if (!early) boardPassRef.current += 1;
       const t = sessionTask();
       if (!t) return;
       try {
@@ -559,7 +561,9 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
         // walks the agreement back, once per claim.
         for (const claim of (("flags" in r && r.flags) || []).slice(0, 2)) {
           if (flaggedClaimsRef.current.has(claim) || liveRef.current.status !== "live") continue;
-          flaggedClaimsRef.current.add(claim);
+          // Walking back an agreement is rare by design: at most 2 a sitting and never twice within 6 passes, however sure a check sounds.
+          if (flaggedClaimsRef.current.size >= 2 || boardPassRef.current - lastFlagPassRef.current < 6) continue;
+          flaggedClaimsRef.current.add(claim); lastFlagPassRef.current = boardPassRef.current;
           if (claim.startsWith("VERIFIED:")) { liveRef.current.sendText(`[${sessionNoteTag}] (Private note for you, not from the student: a separate check recomputed the step you just agreed to, from the problem, and found it wrong. ${claim.slice(9).trim()}. Recompute that step yourself NOW. If it is truly wrong, say plainly and kindly that you were wrong to agree, and ask them to recheck that exact step; do not give them the corrected value. If your own recomputation shows it is actually right, say nothing about this note and carry on.)`); continue; }
           liveRef.current.sendText(`[${sessionNoteTag}] (Private note for you, not from the student: an automatic check read the step you just agreed to as the numbers ${claim}, and that does not hold. The check can mis-hear a spoken step, so FIRST recompute that exact step yourself from what the student really said and what is on the board. If it is truly wrong, say plainly that you were wrong to agree and ask them to recheck that exact step, without giving the corrected value. If it is actually right, say nothing about this note and carry on exactly as you were; never doubt a correct step, and never undo a correct confirmation.)`);
         }
