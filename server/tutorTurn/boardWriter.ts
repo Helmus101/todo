@@ -158,6 +158,23 @@ export function confirmedStudentStep(exchange: string): string {
   return "";
 }
 
+/** Is the problem the tutor just posed already on the board? Compared by the numbers in it: a new problem after a short board is NOT already there
+ *  just because some task line is, which is what used to leave a second problem (a system of equations after a log equation) off the paper. Pure. */
+export function problemOnBoard(question: string, board: { kind?: string; text?: string }[]): boolean {
+  const said = [...numbersSaid(question)].filter((n) => n > 1);
+  if (!said.length) return board.some((e) => e.kind === "given");
+  return board.some((e) => {
+    if (e.kind !== "given" || typeof e.text !== "string") return false;
+    const onBoard = new Set([...e.text.matchAll(/\d+(?:\.\d+)?/g)].map((m) => Number(m[0])));
+    return said.filter((n) => onBoard.has(n)).length / said.length >= 0.75;
+  });
+}
+
+/** The tutor says it is putting something on the board (or that it is there). Pure. */
+export function promisesBoard(tutorText: string): boolean {
+  return /\b(?:put|putting|write|writing|wrote|written|draw|drawing|drew|add|adding|added|up)\b[^.?!]{0,40}\bboard\b|\bon the board\b|\bon the paper\b|\bon the whiteboard\b|\bsur le tableau\b/i.test(String(tutorText || ""));
+}
+
 /** The tutor said something worth keeping (a definition, a rule, a worked example, a formula): numbers or maths with an explaining word. */
 export function tutorExplained(exchange: string): boolean {
   const tutor = exchange.split("\n").filter((l) => /^Tutor:/i.test(l)).map((l) => l.replace(/^Tutor:\s*/i, "")).join(" ");
@@ -206,15 +223,19 @@ export async function writeBoard(input: { exchange: string; board: BoardEntry[];
   // nothing was written (the model was cautious, or the app rejected the ops); (2) the tutor posed a problem and no task line came back.
   // While Otto is still speaking (early) only the problem the tutor just posed is chased: it is the line the student needs in front of them first.
   const needExplain = !input.early && !out.board.length && tutorExplained(input.exchange);
-  const needProblem = posesProblem(openQuestion) && !out.board.some((e) => e.kind === "given") && !input.board.slice(-4).some((e) => e.kind === "given"); // a step of the problem already on the board is not a new problem
+  const needProblem = posesProblem(openQuestion) && !problemOnBoard(openQuestion, [...out.board, ...input.board.slice(-12)]);
+  // The tutor says it is putting something on the board and nothing came out: write the problem or step it means, from the earlier conversation.
+  const tutorLines = input.exchange.split("\n").filter((l) => /^Tutor:/i.test(l)).join(" ");
+  const needPromised = !input.early && !out.board.length && !needProblem && promisesBoard(tutorLines);
   const stepSaid = confirmedStudentStep(input.exchange);
   const needStep = !input.early && !!stepSaid && !out.board.some((e) => ["gap", "result", "formula", "insight"].includes(String(e.kind)));
   const needPicture = !input.early && canDraw && wantsPicture(input.exchange) && !out.board.some((e) => ["graph", "svg", "diagram", "geometry", "flow", "table", "numberline"].includes(String(e.kind)));
-  if (needExplain || needProblem || needPicture || needStep) {
+  if (needExplain || needProblem || needPicture || needStep || needPromised) {
     const why = out.dropped.length ? ` The app rejected these ops: ${out.dropped.slice(0, 3).join("; ")}.` : "";
     const asks = [
       needExplain ? "(You wrote nothing, but the tutor explained something worth keeping." + why + " Write the definition or rule and the worked example the tutor gave as board lines now, never the question it asked.)" : "",
       needStep ? `The tutor just confirmed the student's step ("${stepSaid.slice(0, 160)}"). Write that step on the board now as a clean line of correct maths (fix the speech-recognition wording into proper notation; never write anything the student has not said, and never the step after it).` : "",
+      needPromised ? "The tutor said it is putting something on the board (or that it is there) but nothing was written. Look at EARLIER IN THIS SESSION and the board: write the problem or step it means now (the most recent problem the tutor posed, as a task line, kind \"given\", without its answer), unless it is already on the board." : "",
       needPicture ? "The exchange is about graphing or a picture: DRAW it now (a graph op with the real function, or an svg / geometry / flow op), never leave it as words." : "",
       needProblem ? `The tutor posed a problem and you did not write it: write the problem itself now as a task line (kind "given") in LaTeX, without its answer: ${openQuestion.slice(0, 300)}` : "",
     ].filter(Boolean).join(" ");

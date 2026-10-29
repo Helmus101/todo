@@ -20,7 +20,8 @@
     "tutor:eval": "tsx scripts/tutor-eval.mjs",
     "test:load": "tsx tests/load-sim.mjs",
     "test:smoke": "tsx tests/smoke.mjs",
-    "eval:tutor": "tsx scripts/tutor-eval.ts"
+    "eval:tutor": "tsx scripts/tutor-eval.ts",
+    "sim:tutor": "tsx scripts/tutor-sim.ts"
   },
   "dependencies": {
     "@blockshub/pawnote-lts": "^1.6.4",

@@ -787,6 +787,13 @@ check("structured settings survive merge", pm.responseStyle === "concise");
   check("the board is written while Otto speaks: a pass on whole sentences said so far, throttled, with the full pass after the turn", /earlyBoard\(you, otto\)/.test(ts) && /Date\.now\(\) - e\.at < 3500/.test(ts) && /queueBoard\(turnsRef\.current\.splice\(0\), false\)/.test(ts) && /early \? turnsRef\.current\.length : turns\.length/.test(ts));
   check("an early pass skips the second-opinion check, the concept record and the notebook (they belong to the pass after the turn), and only chases the problem the tutor posed", /input\.early \? Promise\.resolve/.test(bwSrc) && /!input\.early && !out\.board\.length && tutorExplained/.test(bwSrc) && /if \(early\) \{ await commit\(req\); res\.json\(\{ board: out\.board \}\); return; \}/.test(rt));
 }
+{
+  const bw = await import("../server/tutorTurn/boardWriter.ts");
+  const sysQ = "Solve this for x and y: log base 2 of x plus log base 4 of y equals 4, and log base 4 of x plus log base 2 of y equals 5.";
+  check("board: a NEW problem is not 'already on the board' just because an older task line is (compared by its numbers)", !bw.problemOnBoard(sysQ, [{ kind: "focus", text: "Logarithms" }, { kind: "given", text: "Solve $\\log_3 x + \\log_3 (x-8) = 2$" }, { kind: "result", text: "$x = 9$" }]) && bw.problemOnBoard(sysQ, [{ kind: "given", text: "Solve $\\log_2 x + \\log_4 y = 4$ and $\\log_4 x + \\log_2 y = 5$" }]));
+  check("board: a posed problem followed by a question is an open task (the problem is not lost behind the closing question)", /Solve this for x and y/.test(bw.splitOpenQuestion("Tutor: Let's try a system. " + sysQ + " What is your approach to start?").openQuestion) && bw.posesProblem(bw.splitOpenQuestion("Tutor: Let's try a system. " + sysQ + " What is your approach to start?").openQuestion));
+  check("board: the tutor promising to put something on the board is recognised, in a few phrasings", ["Let me put the system on the board for you.", "It's on the board now.", "I'll write that up on the board.", "Let me draw it on the whiteboard."].every((t) => bw.promisesBoard(t)) && !bw.promisesBoard("What do you notice about the signs?"));
+}
 const pmLang = mergeProfileStates(
   { ...emptyProfile(), language: "en", languageSetAt: newer },
   { ...emptyProfile(), language: "fr" }, // stale session, never itself touched the language toggle
