@@ -172,14 +172,14 @@ export function problemOnBoard(question: string, board: { kind?: string; text?: 
  *  ends in "= <a number nobody has said>" is the answer. Pure. */
 export function answersOpenQuestion(line: string, question: string, known: Set<number>): boolean {
   const qn = [...new Set([...String(plainDigits(question)).matchAll(/\d+(?:\.\d+)?/g)].map((m) => Number(m[0])))].filter((n) => n !== 1 && n !== 0);
-  if (qn.length < 2 && !/[=]/.test(question)) return false;
   const text = plainDigits(line);
   const eq = text.lastIndexOf("=");
   if (eq < 0) return false;
   const rhs = [...text.slice(eq + 1).matchAll(/-?\d+(?:\.\d+)?/g)].map((m) => Number(m[0]));
   if (!rhs.length) return false;
   const lhsNums = new Set([...text.slice(0, eq).matchAll(/\d+(?:\.\d+)?/g)].map((m) => Number(m[0])));
-  const usesQuestion = qn.length >= 2 ? qn.every((n) => lhsNums.has(n)) : false;
+  // A question worded in words ("what is two to the power of four?") names no digits: any line that computes from numbers already said into a value nobody has said is the answer.
+  const usesQuestion = qn.length >= 2 ? qn.every((n) => lhsNums.has(n)) : lhsNums.size > 0 && [...lhsNums].every((n) => n <= 1 || known.has(n));
   const value = rhs[rhs.length - 1];
   return usesQuestion && !known.has(value) && !qn.includes(value);
 }
