@@ -1180,6 +1180,10 @@ export function asksForSeveralValues(question: string): boolean {
  *  extends the first ("…; supply ↓ ⟹ …" is new content, spec: a second summary is its own line), so anything over
  *  half again as long as what's there counts as new. Short strings (< 3 content words) never match (similarity). */
 export function nearDuplicateLine(existing: string, text: string): boolean {
+  // Two lines with different numbers are different lines, however alike they look: a new log equation after an old one has the same shape and
+  // different numbers, and used to be dropped as a "near-duplicate" (reported live: the next problem never reached the board).
+  const nums = (s: string) => (String(s).match(/\d+(?:\.\d+)?/g) || []).join(",");
+  if (nums(existing) !== nums(text)) return false;
   if (similarity(existing, text) < 0.75) return false;
   return text.length <= String(existing).length * 1.5;
 }

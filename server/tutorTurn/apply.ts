@@ -97,6 +97,9 @@ export function applyOps(ops: BoardOp[], c: ApplyContext): Applied {
       case "topic": {
         const text = String(o.text || "").trim().slice(0, 140);
         if (!text) { drop("empty header"); break; }
+        // The same heading again ("Logarithmic Equations" four times in one session) adds nothing.
+        const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9àâçéèêëîïôûùüÿñæœ ]+/g, " ").replace(/\s+/g, " ").trim();
+        if (all().slice(-14).some((e) => e.kind === "focus" && (norm(String(e.text || "")) === norm(text) || similarity(String(e.text || ""), text) >= 0.9))) { drop("that heading is already on the board"); break; }
         add({ id: randomUUID(), text, kind: "focus", owner: "otto", at: now() } as BoardEntry, o.cue);
         break;
       }

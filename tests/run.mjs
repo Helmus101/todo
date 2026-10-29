@@ -685,7 +685,7 @@ check("structured settings survive merge", pm.responseStyle === "concise");
   check("question bank: no scheme or question uses a backtick or a template placeholder (it is pasted into a prompt)", QUESTION_BANK.every((q) => !/[`]|\$\{/.test(q.question + q.scheme.join(""))));
   check("question bank: subject routing (Math AA HL, Math AI SL, Physics, Chemistry, Economics, Biology; none for History or TOK)", bankSubjectOf("Math AA HL") === "math-aa" && bankSubjectOf("Math AI SL") === "math-ai" && bankSubjectOf("Physics HL") === "physics" && bankSubjectOf("Chemistry SL") === "chemistry" && bankSubjectOf("Economics SL") === "economics" && bankSubjectOf("Biology HL") === "biology" && bankSubjectOf("History HL") === undefined && bankSubjectOf("Theory of Knowledge") === undefined);
   check("question bank: an SL student is never given an HL-only question, an HL student gets HL and shared ones", bankQuestionsFor("Math AA SL").every((q) => q.level !== "HL") && bankQuestionsFor("Math AA HL").some((q) => q.level === "HL") && bankQuestionsFor("Physics SL").every((q) => q.level !== "HL"));
-  check("question bank: the prompt block marks the schemes private and the questions as practice, and is part of ibBlock for banked subjects only", /PRIVATE/.test(bankBlock("Physics HL")) && /not real past-paper/.test(bankBlock("Physics HL")) && ibBlock("Physics HL").includes("[phys-projectile]") && !ibBlock("History HL").includes("VERIFIED PRACTICE QUESTIONS"));
+  check("question bank: the prompt block marks the schemes private and the questions as practice, and is part of ibBlock for banked subjects only", /PRIVATE/.test(bankBlock("Physics HL")) && /not real past-paper/.test(bankBlock("Physics HL")) && ibBlock("Physics HL").includes("A ball is kicked from level ground") && !ibBlock("History HL").includes("VERIFIED PRACTICE QUESTIONS"));
 }
 {
   const tm = await import("../shared/tutorMemory.ts");
@@ -793,6 +793,21 @@ check("structured settings survive merge", pm.responseStyle === "concise");
   check("board: a NEW problem is not 'already on the board' just because an older task line is (compared by its numbers)", !bw.problemOnBoard(sysQ, [{ kind: "focus", text: "Logarithms" }, { kind: "given", text: "Solve $\\log_3 x + \\log_3 (x-8) = 2$" }, { kind: "result", text: "$x = 9$" }]) && bw.problemOnBoard(sysQ, [{ kind: "given", text: "Solve $\\log_2 x + \\log_4 y = 4$ and $\\log_4 x + \\log_2 y = 5$" }]));
   check("board: a posed problem followed by a question is an open task (the problem is not lost behind the closing question)", /Solve this for x and y/.test(bw.splitOpenQuestion("Tutor: Let's try a system. " + sysQ + " What is your approach to start?").openQuestion) && bw.posesProblem(bw.splitOpenQuestion("Tutor: Let's try a system. " + sysQ + " What is your approach to start?").openQuestion));
   check("board: the tutor promising to put something on the board is recognised, in a few phrasings", ["Let me put the system on the board for you.", "It's on the board now.", "I'll write that up on the board.", "Let me draw it on the whiteboard."].every((t) => bw.promisesBoard(t)) && !bw.promisesBoard("What do you notice about the signs?"));
+}
+{
+  const vf = await import("../server/tutorTurn/verifier.ts");
+  const nm = await import("../server/tutorTurn/numbers.ts");
+  const { nearDuplicateLine } = await import("../server/tutor.ts");
+  const bw = await import("../server/tutorTurn/boardWriter.ts");
+  check("verifier: a confirmation anywhere in the tutor's reply is found (not only at its start), a hedge is not, and the student's maths line is what is checked", vf.affirmedStep("Student: I got y = 1.2 + 0.8x now\nTutor: Check it against the data. That's the right line.")?.student.includes("1.2") && !vf.affirmedStep("Student: 3 squared is 9\nTutor: Hmm, not quite right.") && !vf.affirmedStep("Student: maybe four\nTutor: Check that again.") && !vf.affirmedStep("Student: hello there\nTutor: Yes, welcome."));
+  check("numbers said: hyphenated tens and 'three point five' are understood", nm.numbersSaid("forty-five").has(45) && nm.numbersSaid("three point five").has(3.5) && nm.numbersSaid("twenty one").has(21));
+  check("a new problem with the same shape but different numbers is not a near-duplicate of an old line", !nearDuplicateLine("Solve for $x$: $\\log_2(x + 3) + \\log_2(x - 1) = 3$", "Solve for $x$: $\\log_3(x) + 2\\log_x(3) = 3$") && nearDuplicateLine("Solve for $x$: $\\log_2(x + 3) = 3$", "Solve for x: $\\log_2(x+3) = 3$"));
+  check("the same heading is not written twice (a topic op repeats)", /that heading is already on the board/.test(readFileSync(new URL("../server/tutorTurn/apply.ts", import.meta.url), "utf8")));
+  check("posesProblem: a new problem is one, a follow-up question about the work under way is not", bw.posesProblem("Solve this for x and y: log base 2 of x plus log base 4 of y equals 4, and log base 4 of x plus log base 2 of y equals 5.") && bw.posesProblem("What is the derivative of x squared times e to the x?") && !bw.posesProblem("So with the 8 in there, what do you do next?") && !bw.posesProblem("Before the formula — does that quadratic factorise? Try to spot two numbers that multiply to -11 and add to 2.") && !bw.posesProblem("Now simplify root 72, and then tell me the two roots."));
+  check("a task line may only hold numbers that were said: the writer filters the others", /contains numbers nobody said/.test(readFileSync(new URL("../server/tutorTurn/boardWriter.ts", import.meta.url), "utf8")) && /verifyConfirmedStep/.test(readFileSync(new URL("../server/tutorTurn/boardWriter.ts", import.meta.url), "utf8")));
+  const { findBankQuestion, QUESTION_BANK } = await import("../shared/ibQuestionBank.ts");
+  const q = QUESTION_BANK.find((x) => x.id === "ai-regression");
+  check("the bank question a conversation is about is found from its wording, so its scheme can referee", findBankQuestion(`Tutor: Here is one. ${q.question.replace(/\n/g, " ")}`, "Math AI SL")?.id === "ai-regression" && !findBankQuestion("Tutor: what is the derivative of x squared?", "Math AI SL"));
 }
 const pmLang = mergeProfileStates(
   { ...emptyProfile(), language: "en", languageSetAt: newer },

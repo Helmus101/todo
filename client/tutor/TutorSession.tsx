@@ -558,6 +558,7 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
         for (const claim of (("flags" in r && r.flags) || []).slice(0, 2)) {
           if (flaggedClaimsRef.current.has(claim) || liveRef.current.status !== "live") continue;
           flaggedClaimsRef.current.add(claim);
+          if (claim.startsWith("VERIFIED:")) { liveRef.current.sendText(`[${sessionNoteTag}] (Private note for you, not from the student: a separate check recomputed the step you just agreed to, from the problem, and found it wrong. ${claim.slice(9).trim()}. Recompute that step yourself NOW. If it is truly wrong, say plainly and kindly that you were wrong to agree, and ask them to recheck that exact step; do not give them the corrected value. If your own recomputation shows it is actually right, say nothing about this note and carry on.)`); continue; }
           liveRef.current.sendText(`[${sessionNoteTag}] (Private note for you, not from the student: an automatic check read the step you just agreed to as the numbers ${claim}, and that does not hold. The check can mis-hear a spoken step, so FIRST recompute that exact step yourself from what the student really said and what is on the board. If it is truly wrong, say plainly that you were wrong to agree and ask them to recheck that exact step, without giving the corrected value. If it is actually right, say nothing about this note and carry on exactly as you were; never doubt a correct step, and never undo a correct confirmation.)`);
         }
         if (!r.board?.length) return;

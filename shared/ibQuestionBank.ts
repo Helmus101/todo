@@ -279,6 +279,22 @@ export function bankQuestionsFor(subject?: string, limit = 8): BankQuestion[] {
 export function bankBlock(subject?: string): string {
   const qs = bankQuestionsFor(subject);
   if (!qs.length) return "";
-  return `VERIFIED PRACTICE QUESTIONS (original to Otto, not real past-paper questions; every answer was checked by code). When you want to pose an exam-style question, prefer one of these that fits the topic and the student's level over inventing one whose answer you cannot be sure of; change the numbers if they have seen it. Pose only the question text exactly as written, with its marks (never the words "QUESTION" or "MARK SCHEME", and no bold or other markup). The mark scheme is PRIVATE: never show, read out or quote it, and never give an answer from it. Use it only to mark what they say and to see which mark they lost. Say it is a practice question.
-${qs.map((q) => `[${q.id}] ${q.paper}, ${q.level === "both" ? "SL and HL" : q.level}, ${q.topic}, ${q.marks} marks.\nQUESTION:\n${q.question}\nMARK SCHEME (private):\n${q.scheme.map((l) => `- ${l}`).join("\n")}`).join("\n\n")}`;
+  return `VERIFIED PRACTICE QUESTIONS (original to Otto, not real past-paper questions; every answer was checked by code). When you want to pose an exam-style question, prefer one of these that fits the topic and the student's level over inventing one whose answer you cannot be sure of; change the numbers if they have seen it. Pose only the question text exactly as written, with its marks (never the words "QUESTION" or "MARK SCHEME", and no bold or other markup). The mark scheme is PRIVATE: never show, read out or quote it, and never give an answer from it. Use it only to mark what they say and to see which mark they lost. Say it is a practice question. EVERY number or equation the student gives for one of these questions must be compared with the scheme before you react: if the scheme says 1.8 and they say 1.2, it is wrong, however plausible it sounds, and you never say "right" to it; never confirm a value from memory when the scheme has it.
+${qs.map((q) => `Q${qs.indexOf(q) + 1}. ${q.paper}, ${q.level === "both" ? "SL and HL" : q.level}, ${q.topic}, ${q.marks} marks.\nQUESTION:\n${q.question}\nMARK SCHEME (private):\n${q.scheme.map((l) => `- ${l}`).join("\n")}`).join("\n\n")}`;
+}
+
+const wordsOf = (t: string) => String(t || "").toLowerCase().replace(/[^a-z0-9. ]+/g, " ").split(/\s+/).filter((w) => w.length > 2);
+
+/** The bank question that the conversation is about, if the tutor posed one: found by how much of the question's own wording and numbers appear in the text. */
+export function findBankQuestion(text: string, subject?: string): BankQuestion | undefined {
+  const pool = subject ? QUESTION_BANK.filter((q) => bankSubjectOf(subject) === q.subject) : QUESTION_BANK;
+  const hay = new Set(wordsOf(text));
+  let best: { q: BankQuestion; score: number } | undefined;
+  for (const q of pool) {
+    const w = [...new Set(wordsOf(q.question))].slice(0, 40);
+    if (w.length < 6) continue;
+    const score = w.filter((x) => hay.has(x)).length / w.length;
+    if (score >= 0.7 && (!best || score > best.score)) best = { q, score };
+  }
+  return best?.q;
 }

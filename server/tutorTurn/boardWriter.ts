@@ -7,6 +7,9 @@ import { extractJsonObject, normalizeTurn, salvageTurn } from "../../shared/tuto
 import { boardSurfaceBlock } from "../boardEvents.ts";
 import { createTutorChat, usageOf } from "../claude.ts";
 import { applyOps } from "./apply.ts";
+import { numbersSaid, claimIsGrounded } from "./numbers.ts";
+import { verifyConfirmedStep } from "./verifier.ts";
+export { numbersSaid, claimIsGrounded };
 import { boardLineIsWrong, stripUnaskedUnit } from "../boardMath.ts";
 import { DRAW_REFERENCE, TURN_PROMPT } from "./prompt.ts";
 
@@ -78,24 +81,6 @@ export function confirmedClaimIn(exchange: string): { student: string; tutor: st
   return null;
 }
 
-const NUMBER_WORDS: Record<string, number> = { zero: 0, one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10, eleven: 11, twelve: 12, thirteen: 13, fourteen: 14, fifteen: 15, sixteen: 16, seventeen: 17, eighteen: 18, nineteen: 19, twenty: 20, thirty: 30, forty: 40, fifty: 50, sixty: 60, seventy: 70, eighty: 80, ninety: 90, hundred: 100, thousand: 1000, half: 2, third: 3, quarter: 4, fifth: 5, squared: 2, cubed: 3, un: 1, deux: 2, trois: 3, quatre: 4, cinq: 5, six_: 6, sept: 7, huit: 8, neuf: 9, dix: 10 };
-
-/** Every number the student actually said, as digits or words ("nine", "squared" counts as 2), so a transcribed claim can be held to it. Pure. */
-export function numbersSaid(text: string): Set<number> {
-  const out = new Set<number>();
-  for (const m of String(text || "").matchAll(/\d+(?:[.,]\d+)?/g)) out.add(Number(m[0].replace(",", ".")));
-  for (const w of String(text || "").toLowerCase().match(/[a-zà-ÿ]+/g) || []) if (w in NUMBER_WORDS) out.add(NUMBER_WORDS[w]);
-  return out;
-}
-
-/** A transcribed claim is only trusted when every number in it was said by the student: a model that "transcribes" a number nobody said would
- *  otherwise make the second opinion accuse the tutor, and the student, of an error that is not there. Pure. */
-export function claimIsGrounded(claim: string, said: string): boolean {
-  const spoken = numbersSaid(said);
-  const nums = [...String(claim || "").matchAll(/\d+(?:\.\d+)?/g)].map((m) => Number(m[0]));
-  return nums.length > 0 && nums.every((n) => spoken.has(n) || n === 1 || n === 0);
-}
-
 /** The student claims (as numeric LaTeX equalities) that are arithmetically false although the tutor agreed. [] when fine or unreadable. */
 export async function checkStudentClaims(exchange: string, tokens: { in: number; out: number; cachedIn: number }): Promise<string[]> {
   const hit = confirmedClaimIn(exchange);
@@ -120,11 +105,23 @@ export function wantsPicture(exchange: string): boolean {
   return /\b(?:graph(?:ing|ed)?|plot(?:ting|ted)?|sketch|draw(?:ing)?|curve|parabola|diagram|picture|visuali[sz]e|number line|timeline|triangle|circle|cycle|flow ?chart)\b/i.test(exchange);
 }
 
-/** The closing question poses a concrete problem (maths in it, or an instruction like "rewrite / evaluate / solve / simplify / expand"). Pure. */
+/** The tutor poses a NEW concrete problem (an introducing cue such as "solve", "find", "try this", "here's one", "next question", with real maths in it). A follow-up
+ *  question about the problem already under way ("what do you do next?", "does that quadratic factorise?") is not a new problem and must not
+ *  produce a task line. Pure. */
 export function posesProblem(question: string): boolean {
   const q = String(question || "");
-  if (q.split(/\s+/).length < 4) return false;
-  return /\$|\d|\b(?:log|ln|sin|cos|tan|derivative|integral|equation|fraction|square root|squared|cubed|power|base)\b/i.test(q) && /\b(?:rewrite|evaluate|solve|simplify|expand|factori[sz]e|find|work out|calculate|compute|what (?:is|would|does|do)|how (?:would|do)|can you|try)\b/i.test(q);
+  if (q.split(/\s+/).length < 6) return false;
+  const INTRO = /\b(?:solve|find|calculate|compute|determine|evaluate|simplify|expand|factori[sz]e|prove|show that|differentiate|integrate|sketch|work out|rewrite|let'?s try|here'?s (?:one|a|the|another)|try this|next (?:one|question|problem)|new (?:one|question|problem)|another (?:one|question|problem)|how about|consider|suppose|given that|what (?:is|'s|would be) the (?:value|sum|product|derivative|integral|probability|mean|speed|force|energy|logarithm|log|limit|area|volume|gradient)|a (?:ball|particle|car|object|cell|company|firm|sample|solution|bag|box|sequence|function)\b)/gi;
+  const MATH = /\d+(?:\.\d+)?|\$|\b(?:log|ln|sin|cos|tan|root|squared|cubed|equals?|over|plus|minus|times|derivative|integral|equation|probability|limit|mean|force|speed|energy|mass|velocity)\b|=/gi;
+  const ANAPHOR = /\b(?:that|those|these|them|both|your|it|the (?:quadratic|equation|roots?|expression|result|answer|two|first|second|next|last|previous|step))\b/i;
+  // A problem is posed when an introducing cue is followed, straight away, by a self-contained statement made of maths (not by "that", "it" or "the roots",
+  // which point back at the work already under way).
+  for (const m of q.matchAll(INTRO)) {
+    const words = q.slice((m.index || 0) + m[0].length).split(/\s+/);
+    const maths = (`${m[0]} ${words.slice(0, 20).join(" ")}`.match(MATH) || []).length;
+    if (maths >= 3 && !ANAPHOR.test(words.slice(0, 8).join(" "))) return true;
+  }
+  return false;
 }
 
 /** The tutor's last line ends in a question: split it off, so "what is log_5 25?" is never turned into "log_5 25 = 2" on the board. Pure. */
@@ -184,7 +181,10 @@ export function tutorExplained(exchange: string): boolean {
 
 export async function writeBoard(input: { exchange: string; board: BoardEntry[]; subject?: string; history?: string; language?: string; early?: boolean }, tokens: { in: number; out: number; cachedIn: number }): Promise<{ board: BoardEntry[]; dropped: string[]; concepts: any[]; remember?: any[]; flags: string[] }> {
   // Runs alongside the board call, so it adds no waiting: wrong numeric claims the tutor just agreed to (see checkStudentClaims).
-  const flagsP = input.early ? Promise.resolve([] as string[]) : checkStudentClaims(input.exchange, tokens).catch((): string[] => []);
+  const flagsP: Promise<string[]> = input.early ? Promise.resolve([] as string[]) : Promise.all([
+    checkStudentClaims(input.exchange, tokens).catch((): string[] => []),
+    verifyConfirmedStep({ exchange: input.exchange, history: input.history, board: input.board, subject: input.subject }, tokens).then((f) => (f ? [f] : [])).catch((): string[] => []),
+  ]).then(([a, b]) => [...a, ...b]);
   const canDraw = true; // Unlimited visual artifact capabilities across all subjects
   const system = BOARD_WRITER_PROMPT + (input.language ? `\n\nLANGUAGE: the student works in ${input.language}. Write every board line, heading, option and label in ${input.language} (maths stays LaTeX). Op names and kinds stay as specified.` : "") + (canDraw ? DRAW_REFERENCE : "") + `\n\nTHE BOARD (margin numbers #n are what you point at)${boardSurfaceBlock(input.board, []) || ": empty."}`;
   // The tutor's closing question is still UNANSWERED: it is shown to the writer separately, so the working for it is never mistaken for something the student reached.
@@ -211,11 +211,20 @@ export async function writeBoard(input: { exchange: string; board: BoardEntry[];
       if (wrong) { applied.dropped.push(`line: its arithmetic does not hold, not written: ${String(e.text).slice(0, 80)}`); console.warn(`[live] board line dropped, arithmetic does not hold: ${String(e.text).slice(0, 120)}`); }
       return !wrong;
     });
+    // A task line may only contain numbers that were actually said or are already on the board: a writer that "tidies" a problem and changes a
+    // number (reported in simulation: "3.5 hours" became "5 hours") would put a different problem in front of the student.
+    const known = numbersSaid(`${input.exchange} ${input.history || ""} ${input.board.map((e) => e.text || "").join(" ")}`);
+    const grounded = board.filter((e) => {
+      if (e.kind !== "given" || typeof e.text !== "string") return true;
+      const bad = [...e.text.replace(/\\[a-zA-Z]+/g, " ").matchAll(/\d+(?:\.\d+)?/g)].map((m) => Number(m[0])).filter((n) => n > 1 && !known.has(n));
+      if (bad.length) { applied.dropped.push(`given: it contains numbers nobody said (${bad.join(", ")}), not written: ${String(e.text).slice(0, 80)}`); console.warn(`[live] task line dropped, number not said (${bad.join(", ")}): ${String(e.text).slice(0, 100)}`); return false; }
+      return true;
+    });
     // The tutor is asking about the unit: a unit the student has not said must not already be on the board.
     const askedUnit = /\bunits?\b/i.test(openQuestion);
     const finalBoard = askedUnit
-      ? board.map((e) => (typeof e.text === "string" && ["result", "formula", "step", "given"].includes(String(e.kind)) ? { ...e, text: stripUnaskedUnit(e.text, studentWords.join(" ")) } : e))
-      : board;
+      ? grounded.map((e) => (typeof e.text === "string" && ["result", "formula", "step", "given"].includes(String(e.kind)) ? { ...e, text: stripUnaskedUnit(e.text, studentWords.join(" ")) } : e))
+      : grounded;
     return { board: finalBoard, dropped: applied.dropped, concepts };
   };
   let out = await once();
@@ -237,7 +246,7 @@ export async function writeBoard(input: { exchange: string; board: BoardEntry[];
       needStep ? `The tutor just confirmed the student's step ("${stepSaid.slice(0, 160)}"). Write that step on the board now as a clean line of correct maths (fix the speech-recognition wording into proper notation; never write anything the student has not said, and never the step after it).` : "",
       needPromised ? "The tutor said it is putting something on the board (or that it is there) but nothing was written. Look at EARLIER IN THIS SESSION and the board: write the problem or step it means now (the most recent problem the tutor posed, as a task line, kind \"given\", without its answer), unless it is already on the board." : "",
       needPicture ? "The exchange is about graphing or a picture: DRAW it now (a graph op with the real function, or an svg / geometry / flow op), never leave it as words." : "",
-      needProblem ? `The tutor posed a problem and you did not write it: write the problem itself now as a task line (kind "given") in LaTeX, without its answer: ${openQuestion.slice(0, 300)}` : "",
+      needProblem ? `The tutor posed a problem and you did not write it: write the problem itself now as a task line (kind "given") in LaTeX, without its answer, using EXACTLY the numbers the tutor said and no others:${why} ${openQuestion.slice(0, 400)}` : "",
     ].filter(Boolean).join(" ");
     const second = await once(`${asks} Return the same JSON shape.`, out.board);
     if (second.board.length) { const all = [...out.board, ...second.board]; out = { board: [...all.filter((e) => e.kind === "focus"), ...all.filter((e) => e.kind !== "focus")], dropped: out.dropped, concepts: out.concepts.length ? out.concepts : second.concepts }; }
