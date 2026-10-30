@@ -261,7 +261,17 @@ async function withTutorSlot<T>(deadline: number | undefined, fn: () => Promise<
 }
 export const tutorLoad = () => ({ active: tutorActive, waiting: tutorWaiters.length });
 
+// TUTOR_MIN_INTERVAL_MS (tests and simulations only): space tutor model calls apart so a free-tier per-minute limit is not hit by a burst.
+let pacedUntil = 0;
+async function pace(): Promise<void> {
+  const gap = Number(process.env.TUTOR_MIN_INTERVAL_MS) || 0;
+  if (!gap) return;
+  const at = Math.max(Date.now(), pacedUntil);
+  pacedUntil = at + gap;
+  if (at > Date.now()) await new Promise((r) => setTimeout(r, at - Date.now()));
+}
 export async function createTutorChat(params: any, fast: boolean, opts?: { deadline?: number; deepseekOnly?: boolean }): Promise<any> {
+  await pace();
   return withTutorSlot(opts?.deadline, () => createTutorChatInner(params, fast, opts));
 }
 
