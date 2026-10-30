@@ -538,7 +538,7 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
   // After each spoken exchange the board writer decides what goes on the paper (one at a time, in order).
   // `early`: the same pass while Otto is still speaking, on what has been said so far (whole sentences only), so the paper keeps up with the
   // voice. The pass after the turn repeats nothing: it sees the lines the early pass wrote.
-  const boardPassRef = useRef(100), lastFlagPassRef = useRef(0);
+  const boardPassRef = useRef(100), lastFlagPassRef = useRef(0), boardBackoffRef = useRef(0);
   const queueBoard = useCallback((turns: { who: "you" | "otto"; text: string }[], early: boolean) => {
     if (!turns.length) return;
     const inChat = early ? turnsRef.current.length : turns.length;
@@ -555,7 +555,10 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
         // A slow board call must never hold up the ones behind it: after 40 s it is given up on.
         const callBoard = () => Promise.race([api.liveBoard(exchangeText(turns), lean, t.sourceSubject, exchangeText((t.chat || []).slice(-14, Math.max(0, (t.chat || []).length - inChat)).map((m) => ({ who: m.role === "user" ? "you" as const : "otto" as const, text: String(m.text || "").slice(0, 400) }))), getLanguage(), early), new Promise<{ board: any[] }>((_, rej) => setTimeout(() => rej(new Error("board timeout")), 40_000))]);
         // One quiet retry: a slow or failed pass must not leave the paper behind the conversation (the problem just posed would never appear).
-        const r = await callBoard().catch(async (e: any) => { if (e?.status === 429) throw e; await new Promise((res) => setTimeout(res, 1200)); return callBoard(); });
+        // While the provider is failing (502), the early passes stop and nothing is retried twice: they only burn quota and flood the console.
+        if (early && Date.now() < boardBackoffRef.current) return;
+        const r = await callBoard().catch(async (e: any) => { if (e?.status === 429) throw e; if (early || Date.now() < boardBackoffRef.current) throw e; await new Promise((res) => setTimeout(res, 1200)); return callBoard(); });
+        boardBackoffRef.current = 0;
         setBoardNote(null);
         // Second opinion: the tutor just agreed to a numeric step that does not hold (checked in code). Tell it privately so it
         // walks the agreement back, once per claim.
@@ -575,7 +578,7 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
         setLocalBoard(cur.id, merged, userId);
         if (taskRef.current?.id === cur.id) taskRef.current = { ...cur, board: merged };
         setTask((prev) => (prev && prev.id === cur.id ? { ...prev, board: merged } : prev));
-      } catch (e: any) { setBoardNote(e?.status === 429 ? "Today's board limit is reached — the voice still works." : "The board couldn't be updated just now."); }
+      } catch (e: any) { if (e?.status === 502 || e?.status === 503) boardBackoffRef.current = Date.now() + 45_000; setBoardNote(e?.status === 429 ? "Today's board limit is reached — the voice still works." : "The board couldn't be updated just now."); }
     }).finally(() => { setBoardPending((n) => Math.max(0, n - 1)); setBoardPromised(false); });
   }, [userId]);
   const onLiveTurnComplete = useCallback(() => { queueBoard(turnsRef.current.splice(0), false); earlyRef.current = { len: 0, at: 0, turn: earlyRef.current.turn + 1 }; }, [queueBoard]);
