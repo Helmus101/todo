@@ -217,7 +217,7 @@ export async function writeBoard(input: { exchange: string; board: BoardEntry[];
   const { finished, openQuestion } = splitOpenQuestion(input.exchange.slice(0, 4000));
   // toolMode: the tutor writes the board itself (write_board). This pass then records only what the tutor may have missed: the student's own
   // working, and pictures. Problems, rules, explanations and corrections are the tutor's.
-  const toolNote = input.toolMode ? "\n\nTHE TUTOR WRITES THE BOARD ITSELF in this session. You only add (a) a drawing the exchange needs (graph, diagram, number line, table, multiple-choice options), and (b) a NEW problem the tutor just posed out loud that is not on the board (as a task line, kind \"given\", without its answer). Never write the student's working, a heading, rule, formula, definition or explanation: those are the tutor's." : "";
+  const toolNote = input.toolMode ? "\n\nTHE TUTOR WRITES THE BOARD ITSELF in this session. You only add (a) a drawing the exchange needs (graph, diagram, number line, table, multiple-choice options), (b) a step or result the STUDENT said and the tutor confirmed that is not on the board yet (the tutor wrote nothing this time), and (c) a NEW problem the tutor just posed out loud that is not on the board (as a task line, kind \"given\", without its answer). Never write a heading, rule, formula, definition or explanation, and never a step the student has not said yet: those are the tutor's." : "";
   const user = `${input.subject ? `Subject: ${input.subject}\n` : ""}${input.history ? `EARLIER IN THIS SESSION (context only: it tells you what a short answer like "two, right?" refers to; do NOT rewrite what is already on the board):\n${input.history.slice(-2500)}\n\n` : ""}LATEST EXCHANGE (what has been said and settled):\n${finished}${openQuestion ? `\n\nTHE TUTOR THEN ASKED THE STUDENT (still unanswered: never write its answer or its working; if it poses a NEW problem, WRITE that problem now as a task line in LaTeX, without its answer; if it is only the next step or sub-question of the problem already on the board, write NO task line for it: the problem line already carries it):\n${openQuestion}` : ""}${toolNote}`;
   const studentWords = input.exchange.split("\n").filter((l) => /^Student:/i.test(l)).map((l) => l.replace(/^Student:\s*/i, ""));
   // A new problem may be posed in a sentence before the closing question ("Now the trap: try e^{2x} - 3e^x - 4 = 0. What happens to y?"): look
@@ -290,7 +290,9 @@ export async function writeBoard(input: { exchange: string; board: BoardEntry[];
     const posedMissing = !!posedText && !problemOnBoard(posedText, input.board.slice(-12));
     // In tool mode the student's working is written by the pen alone: the writer's own versions repeated it in other words and sometimes recorded
     // a misconception as a result (seen in simulation). It keeps only drawings and a posed problem the pen left off.
-    const finalBoard = input.toolMode ? unitFixed.filter((e) => { const keep = DRAWN.has(String(e.kind)) || (String(e.kind) === "given" && posedMissing); if (!keep) applied.dropped.push(`${e.kind}: the tutor writes that itself`); return keep; }) : unitFixed;
+    // The one exception: when the pen wrote nothing this exchange, the student's own working (result lines) is still recorded, so a confirmed step never goes missing.
+    const WORKING = new Set(["result", "gap", "insight"]);
+    const finalBoard = input.toolMode ? unitFixed.filter((e) => { const keep = DRAWN.has(String(e.kind)) || (String(e.kind) === "given" && posedMissing) || (!input.penWrote && WORKING.has(String(e.kind))); if (!keep) applied.dropped.push(`${e.kind}: the tutor writes that itself`); return keep; }) : unitFixed;
     return { board: finalBoard, dropped: applied.dropped, concepts };
   };
   let out = await once();
@@ -303,7 +305,7 @@ export async function writeBoard(input: { exchange: string; board: BoardEntry[];
   const tutorLines = input.exchange.split("\n").filter((l) => /^Tutor:/i.test(l)).join(" ");
   const needPromised = !input.toolMode && !input.early && !out.board.length && !needProblem && promisesBoard(tutorLines);
   const stepSaid = confirmedStudentStep(input.exchange);
-  const needStep = !input.toolMode && !input.early && !!stepSaid && !out.board.some((e) => ["gap", "result", "formula", "insight"].includes(String(e.kind)));
+  const needStep = !(input.toolMode && input.penWrote) && !input.early && !!stepSaid && !out.board.some((e) => ["gap", "result", "formula", "insight"].includes(String(e.kind)));
   const needPicture = !input.early && canDraw && wantsPicture(input.exchange) && !out.board.some((e) => ["graph", "svg", "diagram", "geometry", "flow", "table", "numberline"].includes(String(e.kind)));
   if (needExplain || needProblem || needPicture || needStep || needPromised) {
     const why = out.dropped.length ? ` The app rejected these ops: ${out.dropped.slice(0, 3).join("; ")}.` : "";
