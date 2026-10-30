@@ -8,7 +8,10 @@
 // Needs GEMINI_API_KEY and/or DEEPSEEK_API_KEY in .env and costs a few cents per persona. The tutor here is the typed tutor model standing in
 // for the live voice model; it follows the same prompt but is not identical, so treat results as strong evidence, not proof.
 import "../server/env.ts";
-import { createTutorChat } from "../server/claude.ts";
+import { createTutorChat, usageOf } from "../server/claude.ts";
+import { callCostUsd } from "../shared/types.ts";
+import { BOARD_TOOL_CHAT, BOARD_TOOL_NAME } from "../shared/boardTool.ts";
+import { applyBoardTool } from "../server/tutorTurn/boardTool.ts";
 import { liveInstructions, exchangeText } from "../shared/liveTutor.ts";
 import { writeBoard, splitOpenQuestion, posesProblem, problemOnBoard, promisesBoard } from "../server/tutorTurn/boardWriter.ts";
 import { boardLineIsWrong } from "../server/boardMath.ts";
@@ -18,6 +21,9 @@ const onlyPersona = arg("--persona");
 const turnsN = Math.max(4, Number(arg("--turns")) || 12);
 const runs = Math.max(1, Number(arg("--runs")) || 1);
 const verbose = process.argv.includes("--verbose");
+const maxUsd = Number(arg("--max-usd")) || 5;
+let spentUsd = 0;
+const spend = (res: any) => { const u = usageOf(res); spentUsd += callCostUsd(u.in, u.out, u.cachedIn); };
 
 interface Persona { id: string; subject: string; level: string; who: string; opener: string }
 
@@ -58,6 +64,20 @@ const PERSONAS: Persona[] = [
     who: "You are a panicking Math AA HL student with an exam tomorrow. You say 'just show me one', and then actually learn if the tutor works a short example in front of you and then makes you try a similar one. You make a LIATE ordering mistake or lose the minus sign on your own attempt." },
   { id: "doing-own-problems", subject: "Math AA HL", level: "IB DP2", opener: "I want to do problems on exponentials and e, I have an equation e to the 2x minus 5 e to the x plus 6 equals 0 and I have no idea",
     who: "You are a Math AA HL student who wants to work through problems yourself and gets annoyed when the tutor lectures, announces new topics or invents extra problems. You say 'I just want to do problems' and 'let me try'. On the first problem you have no idea at first; with a small hint you can solve it (you need to notice it is a quadratic in e^x). When you finish a problem you ask for the next one from an exam-style question you paste in: 'Bank A advertises that money doubles in 8 years with continuous interest; invested at the start of 2015, in which year is it three times the initial amount?'. You make one slip of your own (for example forgetting the answer is during the 13th year, not at 13 years). Speak briefly." },
+  { id: "user-log-k-misheard", subject: "Math AA HL", level: "IB DP2", opener: "let's do this one: one half log of one quarter plus log k equals log of one quarter k minus 3, find k",
+    who: "You are a Math AA HL student reading a problem aloud. The real problem is (1/2)(log(1/4) + log k) = log((1/4)(k - 3)): the half multiplies BOTH logs and the quarter multiplies ALL of (k - 3), but you said it ambiguously at first. If the board shows it differently, say 'no, the half is times both logs and the quarter times all of k minus 3'. Early on you say 'can you just write the whole thing out?'. You know the log laws partly: you apply the power rule correctly with a nudge, then you are unsure how to combine logs. Your speech is a transcript (fillers, 'log of one quarter to the power of a half'). The correct route is sqrt(k)/2 = (k - 3)/4, so 2 sqrt(k) = k - 3, a quadratic in sqrt(k), giving sqrt(k) = 3 and k = 9 (sqrt(k) = -1 is rejected). Reach it slowly and make one algebra slip on the way." },
+  { id: "bio-osmosis", subject: "Biology SL", level: "IB DP1", opener: "I don't get osmosis and water potential, the potato experiment",
+    who: "You are a Biology SL student who thinks water moves towards where there is MORE water potential and mixes up hypotonic and hypertonic. In the potato-cylinder practical you don't know how to find the isotonic point from a graph of percentage mass change. You speak in short sentences and ask 'so which way does the water go?'." },
+  { id: "bio-genetics-hl", subject: "Biology HL", level: "IB DP2", opener: "can we do dihybrid crosses and the chi squared test",
+    who: "You are a Biology HL student who can draw a Punnett square but forgets the 9:3:3:1 ratio assumes unlinked genes, and in the chi-squared test you divide by the observed instead of the expected value and do not know how to find degrees of freedom. You want to understand what the p-value means for linkage." },
+  { id: "cs-recursion-trace", subject: "Computer Science SL", level: "IB DP2", opener: "I have to trace a recursive function for paper 1 and I always lose marks",
+    who: "You are a Computer Science SL student who loses track of the call stack when tracing recursion (for example a function that returns n + f(n - 1) with base case n = 0), forgets to unwind the returns, and writes the trace table in the wrong order. You speak casually and say 'wait, where does it go back to?'." },
+  { id: "ess-energy-flow", subject: "ESS SL", level: "IB DP1", opener: "I don't get the 10 percent rule and pyramids of energy",
+    who: "You are an ESS student who thinks energy is recycled in an ecosystem like nutrients, and who multiplies instead of taking 10 percent when going up trophic levels. You can do arithmetic but not the concept. Short spoken sentences." },
+  { id: "physics-circuits-hl", subject: "Physics HL", level: "IB DP2", opener: "internal resistance questions always confuse me",
+    who: "You are a Physics HL student who thinks the emf is the same as the terminal voltage, forgets the 'lost volts' Ir, and mixes up series and parallel when combining resistors. You say values aloud ('the emf is twelve volts and internal resistance is half an ohm')." },
+  { id: "chem-equilibrium-hl", subject: "Chemistry HL", level: "IB DP2", opener: "how do I do Kc questions with an ICE table",
+    who: "You are a Chemistry HL student who forgets to use the stoichiometric coefficients as powers in Kc, puts solids in the expression, and thinks adding a catalyst shifts the equilibrium. You get the ICE table rows confused." },
 ];
 
 type Turn = { who: "student" | "tutor"; text: string };
@@ -67,6 +87,7 @@ async function chat(messages: any[], opts: { temperature?: number; max_tokens?: 
   for (let attempt = 0; ; attempt++) {
     try {
       const res: any = await createTutorChat({ messages, temperature: opts.temperature ?? 0.7, max_tokens: opts.max_tokens ?? 500, ...(opts.json ? { response_format: { type: "json_object" } } : {}) }, true);
+      spend(res);
       return String(res?.choices?.[0]?.message?.content || "").trim();
     } catch (e: any) {
       if (attempt >= 5 || /402|Insufficient/i.test(String(e?.message || e))) throw e;
@@ -101,7 +122,8 @@ Check the tutor's latest reply and the board strictly against correct mathematic
  "board_errors":["a board line (after) that is mathematically wrong, garbled, or says something the student/tutor did not say"],
  "answer_on_board_too_early":"a board line that already contains the answer to the question the tutor just asked and the student has not yet answered, or empty",
  "handed_over_answer":"quote if the tutor stated the final answer to a problem the student is still solving (hints are fine), or empty",
- "ignored_request":"if the student asked for something (repeat, write it on the board, explain, which problem) and the tutor did not do it, say what, else empty"}
+ "ignored_request":"if the student asked for something (repeat, write it on the board, explain, which problem) and the tutor did not do it, say what, else empty",
+ "formula_before_student":"a formula, rule or method the tutor STATED or the board AFTER shows, which the student had neither stated nor asked for and could reasonably have been led to find, or empty"}
 Be conservative: only flag what you are sure about. Empty string or empty list means no problem.`;
 
 interface Flags { [k: string]: any }
@@ -115,91 +137,115 @@ async function judge(p: Persona, history: Turn[], before: any[], after: any[]): 
 }
 
 const RUBRIC_SYS = `You review a whole voice tutoring session between a tutor (Otto) and an IB student, as a master teacher would. Score 1 to 5 each (5 = indistinguishable from an outstanding human tutor), quoting a short line from the transcript as evidence for each score. Return ONLY JSON:
-{"explains_when_stuck":{"score":1,"evidence":""},"adapts":{"score":1,"evidence":""},"diagnoses_misconception":{"score":1,"evidence":""},"natural_voice":{"score":1,"evidence":""},"truthful":{"score":1,"evidence":""},"hints_not_answers":{"score":1,"evidence":""},"self_corrects":{"score":1,"evidence":"or \"n/a: no error occurred\""},"biggest_weakness":"one sentence","one_better_line":"what the tutor should have said at the weakest moment"}
-Criteria. explains_when_stuck: when the student fails twice or says they are lost, the tutor gives a clear worked step, concrete example or picture and then checks understanding, instead of asking another question of the same kind; a student who is NOT stuck is not over-explained. adapts: the tutor's level, pace, length, tone and analogy visibly follow the student's signals (rushed, anxious, strong, confused, curious, drifting). diagnoses_misconception: it finds the real wrong model behind the errors and addresses that, not just the symptom. natural_voice: one to three short spoken sentences, warm and direct, no repeated question, no filler praise ("great question", "perfect!") for wrong or trivial things, no lecture. truthful: no false statement, no confirming a wrong step, no claim about the board that is not so. hints_not_answers: the tutor does not hand over a formula, rule or method before the student has had a real chance to reach or recall it (it first asks what they think, offers a nudge or a concrete case, and surfaces the misconception behind a wrong idea by getting the student to see the conflict themselves); it suggests, points at the next move or asks a pointed question instead of stating the answer the student is meant to find; once the student has truly tried and failed it may show a worked step, but still not the final answer to their own problem. self_corrects: when the tutor itself said something wrong or agreed to a wrong step it says so plainly and calmly and fixes it, never defensively and never by doubting a correct step; score 5 with evidence "n/a" if no error occurred and it never needlessly backed down.`;
-async function rubric(p: Persona, history: Turn[]): Promise<any> {
+{"explains_when_stuck":{"score":1,"evidence":""},"adapts":{"score":1,"evidence":""},"diagnoses_misconception":{"score":1,"evidence":""},"natural_voice":{"score":1,"evidence":""},"truthful":{"score":1,"evidence":""},"hints_not_answers":{"score":1,"evidence":""},"self_corrects":{"score":1,"evidence":"or \"n/a: no error occurred\""},"board_clarity":{"score":1,"evidence":""},"feels_human":{"score":1,"evidence":""},"biggest_weakness":"one sentence","one_better_line":"what the tutor should have said at the weakest moment"}
+Criteria. explains_when_stuck: when the student fails twice or says they are lost, the tutor gives a clear worked step, concrete example or picture and then checks understanding, instead of asking another question of the same kind; a student who is NOT stuck is not over-explained. adapts: the tutor's level, pace, length, tone and analogy visibly follow the student's signals (rushed, anxious, strong, confused, curious, drifting). diagnoses_misconception: it finds the real wrong model behind the errors and addresses that, not just the symptom. natural_voice: one to three short spoken sentences, warm and direct, no repeated question, no filler praise ("great question", "perfect!") for wrong or trivial things, no lecture. truthful: no false statement, no confirming a wrong step, no claim about the board that is not so. hints_not_answers: the tutor does not hand over a formula, rule or method before the student has had a real chance to reach or recall it (it first asks what they think, offers a nudge or a concrete case, and surfaces the misconception behind a wrong idea by getting the student to see the conflict themselves); it suggests, points at the next move or asks a pointed question instead of stating the answer the student is meant to find; once the student has truly tried and failed it may show a worked step, but still not the final answer to their own problem. self_corrects: when the tutor itself said something wrong or agreed to a wrong step it says so plainly and calmly and fixes it, never defensively and never by doubting a correct step; score 5 with evidence "n/a" if no error occurred and it never needlessly backed down. board_clarity: reading only the FINAL BOARD, could the student follow the problem and their own working (problem written in full and correctly, steps in order, no answers they did not reach, no clutter or duplicates)? feels_human: it sounds like one attentive human tutor talking (reacts to what was just said, varies its moves, no robotic templates, no announcing what it is about to do, no double replies).`;
+async function rubric(p: Persona, history: Turn[], finalBoard: any[]): Promise<any> {
   const convo = history.map((t) => `${t.who === "student" ? "Student" : "Tutor"}: ${t.text}`).join("\n").slice(-9000);
-  try { return JSON.parse((await chat([{ role: "system", content: RUBRIC_SYS }, { role: "user", content: `Subject: ${p.subject} (${p.level}). Student profile: ${p.who.slice(0, 300)}\n\n${convo}` }], { temperature: 0, max_tokens: 900, json: true })).replace(/^```(?:json)?|```$/g, "")); } catch { return null; }
+  try { return JSON.parse((await chat([{ role: "system", content: RUBRIC_SYS }, { role: "user", content: `Subject: ${p.subject} (${p.level}). Student profile: ${p.who.slice(0, 300)}\n\n${convo}\n\nFINAL BOARD:\n${boardText(finalBoard)}` }], { temperature: 0, max_tokens: 900, json: true })).replace(/^```(?:json)?|```$/g, "")); } catch { return null; }
 }
 const norm = (t: string) => t.toLowerCase().replace(/[^a-z0-9 ]+/g, " ").replace(/\s+/g, " ").trim();
 const lastQuestion = (t: string) => { const q = t.split(/(?<=[.?!])\s+/).filter((x) => x.includes("?")).pop(); return q ? norm(q) : ""; };
 
 const cut = (s: string, n = 160) => s.replace(/\s+/g, " ").slice(0, n);
 
+// The tutor's turn with Otto's pen: the model may call write_board (any number of times), each call goes through the same code as
+// POST /api/tutor/live/write, and the result goes back to it, exactly as the voice app relays it. Its tool exchanges stay in its context.
+async function tutorTurn(msgs: any[], board: any[], recentTurns: Turn[]): Promise<{ speech: string; board: any[]; written: any[]; refused: { line: string; reason: string }[] }> {
+  let speech = "";
+  const written: any[] = [], refused: { line: string; reason: string }[] = [];
+  for (let round = 0; round < 4; round++) {
+    let res: any = null;
+    for (let attempt = 0; ; attempt++) {
+      try { res = await createTutorChat({ messages: msgs, tools: [BOARD_TOOL_CHAT], tool_choice: "auto", temperature: 0.6, max_tokens: 1200 }, true); break; }
+      catch (e: any) { if (attempt >= 5 || /402|Insufficient/i.test(String(e?.message || e))) throw e; await new Promise((r) => setTimeout(r, 6000 * (attempt + 1))); }
+    }
+    spend(res);
+    const m = res?.choices?.[0]?.message || {};
+    const text = String(m.content || "").trim();
+    if (text) speech += (speech ? " " : "") + text;
+    const calls = Array.isArray(m.tool_calls) ? m.tool_calls : [];
+    msgs.push({ role: "assistant", content: m.content || "", ...(calls.length ? { tool_calls: calls } : {}) });
+    if (!calls.length) break;
+    for (const c of calls) {
+      let args: any = {};
+      try { args = JSON.parse(String(c.function?.arguments || "{}")); } catch { /* nothing written */ }
+      const recent = exchangeText([...recentTurns.slice(-6).map((t) => ({ who: t.who === "student" ? "you" as const : "otto" as const, text: t.text })), ...(speech ? [{ who: "otto" as const, text: speech }] : [])]);
+      const out = c.function?.name === BOARD_TOOL_NAME ? applyBoardTool({ lines: Array.isArray(args?.lines) ? args.lines : [], board, recent }) : { written: [], removed: [], refused: [{ line: "", reason: "unknown tool" }], listing: "" };
+      board = [...board.filter((e) => !out.removed.includes(e.id)), ...out.written];
+      written.push(...out.written); refused.push(...out.refused);
+      msgs.push({ role: "tool", tool_call_id: c.id, content: JSON.stringify({ written: out.written.map((e: any) => e.text), refused: out.refused, board: out.listing }) });
+    }
+  }
+  return { speech, board, written, refused };
+}
+
 async function runPersona(p: Persona): Promise<{ flags: { turn: number; kind: string; text: string }[]; turns: number }> {
   const history: Turn[] = [];
   let board: any[] = [];
   const flags: { turn: number; kind: string; text: string }[] = [];
   const system = liveInstructions({ subject: p.subject, level: p.level, ib: true });
-  const tutorMsgs = (extra: Turn[]) => [{ role: "system", content: system }, { role: "user", content: "(Session started. Greet me briefly.)" }, ...extra.map((t) => ({ role: t.who === "student" ? "user" : "assistant", content: t.text }))];
+  const msgs: any[] = [{ role: "system", content: system }, { role: "user", content: "(Session started. Greet me briefly.)" }];
   const tokens = { in: 0, out: 0, cachedIn: 0 };
+  const refusedAll: Record<string, number> = {};
   console.log(`\n=== ${p.id} (${p.subject}) ===`);
-  // The tutor greets first, as in the app.
-  const greet = await chat(tutorMsgs([]), { temperature: 0.6 });
-  history.push({ who: "tutor", text: greet });
-  console.log(`Tutor: ${greet}`);
+  const greet = await tutorTurn(msgs, board, history);
+  board = greet.board;
+  history.push({ who: "tutor", text: greet.speech });
+  console.log(`Tutor: ${greet.speech}`);
   let student = p.opener;
   for (let turn = 1; turn <= turnsN; turn++) {
+    if (spentUsd >= maxUsd) { console.log(`   (spend cap of $${maxUsd} reached: stopping)`); break; }
     history.push({ who: "student", text: student });
+    msgs.push({ role: "user", content: student });
     console.log(`\nStudent: ${student}`);
-    const reply = await chat(tutorMsgs(history), { temperature: 0.6 });
+    const before = board;
+    const t = await tutorTurn(msgs, board, history);
+    board = t.board;
+    const reply = t.speech || "(silence)";
     history.push({ who: "tutor", text: reply });
     console.log(`Tutor: ${reply}`);
-    const before = board;
-    const chatLines = history.slice(-14, -2).map((t) => ({ who: t.who === "student" ? "you" as const : "otto" as const, text: t.text.slice(0, 400) }));
-    const lean = board.slice(-16);
-    const turnsNow = [{ who: "you" as const, text: student }, { who: "otto" as const, text: reply }];
-    // Pass 1, while the tutor is still speaking: the whole sentences said so far (as the app does once enough has been said).
-    const sentences = reply.split(/(?<=[.?!])\s+/).map((x) => x + " ");
-    let partial = "";
-    for (const s of sentences) { partial += s; if (partial.length >= 90 && partial.split(/\s+/).length >= 16 && partial.trim().length < reply.trim().length - 20) break; }
-    if (partial && partial.trim().length < reply.trim().length - 20) {
-      try {
-        const early = await writeBoard({ exchange: exchangeText([{ who: "you", text: student }, { who: "otto", text: partial.trim() }]), board: lean, subject: p.subject, history: exchangeText(chatLines), early: true }, tokens);
-        board = mergeById(board, early.board);
-      } catch (e: any) { console.log(`   (early board pass failed: ${cut(String(e?.message || e), 80)})`); }
-    }
-    // Pass 2, after the turn.
+    for (const e of t.written) console.log(`   pen  + [${e.kind}] ${cut(String(e.text || ""), 120)}`);
+    for (const r of t.refused) { console.log(`   pen  x ${cut(r.line, 80)} (${cut(r.reason, 90)})`); const k = r.reason.replace(/\d[\d., ]*/g, "#").slice(0, 60); refusedAll[k] = (refusedAll[k] || 0) + 1; }
+    // The board writer, in tool mode: records the student's own working the tutor did not write, and runs the step checks.
+    const chatLines = history.slice(-14, -2).map((x) => ({ who: x.who === "student" ? "you" as const : "otto" as const, text: x.text.slice(0, 400) }));
     try {
-      const out = await writeBoard({ exchange: exchangeText(turnsNow), board: board.slice(-16), subject: p.subject, history: exchangeText(chatLines) }, tokens);
+      const out = await writeBoard({ exchange: exchangeText([{ who: "you", text: student }, { who: "otto", text: reply }]), board: board.slice(-16), subject: p.subject, history: exchangeText(chatLines), toolMode: true }, tokens);
+      for (const e of out.board) console.log(`   writer + [${e.kind}] ${cut(String(e.text || ""), 120)}`);
       board = mergeById(board, out.board);
       for (const f of out.flags || []) flags.push({ turn, kind: "second-opinion flag", text: f });
     } catch (e: any) { flags.push({ turn, kind: "board pass failed", text: cut(String(e?.message || e), 100) }); }
-    const added = board.slice(before.length);
-    for (const e of added) console.log(`   board + [${e.kind}] ${cut(String(e.text || ""), 120)}`);
+    const added = board.filter((e) => !before.some((b) => b.id === e.id));
     if (!added.length) console.log("   board: (nothing written)");
-    // Code checks: a board line whose own arithmetic fails.
     for (const e of added) if (typeof e.text === "string" && boardLineIsWrong(e.text)) flags.push({ turn, kind: "board line arithmetic wrong", text: cut(e.text) });
-    // Code checks the judge cannot be trusted with: a problem the tutor poses must be on the board, and "it is on the board" must be true.
+    // Code checks the judge cannot be trusted with: a posed problem must be on the board, and "it is on the board" must be true.
     const open = splitOpenQuestion(`Tutor: ${reply}`).openQuestion;
     if (open && posesProblem(open) && !problemOnBoard(open, board)) flags.push({ turn, kind: "CODE: posed problem not on the board", text: cut(open, 200) });
-    if (promisesBoard(reply) && !added.length && !/\b(?:not|isn't|is not|can't|cannot)\b[^.?!]{0,20}\bboard\b/i.test(reply) && !problemOnBoard(open || reply, board)) flags.push({ turn, kind: "CODE: says it is on the board, nothing was written", text: cut(reply, 200) });
-    // The judge.
+    if (promisesBoard(reply) && !t.written.length && !/\b(?:not|isn't|is not|can't|cannot)\b[^.?!]{0,20}\bboard\b/i.test(reply) && !/\b(?:look at|see|on) (?:the board|line)\b/i.test(reply)) flags.push({ turn, kind: "CODE: says it wrote on the board, the pen wrote nothing", text: cut(reply, 200) });
     const j = await judge(p, history, before, board);
-    const add = (kind: string, v: any) => { const t = Array.isArray(v) ? v.filter(Boolean).join(" | ") : String(v || ""); if (t.trim()) flags.push({ turn, kind, text: cut(t, 240) }); };
+    const add = (kind: string, v: any) => { const x = Array.isArray(v) ? v.filter(Boolean).join(" | ") : String(v || ""); if (x.trim()) flags.push({ turn, kind, text: cut(x, 240) }); };
     add("tutor math/science error", j.tutor_errors); add("confirmed a wrong step", j.confirmed_wrong_step); add("took back a correct step", j.retracted_correct_step);
     add("says it is on the board but it is not", j.claims_on_board_but_absent); add("posed problem not on board", j.problem_missing_from_board); add("confirmed step not on board", j.student_step_missing);
-    add("board line wrong", j.board_errors); add("answer on board too early", j.answer_on_board_too_early); add("handed over the answer", j.handed_over_answer); add("ignored a request", j.ignored_request);
+    add("board line wrong", j.board_errors); add("answer on board too early", j.answer_on_board_too_early); add("handed over the answer", j.handed_over_answer); add("ignored a request", j.ignored_request); add("formula given before the student reached it", j.formula_before_student);
     if (j.judge_failed) console.log("   (judge failed this turn)");
     for (const f of flags.filter((x) => x.turn === turn)) console.log(`   !! ${f.kind}: ${f.text}`);
     if (turn < turnsN) student = await studentSays(p, history, board);
   }
   console.log(`\nBOARD AT THE END:\n${boardText(board)}`);
-  // Whole-session checks: a question asked twice running is a loop; reply length is a voice-quality signal.
-  const tutorTurns = history.filter((t) => t.who === "tutor");
+  if (Object.keys(refusedAll).length) console.log(`PEN REFUSALS: ${Object.entries(refusedAll).map(([k, v]) => `${v}x ${k}`).join("; ")}`);
+  const tutorTurns = history.filter((x) => x.who === "tutor");
   let repeats = 0;
   for (let i = 1; i < tutorTurns.length; i++) { const a = lastQuestion(tutorTurns[i - 1].text), b = lastQuestion(tutorTurns[i].text); if (a && b && (a === b || (a.length > 20 && (a.includes(b) || b.includes(a))))) { repeats++; flags.push({ turn: i, kind: "CODE: same question asked twice running", text: cut(b, 160) }); } }
-  const words = tutorTurns.map((t) => t.text.split(/\s+/).length);
+  const words = tutorTurns.map((x) => x.text.split(/\s+/).length);
   const avgWords = Math.round(words.reduce((a, b) => a + b, 0) / Math.max(1, words.length));
   const longest = Math.max(...words);
   if (longest > 90) flags.push({ turn: 0, kind: "CODE: a reply over 90 words (too long to listen to)", text: `${longest} words` });
-  const r = await rubric(p, history);
+  const r = await rubric(p, history, board);
   if (r) {
     const sc = (k: string) => Number(r[k]?.score) || 0;
-    console.log(`\nTEACHING: explains ${sc("explains_when_stuck")}  adapts ${sc("adapts")}  diagnoses ${sc("diagnoses_misconception")}  voice ${sc("natural_voice")}  truthful ${sc("truthful")}  hints ${sc("hints_not_answers")}  self-corrects ${sc("self_corrects")}   | avg ${avgWords} words/reply, ${repeats} repeated question(s)`);
-    for (const k of ["explains_when_stuck", "adapts", "diagnoses_misconception", "natural_voice", "truthful", "hints_not_answers", "self_corrects"]) if (sc(k) && sc(k) <= 3) console.log(`   ${k} ${sc(k)}: ${cut(String(r[k]?.evidence || ""), 200)}`);
+    console.log(`\nTEACHING: explains ${sc("explains_when_stuck")}  adapts ${sc("adapts")}  diagnoses ${sc("diagnoses_misconception")}  voice ${sc("natural_voice")}  truthful ${sc("truthful")}  hints ${sc("hints_not_answers")}  self-corrects ${sc("self_corrects")}  board ${sc("board_clarity")}  human ${sc("feels_human")}   | avg ${avgWords} words/reply, ${repeats} repeated question(s), $${spentUsd.toFixed(3)} spent so far`);
+    for (const k of ["explains_when_stuck", "adapts", "diagnoses_misconception", "natural_voice", "truthful", "hints_not_answers", "self_corrects", "board_clarity", "feels_human"]) if (sc(k) && sc(k) <= 3) console.log(`   ${k} ${sc(k)}: ${cut(String(r[k]?.evidence || ""), 200)}`);
     console.log(`   weakest: ${cut(String(r.biggest_weakness || ""), 220)}\n   better: ${cut(String(r.one_better_line || ""), 260)}`);
-    scores.push({ id: p.id, explains: sc("explains_when_stuck"), adapts: sc("adapts"), diagnoses: sc("diagnoses_misconception"), voice: sc("natural_voice"), truthful: sc("truthful"), hints: sc("hints_not_answers"), selfc: sc("self_corrects"), words: avgWords, repeats });
+    scores.push({ id: p.id, explains: sc("explains_when_stuck"), adapts: sc("adapts"), diagnoses: sc("diagnoses_misconception"), voice: sc("natural_voice"), truthful: sc("truthful"), hints: sc("hints_not_answers"), selfc: sc("self_corrects"), board: sc("board_clarity"), human: sc("feels_human"), words: avgWords, repeats });
   }
   return { flags, turns: turnsN };
 }
@@ -211,7 +257,7 @@ if (!process.env.GEMINI_API_KEY && !process.env.DEEPSEEK_API_KEY) { console.erro
 const summary: Record<string, number> = {};
 let total = 0;
 const perPersona: { id: string; n: number }[] = [];
-const scores: { id: string; explains: number; adapts: number; diagnoses: number; voice: number; truthful: number; hints: number; selfc: number; words: number; repeats: number }[] = [];
+const scores: { id: string; explains: number; adapts: number; diagnoses: number; voice: number; truthful: number; hints: number; selfc: number; board: number; human: number; words: number; repeats: number }[] = [];
 for (const p of picked) {
   for (let r = 0; r < runs; r++) {
     try {
@@ -226,9 +272,10 @@ console.log(`\n===== SUMMARY: ${total} flag(s) across ${perPersona.length} run(s
 for (const [k, v] of Object.entries(summary).sort((a, b) => b[1] - a[1])) console.log(`${String(v).padStart(3)}  ${k}`);
 for (const r of perPersona) console.log(`${String(r.n).padStart(3)} flag(s)  ${r.id}`);
 if (scores.length) {
-  console.log("\nTEACHING SCORES (1-5): explains adapts diagnoses voice truthful hints self-corrects | words/reply repeats");
-  for (const r of scores) console.log(`  ${r.id.padEnd(30)} ${r.explains} ${r.adapts} ${r.diagnoses} ${r.voice} ${r.truthful} ${r.hints} ${r.selfc} | ${r.words} ${r.repeats}`);
-  const avg = (k: "explains" | "adapts" | "diagnoses" | "voice" | "truthful" | "hints" | "selfc") => (scores.reduce((a, r) => a + r[k], 0) / scores.length).toFixed(2);
-  console.log(`  ${"AVERAGE".padEnd(30)} ${avg("explains")} ${avg("adapts")} ${avg("diagnoses")} ${avg("voice")} ${avg("truthful")} ${avg("hints")} ${avg("selfc")}`);
+  console.log("\nTEACHING SCORES (1-5): explains adapts diagnoses voice truthful hints self-corrects board human | words/reply repeats");
+  for (const r of scores) console.log(`  ${r.id.padEnd(30)} ${r.explains} ${r.adapts} ${r.diagnoses} ${r.voice} ${r.truthful} ${r.hints} ${r.selfc} ${r.board} ${r.human} | ${r.words} ${r.repeats}`);
+  const avg = (k: "explains" | "adapts" | "diagnoses" | "voice" | "truthful" | "hints" | "selfc" | "board" | "human") => (scores.reduce((a, r) => a + r[k], 0) / scores.length).toFixed(2);
+  console.log(`  ${"AVERAGE".padEnd(30)} ${avg("explains")} ${avg("adapts")} ${avg("diagnoses")} ${avg("voice")} ${avg("truthful")} ${avg("hints")} ${avg("selfc")} ${avg("board")} ${avg("human")}`);
 }
+console.log(`\nSPENT: about $${spentUsd.toFixed(3)} (cap $${maxUsd}; DeepSeek rates; calls Gemini answered are not metered)`);
 console.log("\nThe judge is a model: read the flagged lines in the transcript before acting on a flag. A flag is a lead, not a verdict.");
