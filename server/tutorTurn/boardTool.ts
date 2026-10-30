@@ -63,7 +63,7 @@ export function applyBoardTool(input: { lines: BoardToolLine[]; board: BoardEntr
     // "step" is the tool's word for a line of the student's working; on the board that is a "result" line (the kinds the board knows).
     ops.push(kind === "focus" ? { op: "topic", cue: 0, text } : { op: "step", cue: 0, kind: kind === "step" ? "result" : kind, text });
   }
-  const applied = applyOps(ops, { board, problems: [], theirWords: [] });
+  const applied = applyOps(ops, { board, problems: [], theirWords: [], pen: true });
   for (const d of applied.dropped) refused.push({ line: "", reason: d.replace(/^(?:step|topic): /, "") });
   const after = [...board, ...applied.board];
   return { written: applied.board, removed, refused, listing: boardListing(after) };

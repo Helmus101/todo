@@ -22,6 +22,9 @@ export interface ApplyContext {
   theirWords: string[];
   board: BoardEntry[];
   problems: TaskProblem[];
+  /** The tutor's own pen: a problem statement (kind "given") is only refused when it is exactly on the board already. The parts of one
+   *  question look alike ("(b) moles of CO2 [1]", "(c) volume of CO2 [3]") and the similarity rules refused them (seen in simulation). */
+  pen?: boolean;
 }
 
 export interface Applied {
@@ -115,6 +118,12 @@ export function applyOps(ops: BoardOp[], c: ApplyContext): Applied {
         if (bareNumeral(text)) { drop("a bare number says nothing without its label"); break; }
         const owner = "otto"; // (no student ink, ever)
         if (isDuplicateBoardEntry(all(), { text, kind })) { drop("already on the board"); break; }
+        if (c.pen && kind === "given") {
+          const r = makeBoardEntry({ text, kind, owner, why: o.why });
+          if ("error" in r) { drop(r.error); break; }
+          add(r.entry, o.cue);
+          break;
+        }
         const m = mathOf(text);
         if (m.length >= 6 && all().slice(-20).some((e) => e.kind !== "gap" && mathOf(String(e.text || "")).includes(m))) { drop("that equation is already on the board"); break; }
         // "dy/dx = -x/y" after a line that already ends "... = -x/y": same result, said twice.
