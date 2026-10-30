@@ -284,7 +284,8 @@ export async function writeBoard(input: { exchange: string; board: BoardEntry[];
     // When the tutor's pen already wrote during this exchange, only a drawing can still be missing: text lines would repeat what it wrote in other words.
     const DRAWN = new Set(["graph", "svg", "diagram", "geometry", "flow", "table", "numberline", "choice"]);
     // A problem the tutor posed out loud and never wrote (the pen stayed still this exchange) is still put up: the student must see it.
-    const finalBoard = input.toolMode ? unitFixed.filter((e) => { const keep = input.penWrote ? DRAWN.has(String(e.kind)) : TOOL_KINDS.has(String(e.kind)) || (String(e.kind) === "given" && posesProblem(openQuestion)); if (!keep) applied.dropped.push(`${e.kind}: the tutor writes that itself`); return keep; }) : unitFixed;
+    const posedMissing = posesProblem(openQuestion) && !problemOnBoard(openQuestion, input.board.slice(-12));
+    const finalBoard = input.toolMode ? unitFixed.filter((e) => { const keep = (input.penWrote ? DRAWN.has(String(e.kind)) : TOOL_KINDS.has(String(e.kind))) || (String(e.kind) === "given" && posedMissing); if (!keep) applied.dropped.push(`${e.kind}: the tutor writes that itself`); return keep; }) : unitFixed;
     return { board: finalBoard, dropped: applied.dropped, concepts };
   };
   let out = await once();
@@ -292,7 +293,7 @@ export async function writeBoard(input: { exchange: string; board: BoardEntry[];
   // nothing was written (the model was cautious, or the app rejected the ops); (2) the tutor posed a problem and no task line came back.
   // While Otto is still speaking (early) only the problem the tutor just posed is chased: it is the line the student needs in front of them first.
   const needExplain = !input.toolMode && !input.early && !out.board.length && tutorExplained(input.exchange);
-  const needProblem = !(input.toolMode && input.penWrote) && posesProblem(openQuestion) && !problemOnBoard(openQuestion, [...out.board, ...input.board.slice(-12)]);
+  const needProblem = posesProblem(openQuestion) && !problemOnBoard(openQuestion, [...out.board, ...input.board.slice(-12)]);
   // The tutor says it is putting something on the board and nothing came out: write the problem or step it means, from the earlier conversation.
   const tutorLines = input.exchange.split("\n").filter((l) => /^Tutor:/i.test(l)).join(" ");
   const needPromised = !input.toolMode && !input.early && !out.board.length && !needProblem && promisesBoard(tutorLines);
