@@ -11,7 +11,12 @@ export function numbersSaid(raw: string): Set<number> {
   const out = new Set<number>();
   for (const m of String(text || "").matchAll(/\d+(?:[.,]\d+)?/g)) out.add(Number(m[0].replace(",", ".")));
   const lower = String(text || "").toLowerCase();
-  for (const w of lower.match(/[a-zà-ÿ]+/g) || []) if (w in NUMBER_WORDS) out.add(NUMBER_WORDS[w]);
+  for (const w of lower.match(/[a-zà-ÿ]+/g) || []) {
+    if (w in NUMBER_WORDS) { out.add(NUMBER_WORDS[w]); continue; }
+    // Fractions said as ordinals: "one sixteenth", "three eighths", "two tenths" (the denominator is a number they said).
+    const ord = /^(fourth|sixth|seventh|eighth|ninth|tenth|eleventh|twelfth|thirteenth|fourteenth|fifteenth|sixteenth|seventeenth|eighteenth|nineteenth|twentieth|thirtieth|fiftieth|hundredth|thousandth)s?$/.exec(w);
+    if (ord) { const base = ord[1].replace(/ieth$/, "y").replace(/fth$/, "ve").replace(/^eighth$/, "eight").replace(/^ninth$/, "nine").replace(/^twelfth$/, "twelve").replace(/th$/, ""); if (base in NUMBER_WORDS) out.add(NUMBER_WORDS[base]); }
+  }
   // "forty-five", "three point five"
   for (const m of lower.matchAll(/\b(twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety)[- ](one|two|three|four|five|six|seven|eight|nine)\b/g)) out.add(NUMBER_WORDS[m[1]] + NUMBER_WORDS[m[2]]);
   for (const m of lower.matchAll(/\b(zero|one|two|three|four|five|six|seven|eight|nine)\s+point\s+((?:zero|one|two|three|four|five|six|seven|eight|nine)(?:\s+(?:zero|one|two|three|four|five|six|seven|eight|nine))*)\b/g)) out.add(Number(`${NUMBER_WORDS[m[1]]}.${m[2].split(/\s+/).map((w) => NUMBER_WORDS[w]).join("")}`));

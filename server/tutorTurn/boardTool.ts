@@ -35,7 +35,9 @@ export function applyBoardTool(input: { lines: BoardToolLine[]; board: BoardEntr
   const studentWords = recent.split("\n").filter((l) => /^Student:/i.test(l)).map((l) => l.replace(/^Student:\s*/i, ""));
   // The question the tutor is waiting on: the open one in what it is saying now, else the one it asked last.
   const tutorLines = recent.split("\n").filter((l) => /^Tutor:/i.test(l));
-  const openQuestion = splitOpenQuestion(tutorLines.slice(-1).join("\n")).openQuestion;
+  // Once the student has spoken after the tutor's question, that question is answered, not open: their reply is what gets written.
+  const lastIsStudent = /^Student:/i.test(recent.trim().split("\n").pop() || "");
+  const openQuestion = lastIsStudent ? "" : splitOpenQuestion(tutorLines.slice(-1).join("\n")).openQuestion;
   const knownStudent = studentNumbers(recent, input.board);
   let board = [...input.board];
   const nums = boardLineNumbers(board);

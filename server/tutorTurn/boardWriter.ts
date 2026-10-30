@@ -217,10 +217,13 @@ export async function writeBoard(input: { exchange: string; board: BoardEntry[];
   const { finished, openQuestion } = splitOpenQuestion(input.exchange.slice(0, 4000));
   // toolMode: the tutor writes the board itself (write_board). This pass then records only what the tutor may have missed: the student's own
   // working, and pictures. Problems, rules, explanations and corrections are the tutor's.
-  const TOOL_KINDS = new Set(["result", "step", "gap", "insight", "choice", "graph", "svg", "diagram", "geometry", "flow", "table", "numberline"]);
-  const toolNote = input.toolMode ? "\n\nTHE TUTOR WRITES THE BOARD ITSELF in this session. You only add (a) a step or result the STUDENT said that is not on the board yet, (b) a drawing the exchange needs, and (c) a NEW problem the tutor just posed out loud that is not on the board (as a task line, kind \"given\", without its answer). Never write a heading, rule, formula, definition or explanation: those are the tutor's." : "";
+  const toolNote = input.toolMode ? "\n\nTHE TUTOR WRITES THE BOARD ITSELF in this session. You only add (a) a drawing the exchange needs (graph, diagram, number line, table, multiple-choice options), and (b) a NEW problem the tutor just posed out loud that is not on the board (as a task line, kind \"given\", without its answer). Never write the student's working, a heading, rule, formula, definition or explanation: those are the tutor's." : "";
   const user = `${input.subject ? `Subject: ${input.subject}\n` : ""}${input.history ? `EARLIER IN THIS SESSION (context only: it tells you what a short answer like "two, right?" refers to; do NOT rewrite what is already on the board):\n${input.history.slice(-2500)}\n\n` : ""}LATEST EXCHANGE (what has been said and settled):\n${finished}${openQuestion ? `\n\nTHE TUTOR THEN ASKED THE STUDENT (still unanswered: never write its answer or its working; if it poses a NEW problem, WRITE that problem now as a task line in LaTeX, without its answer; if it is only the next step or sub-question of the problem already on the board, write NO task line for it: the problem line already carries it):\n${openQuestion}` : ""}${toolNote}`;
   const studentWords = input.exchange.split("\n").filter((l) => /^Student:/i.test(l)).map((l) => l.replace(/^Student:\s*/i, ""));
+  // A new problem may be posed in a sentence before the closing question ("Now the trap: try e^{2x} - 3e^x - 4 = 0. What happens to y?"): look
+  // at the open question first, then at each sentence of the tutor's last line.
+  const lastTutor = (input.exchange.split("\n").filter((l) => /^Tutor:/i.test(l)).pop() || "").replace(/^Tutor:\s*/i, "");
+  const posedText = posesProblem(openQuestion) ? openQuestion : lastTutor.split(/(?<=[.?!])\s+/).find((x) => posesProblem(x)) || "";
   let remembered: any[] = [];
   const once = async (extra?: string, already: BoardEntry[] = []) => {
     const messages: any[] = [{ role: "system", content: system }, { role: "user", content: user }];
@@ -284,8 +287,10 @@ export async function writeBoard(input: { exchange: string; board: BoardEntry[];
     // When the tutor's pen already wrote during this exchange, only a drawing can still be missing: text lines would repeat what it wrote in other words.
     const DRAWN = new Set(["graph", "svg", "diagram", "geometry", "flow", "table", "numberline", "choice"]);
     // A problem the tutor posed out loud and never wrote (the pen stayed still this exchange) is still put up: the student must see it.
-    const posedMissing = posesProblem(openQuestion) && !problemOnBoard(openQuestion, input.board.slice(-12));
-    const finalBoard = input.toolMode ? unitFixed.filter((e) => { const keep = (input.penWrote ? DRAWN.has(String(e.kind)) : TOOL_KINDS.has(String(e.kind))) || (String(e.kind) === "given" && posedMissing); if (!keep) applied.dropped.push(`${e.kind}: the tutor writes that itself`); return keep; }) : unitFixed;
+    const posedMissing = !!posedText && !problemOnBoard(posedText, input.board.slice(-12));
+    // In tool mode the student's working is written by the pen alone: the writer's own versions repeated it in other words and sometimes recorded
+    // a misconception as a result (seen in simulation). It keeps only drawings and a posed problem the pen left off.
+    const finalBoard = input.toolMode ? unitFixed.filter((e) => { const keep = DRAWN.has(String(e.kind)) || (String(e.kind) === "given" && posedMissing); if (!keep) applied.dropped.push(`${e.kind}: the tutor writes that itself`); return keep; }) : unitFixed;
     return { board: finalBoard, dropped: applied.dropped, concepts };
   };
   let out = await once();
@@ -293,12 +298,12 @@ export async function writeBoard(input: { exchange: string; board: BoardEntry[];
   // nothing was written (the model was cautious, or the app rejected the ops); (2) the tutor posed a problem and no task line came back.
   // While Otto is still speaking (early) only the problem the tutor just posed is chased: it is the line the student needs in front of them first.
   const needExplain = !input.toolMode && !input.early && !out.board.length && tutorExplained(input.exchange);
-  const needProblem = posesProblem(openQuestion) && !problemOnBoard(openQuestion, [...out.board, ...input.board.slice(-12)]);
+  const needProblem = !!posedText && !problemOnBoard(posedText, [...out.board, ...input.board.slice(-12)]);
   // The tutor says it is putting something on the board and nothing came out: write the problem or step it means, from the earlier conversation.
   const tutorLines = input.exchange.split("\n").filter((l) => /^Tutor:/i.test(l)).join(" ");
   const needPromised = !input.toolMode && !input.early && !out.board.length && !needProblem && promisesBoard(tutorLines);
   const stepSaid = confirmedStudentStep(input.exchange);
-  const needStep = !input.early && !!stepSaid && !out.board.some((e) => ["gap", "result", "formula", "insight"].includes(String(e.kind)));
+  const needStep = !input.toolMode && !input.early && !!stepSaid && !out.board.some((e) => ["gap", "result", "formula", "insight"].includes(String(e.kind)));
   const needPicture = !input.early && canDraw && wantsPicture(input.exchange) && !out.board.some((e) => ["graph", "svg", "diagram", "geometry", "flow", "table", "numberline"].includes(String(e.kind)));
   if (needExplain || needProblem || needPicture || needStep || needPromised) {
     const why = out.dropped.length ? ` The app rejected these ops: ${out.dropped.slice(0, 3).join("; ")}.` : "";
@@ -307,7 +312,7 @@ export async function writeBoard(input: { exchange: string; board: BoardEntry[];
       needStep ? `The tutor just confirmed the student's step ("${stepSaid.slice(0, 160)}"). Write that step on the board now as a clean line of correct maths (fix the speech-recognition wording into proper notation; never write anything the student has not said, and never the step after it).` : "",
       needPromised ? "The tutor said it is putting something on the board (or that it is there) but nothing was written. Look at EARLIER IN THIS SESSION and the board: write the problem or step it means now (the most recent problem the tutor posed, as a task line, kind \"given\", without its answer), unless it is already on the board." : "",
       needPicture ? "The exchange is about graphing or a picture: DRAW it now (a graph op with the real function, or an svg / geometry / flow op), never leave it as words." : "",
-      needProblem ? `The tutor posed a problem and you did not write it: write the problem itself now as a task line (kind "given") in LaTeX, without its answer, using EXACTLY the numbers the tutor said and no others:${why} ${openQuestion.slice(0, 400)}` : "",
+      needProblem ? `The tutor posed a problem and you did not write it: write the problem itself now as a task line (kind "given") in LaTeX, without its answer, using EXACTLY the numbers the tutor said and no others:${why} ${posedText.slice(0, 400)}` : "",
     ].filter(Boolean).join(" ");
     const second = await once(`${asks} Return the same JSON shape.`, out.board);
     if (second.board.length) { const all = [...out.board, ...second.board]; out = { board: [...all.filter((e) => e.kind === "focus"), ...all.filter((e) => e.kind !== "focus")], dropped: out.dropped, concepts: out.concepts.length ? out.concepts : second.concepts }; }
