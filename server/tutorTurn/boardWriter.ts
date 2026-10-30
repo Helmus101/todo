@@ -34,7 +34,7 @@ WRITE ONLY:
 4. FIGURES that help them see it (draw ops: a graph, geometry, flow / cycle / timeline, table, number line, source...), whenever a picture would teach faster. Draw on an existing graph with "extend" instead of redrawing it.
 
 PACING (the board must never run ahead of the student): the board shows only what the STUDENT has already said or reached, plus what the tutor explained as a general rule or a separate example. It never shows the next step, never the answer to the problem they are working on, and never a worked solution of that problem.
-- THE STUDENT'S OWN PROBLEM: write the working lines the student produced or confirmed. A line the TUTOR supplied (a substitution, a simplified form such as "t = 8 ln 3 / ln 2", a set-up) is written only after the student has repeated it, used it or agreed with it, and never in the same pass in which the tutor first says it while the next question about it is still open. What the tutor TEACHES on request (a definition, a formula the student asked for, a worked example on another case) is written as usual.
+- THE STUDENT'S OWN PROBLEM: write the working lines the student produced or confirmed. A line the TUTOR supplied (a rule it named as a hint such as the power rule, a substitution, a simplified form such as "t = 8 ln 3 / ln 2", a set-up) is written only after the student has repeated it, used it or agreed with it, and never in the same pass in which the tutor first says it while the next question about it is still open. What the tutor TEACHES on request (a definition, a formula the student asked for, a worked example on another case) is written as usual.
 - THE SAME HOLDS FOR EVERY KIND OF QUESTION, not only arithmetic: an algebraic expression, a name or term, a definition, a rule, a reason, a choice between options, a sign, a unit, a graph feature. If the tutor's last question asks the student to produce it ("what is the derivative?", "which rule applies?", "why?", "what do you get when you factorise?"), it goes on the board only after a Student line says it, in the student's own content cleaned into notation. What the tutor merely names or hints at does not count as the student having said it. Until then write the question's setup, never its answer.
 - A number, value or result goes on the board ONLY if it appears in a Student line of this exchange (or is already on the board). If you can compute it but the student has not said it, do not write it, even if the tutor hinted at it or asked about it.
 - Write at most the ONE step the student has just completed correctly. Never write the steps after it, and never a whole calculation chain (for example "$f(0) = \\frac{8}{-1/3} = -24$") unless the student said every part of it.
@@ -186,6 +186,14 @@ export function answersOpenQuestion(line: string, question: string, known: Set<n
   return usesQuestion && !known.has(value) && !qn.includes(value);
 }
 
+/** A rule or identity the tutor merely NAMES as a hint while it waits for the student's next step ("use the power rule", "combine with log a + log b") is the thing the student is meant
+ *  to find. It is held off the board unless the student asked for it (what is / formula / rule / remind me / no idea). Pure. */
+export function hintedRuleHeld(kind: string, studentWords: string[], openQuestion: string): boolean {
+  if (!openQuestion || !["formula", "definition"].includes(kind)) return false;
+  const last = studentWords.slice(-2).join(" ");
+  return !/\b(?:what(?:'s| is| are)|formula|rule|law|identity|remind|forgot|forget|don'?t (?:know|remember|get|understand)|do not (?:know|understand)|confus\w*|lost|stuck|no idea|explain|define|meaning|mean|teach|learn|from scratch)\b/i.test(last);
+}
+
 /** The tutor says it is putting something on the board (or that it is there). Pure. */
 export function promisesBoard(tutorText: string): boolean {
   return /\b(?:put|putting|write|writing|wrote|written|draw|drawing|drew|add|adding|added|up)\b[^.?!]{0,40}\bboard\b|\bon the board\b|\bon the paper\b|\bon the whiteboard\b|\bsur le tableau\b/i.test(String(tutorText || ""));
@@ -251,6 +259,7 @@ export async function writeBoard(input: { exchange: string; board: BoardEntry[];
     const earned = grounded.filter((e) => {
       if (typeof e.text !== "string") return true;
       const kind = String(e.kind);
+      if (hintedRuleHeld(kind, studentWords, openQuestion)) { applied.dropped.push(`${kind}: a rule the tutor only hinted at, held until the student uses it: ${e.text.slice(0, 80)}`); return false; }
       if (input.early && !SETUP.has(kind)) { applied.dropped.push(`${kind}: held back until the student has said it, not written yet: ${e.text.slice(0, 80)}`); return false; }
       if (!["result", "summary", "step", "insight", "note", "strategy", "gap"].includes(kind)) return true;
       const stripped = plainDigits(e.text).replace(/\\text\{[^}]*\}/g, " ").replace(/\\[a-zA-Z]+/g, " ").replace(/_\{[^}]*\}|_\d+|\^\{[^}]*\}|\^\d+/g, " ").replace(/[A-Za-z]\d+|\d+[A-Za-z]/g, " ");
