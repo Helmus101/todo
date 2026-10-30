@@ -27,3 +27,16 @@ export function isOnlyAQuestion(tutorText: string): boolean {
 }
 
 export const EXPLAIN_NOW_NOTE = "(Private note for you, not from the student: they have now said they don't know twice on this step. Explain it now: state the idea in full in plain words, with a tiny worked example on a different case, then give them a similar one to try. Do not ask another guiding question first.)";
+
+const LATIN_SCRIPT_LANGS = /^(?:en|fr|es|de|it|pt|nl|pl|sv|da|no|nb|fi|ro|cs|sk|hu|tr|id|ms|vi|ca|hr|sl|lt|lv|et)\b/i;
+/** Speech recognition heard noise as words of another script ("뚜루뚜루 뚜루" in an English session), or nothing but symbols: not something the
+ *  student said. Only for languages written in Latin script; a stray Greek letter (θ, π) inside a sentence is fine. Pure. */
+export function unclearSpeech(text: string, lang = "en"): boolean {
+  const t = String(text || "").trim();
+  if (!t) return false;
+  const letters = [...t].filter((ch) => /\p{L}/u.test(ch));
+  if (!letters.length) return !/\d/.test(t);
+  if (!LATIN_SCRIPT_LANGS.test(lang || "en")) return false;
+  const latin = letters.filter((ch) => /\p{Script=Latin}/u.test(ch)).length;
+  return latin / letters.length < 0.5;
+}

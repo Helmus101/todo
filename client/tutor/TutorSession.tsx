@@ -28,7 +28,7 @@ import { classifySafety, crisisCardText } from "../../shared/safety.ts";
 import { exchangeText } from "../../shared/liveTutor.ts";
 import { toSpeakableText } from "../voice/useSpeechSynthesis.ts";
 import { buttonMessage, deviceStateOf } from "../../shared/deviceProtocol.ts";
-import { EXPLAIN_NOW_NOTE, isOnlyAQuestion, nextStuckCount } from "../../shared/stuck.ts";
+import { EXPLAIN_NOW_NOTE, isOnlyAQuestion, nextStuckCount, unclearSpeech } from "../../shared/stuck.ts";
 import { PageTour } from "../PageTour.tsx";
 import { TOURS } from "../tours.ts";
 import { ibStartChips, type IbSubject } from "../../shared/ibSubjectList.ts";
@@ -510,9 +510,18 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
   const [boardPromised, setBoardPromised] = useState(false);
   useEffect(() => { if (!boardPromised) return; const t = setTimeout(() => setBoardPromised(false), 25_000); return () => clearTimeout(t); }, [boardPromised]);
   const [boardNote, setBoardNote] = useState<string | null>(null); // shown when the board writer fails, so a missing line is never a silent mystery
-  const onLiveTurn = useCallback((who: "you" | "otto", text: string) => {
+  const onLiveTurn = useCallback((who: "you" | "otto", rawText: string) => {
     const t = taskRef.current;
-    if (!t || !text.trim()) return;
+    if (!t || !rawText.trim()) return;
+    // Speech recognition sometimes hears noise as another language ("뚜루뚜루", "Amai, ah nee"): that is not something the student said. It is
+    // shown as not caught and never reaches the board writer; the voice heard the audio itself and asks again.
+    const text = who === "you" && unclearSpeech(rawText, getLanguage()) ? "(didn't catch that)" : rawText;
+    if (text === "(didn't catch that)") {
+      const chat = setLocalChat(t.id, [...(t.chat || []), { role: "user", text, at: new Date().toISOString() } as any], userId);
+      taskRef.current = { ...t, chat };
+      setTask((prev) => (prev ? { ...prev, chat } : prev));
+      return;
+    }
     turnsRef.current.push({ who, text });
     // Backstop for "two failed tries means explain": after two "I don't know" turns, if the tutor still only asks a guiding
     // question, nudge it (privately) to explain. Sent once per streak.
@@ -526,11 +535,11 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
           setSafetyCard(crisisCardText(getLanguage()));
           if (liveRef.current.status === "live") liveRef.current.sendText(`[${sessionNoteTag}] (Private note for you, not from the student: they may be in distress. Put the lesson down. In one or two warm sentences say you are glad they said it and that a trusted adult or the help line on their screen can help right now. Do not counsel, diagnose or continue the exercise.)`);
         } else if (hit.kind === "jailbreak" || hit.kind === "sexual" || hit.kind === "violence") {
-          if (liveRef.current.status === "live") liveRef.current.sendText(`[${sessionNoteTag}] (Private note for you, not from the student: that request is outside what you do. Decline in one calm sentence, without lecturing or repeating it, and bring them back to the work.)`);
+          if (liveRef.current.status === "live") liveRef.current.sendText(`[${sessionNoteTag}] (Private note for you, not from the student: that request is outside what you do. Decline in one calm sentence, without lecturing or repeating it, and bring them back to the work.)`, false);
         }
       }
     }
-    else if (stuckRef.current >= 2 && isOnlyAQuestion(text) && liveRef.current.status === "live") { stuckRef.current = 0; liveRef.current.sendText(`[${sessionNoteTag}] ${EXPLAIN_NOW_NOTE}`); }
+    else if (stuckRef.current >= 2 && isOnlyAQuestion(text) && liveRef.current.status === "live") { stuckRef.current = 0; liveRef.current.sendText(`[${sessionNoteTag}] ${EXPLAIN_NOW_NOTE}`, false); }
     const chat = setLocalChat(t.id, [...(t.chat || []), { role: who === "you" ? "user" : "assistant", text, at: new Date().toISOString() } as any], userId);
     taskRef.current = { ...t, chat };
     setTask((prev) => (prev ? { ...prev, chat } : prev));
@@ -553,7 +562,7 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
         // EGRESS/CPU: the writer only needs the recent lines, not the whole paper, and never the drawings.
         const lean = (t.board || []).slice(-16).map((e: any) => (e && e.svg ? { ...e, svg: undefined } : e));
         // A slow board call must never hold up the ones behind it: after 40 s it is given up on.
-        const callBoard = () => Promise.race([api.liveBoard(exchangeText(turns), lean, t.sourceSubject, exchangeText((t.chat || []).slice(-14, Math.max(0, (t.chat || []).length - inChat)).map((m) => ({ who: m.role === "user" ? "you" as const : "otto" as const, text: String(m.text || "").slice(0, 400) }))), getLanguage(), early), new Promise<{ board: any[] }>((_, rej) => setTimeout(() => rej(new Error("board timeout")), 40_000))]);
+        const callBoard = () => Promise.race([api.liveBoard(exchangeText(turns), lean, t.sourceSubject, exchangeText((t.chat || []).slice(-14, Math.max(0, (t.chat || []).length - inChat)).map((m) => ({ who: m.role === "user" ? "you" as const : "otto" as const, text: String(m.text || "").slice(0, 400) }))), getLanguage(), early, liveRef.current.toolMode), new Promise<{ board: any[] }>((_, rej) => setTimeout(() => rej(new Error("board timeout")), 40_000))]);
         // One quiet retry: a slow or failed pass must not leave the paper behind the conversation (the problem just posed would never appear).
         // While the provider is failing (502), the early passes stop and nothing is retried twice: they only burn quota and flood the console.
         if (early && Date.now() < boardBackoffRef.current) return;
@@ -567,8 +576,8 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
           // Walking back an agreement is rare by design: at most 2 a sitting and never twice within 6 passes, however sure a check sounds.
           if (flaggedClaimsRef.current.size >= 2 || boardPassRef.current - lastFlagPassRef.current < 6) continue;
           flaggedClaimsRef.current.add(claim); lastFlagPassRef.current = boardPassRef.current;
-          if (claim.startsWith("VERIFIED:")) { liveRef.current.sendText(`[${sessionNoteTag}] (Private note for you, not from the student: a separate check recomputed the step you just agreed to, from the problem, and found it wrong. ${claim.slice(9).trim()}. Recompute that step yourself NOW. If it is truly wrong, say plainly and kindly that you were wrong to agree, and ask them to recheck that exact step; do not give them the corrected value. If your own recomputation shows it is actually right, say nothing about this note and carry on.)`); continue; }
-          liveRef.current.sendText(`[${sessionNoteTag}] (Private note for you, not from the student: an automatic check read the step you just agreed to as the numbers ${claim}, and that does not hold. The check can mis-hear a spoken step, so FIRST recompute that exact step yourself from what the student really said and what is on the board. If it is truly wrong, say plainly that you were wrong to agree and ask them to recheck that exact step, without giving the corrected value. If it is actually right, say nothing about this note and carry on exactly as you were; never doubt a correct step, and never undo a correct confirmation.)`);
+          if (claim.startsWith("VERIFIED:")) { liveRef.current.sendText(`[${sessionNoteTag}] (Private note for you, not from the student: a separate check recomputed the step you just agreed to, from the problem, and found it wrong. ${claim.slice(9).trim()}. Recompute that step yourself NOW. If it is truly wrong, say plainly and kindly that you were wrong to agree, and ask them to recheck that exact step; do not give them the corrected value. If your own recomputation shows it is actually right, say nothing about this note and carry on.)`, false); continue; }
+          liveRef.current.sendText(`[${sessionNoteTag}] (Private note for you, not from the student: an automatic check read the step you just agreed to as the numbers ${claim}, and that does not hold. The check can mis-hear a spoken step, so FIRST recompute that exact step yourself from what the student really said and what is on the board. If it is truly wrong, say plainly that you were wrong to agree and ask them to recheck that exact step, without giving the corrected value. If it is actually right, say nothing about this note and carry on exactly as you were; never doubt a correct step, and never undo a correct confirmation.)`, false);
         }
         if (!r.board?.length) return;
         const cur = sessionTask();
@@ -586,6 +595,7 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
   const earlyRef = useRef({ len: 0, at: 0, turn: 0 });
   const earlyBoard = useCallback((you: string, otto: string) => {
     const e = earlyRef.current;
+    if (liveRef.current.toolMode) return; // Otto writes as it speaks: no early pass needed
     if (!otto || Date.now() - e.at < 3500) return;
     const end = Math.max(otto.lastIndexOf(". "), otto.lastIndexOf("? "), otto.lastIndexOf("! "), /[.?!]$/.test(otto) ? otto.length - 1 : -1);
     if (end < 0) return;
@@ -598,8 +608,37 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
   // too) and handed to Otto, who starts from it.
   const [attaching, setAttaching] = useState(false);
   const attachRef = useRef<(files: File[]) => void>(() => {});
+  // Otto's pen: the voice model's write_board call goes through the server's checks; the lines land on the board and the result (what is written,
+  // what was refused and why, the board with its line numbers) goes back to the voice.
+  const onWriteBoard = useCallback(async (args: any, said: { you: string; otto: string }) => {
+    const t = taskRef.current;
+    if (!t) throw new Error("no session");
+    const recentTurns = [
+      ...(t.chat || []).slice(-8).map((m) => ({ who: m.role === "user" ? "you" as const : "otto" as const, text: String(m.text || "").slice(0, 400) })),
+      ...(said.you.trim() ? [{ who: "you" as const, text: said.you.trim() }] : []),
+      ...(said.otto.trim() ? [{ who: "otto" as const, text: said.otto.trim() }] : []),
+    ];
+    const lean = (t.board || []).slice(-120).map((e: any) => (e && (e.svg || e.diagram) ? { ...e, svg: undefined, diagram: undefined } : e));
+    setBoardPending((n) => n + 1);
+    try {
+      const r = await api.liveWrite(Array.isArray(args?.lines) ? args.lines : [], lean, exchangeText(recentTurns));
+      const cur = taskRef.current;
+      if (cur && cur.id === t.id && (r.board.length || r.removed.length)) {
+        if ((cur.board || []).length) { boardHistoryRef.current = [...boardHistoryRef.current, { taskId: cur.id, board: cur.board || [] }].slice(-20); setUndoCount(boardHistoryRef.current.length); }
+        const merged = mergeBoardById((cur.board || []).filter((e: any) => !r.removed.includes(e.id)), r.board);
+        setLocalBoard(cur.id, merged, userId);
+        taskRef.current = { ...cur, board: merged };
+        setTask((prev) => (prev && prev.id === cur.id ? { ...prev, board: merged } : prev));
+      }
+      setBoardNote(null);
+      return { written: r.board.map((e: any) => String(e.text || "").slice(0, 160)), refused: r.refused.filter((x) => x.line || x.reason).slice(0, 6), board: r.listing };
+    } finally { setBoardPending((n) => Math.max(0, n - 1)); setBoardPromised(false); }
+  }, [userId]);
+  const lastChatAt = Date.parse(String((task?.chat || []).at(-1)?.at || ""));
   const live = useGeminiLive({
     subject: task?.sourceSubject,
+    onWriteBoard,
+    quietResume: Number.isFinite(lastChatAt) && Date.now() - lastChatAt < 30 * 60_000,
     pastSessions: task ? sessionMemoryForPrompt(pastSessions, task.sourceSubject, Date.now(), openerLang) : undefined,
     resuming: (task?.chat?.length || 0) > 0,
     resumeTail: (task?.chat || []).slice(-8).map((m) => `${m.role === "user" ? "Student" : "Otto"}: ${String(m.text || "")}`),

@@ -206,7 +206,7 @@ export function tutorExplained(exchange: string): boolean {
   return /\b(?:for example|for instance|means|is the (?:opposite|inverse|same)|opposite of|equals?|is called|defined as|the rule|formula|because|so that|therefore|works like|think of)\b/i.test(tutor) && (/\d|\$|=|\bsquared|\bpower\b|\bbase\b|\bderivative\b|\bintegral\b/i.test(tutor) || tutor.split(/\s+/).length > 30);
 }
 
-export async function writeBoard(input: { exchange: string; board: BoardEntry[]; subject?: string; history?: string; language?: string; early?: boolean }, tokens: { in: number; out: number; cachedIn: number }): Promise<{ board: BoardEntry[]; dropped: string[]; concepts: any[]; remember?: any[]; flags: string[] }> {
+export async function writeBoard(input: { exchange: string; board: BoardEntry[]; subject?: string; history?: string; language?: string; early?: boolean; toolMode?: boolean }, tokens: { in: number; out: number; cachedIn: number }): Promise<{ board: BoardEntry[]; dropped: string[]; concepts: any[]; remember?: any[]; flags: string[] }> {
   // Runs alongside the board call, so it adds no waiting: wrong numeric claims the tutor just agreed to (see checkStudentClaims).
   const flagsP: Promise<string[]> = input.early ? Promise.resolve([] as string[]) : Promise.all([
     checkStudentClaims(input.exchange, tokens).catch((): string[] => []),
@@ -216,7 +216,11 @@ export async function writeBoard(input: { exchange: string; board: BoardEntry[];
   const system = BOARD_WRITER_PROMPT + (input.language ? `\n\nLANGUAGE: the student works in ${input.language}. Write every board line, heading, option and label in ${input.language} (maths stays LaTeX). Op names and kinds stay as specified.` : "") + (canDraw ? DRAW_REFERENCE : "") + `\n\nTHE BOARD (margin numbers #n are what you point at)${boardSurfaceBlock(input.board, []) || ": empty."}`;
   // The tutor's closing question is still UNANSWERED: it is shown to the writer separately, so the working for it is never mistaken for something the student reached.
   const { finished, openQuestion } = splitOpenQuestion(input.exchange.slice(0, 4000));
-  const user = `${input.subject ? `Subject: ${input.subject}\n` : ""}${input.history ? `EARLIER IN THIS SESSION (context only: it tells you what a short answer like "two, right?" refers to; do NOT rewrite what is already on the board):\n${input.history.slice(-2500)}\n\n` : ""}LATEST EXCHANGE (what has been said and settled):\n${finished}${openQuestion ? `\n\nTHE TUTOR THEN ASKED THE STUDENT (still unanswered: never write its answer or its working; if it poses a NEW problem, WRITE that problem now as a task line in LaTeX, without its answer; if it is only the next step or sub-question of the problem already on the board, write NO task line for it: the problem line already carries it):\n${openQuestion}` : ""}`;
+  // toolMode: the tutor writes the board itself (write_board). This pass then records only what the tutor may have missed: the student's own
+  // working, and pictures. Problems, rules, explanations and corrections are the tutor's.
+  const TOOL_KINDS = new Set(["result", "step", "gap", "insight", "choice", "graph", "svg", "diagram", "geometry", "flow", "table", "numberline"]);
+  const toolNote = input.toolMode ? "\n\nTHE TUTOR WRITES THE BOARD ITSELF in this session. You only add (a) a step or result the STUDENT said that is not on the board yet, and (b) a drawing the exchange needs. Never write a problem, heading, rule, formula, definition or explanation: those are the tutor's." : "";
+  const user = `${input.subject ? `Subject: ${input.subject}\n` : ""}${input.history ? `EARLIER IN THIS SESSION (context only: it tells you what a short answer like "two, right?" refers to; do NOT rewrite what is already on the board):\n${input.history.slice(-2500)}\n\n` : ""}LATEST EXCHANGE (what has been said and settled):\n${finished}${openQuestion ? `\n\nTHE TUTOR THEN ASKED THE STUDENT (still unanswered: never write its answer or its working; if it poses a NEW problem, WRITE that problem now as a task line in LaTeX, without its answer; if it is only the next step or sub-question of the problem already on the board, write NO task line for it: the problem line already carries it):\n${openQuestion}` : ""}${toolNote}`;
   const studentWords = input.exchange.split("\n").filter((l) => /^Student:/i.test(l)).map((l) => l.replace(/^Student:\s*/i, ""));
   let remembered: any[] = [];
   const once = async (extra?: string, already: BoardEntry[] = []) => {
@@ -275,20 +279,21 @@ export async function writeBoard(input: { exchange: string; board: BoardEntry[];
     });
     // The tutor is asking about the unit: a unit the student has not said must not already be on the board.
     const askedUnit = /\bunits?\b/i.test(openQuestion);
-    const finalBoard = askedUnit
+    const unitFixed = askedUnit
       ? noPreempt.map((e) => (typeof e.text === "string" && ["result", "formula", "step", "given"].includes(String(e.kind)) ? { ...e, text: stripUnaskedUnit(e.text, studentWords.join(" ")) } : e))
       : noPreempt;
+    const finalBoard = input.toolMode ? unitFixed.filter((e) => { const keep = TOOL_KINDS.has(String(e.kind)); if (!keep) applied.dropped.push(`${e.kind}: the tutor writes that itself`); return keep; }) : unitFixed;
     return { board: finalBoard, dropped: applied.dropped, concepts };
   };
   let out = await once();
   // The board has to match the lesson. Two things are always checked, and one more call fixes both: (1) the tutor explained something and
   // nothing was written (the model was cautious, or the app rejected the ops); (2) the tutor posed a problem and no task line came back.
   // While Otto is still speaking (early) only the problem the tutor just posed is chased: it is the line the student needs in front of them first.
-  const needExplain = !input.early && !out.board.length && tutorExplained(input.exchange);
-  const needProblem = posesProblem(openQuestion) && !problemOnBoard(openQuestion, [...out.board, ...input.board.slice(-12)]);
+  const needExplain = !input.toolMode && !input.early && !out.board.length && tutorExplained(input.exchange);
+  const needProblem = !input.toolMode && posesProblem(openQuestion) && !problemOnBoard(openQuestion, [...out.board, ...input.board.slice(-12)]);
   // The tutor says it is putting something on the board and nothing came out: write the problem or step it means, from the earlier conversation.
   const tutorLines = input.exchange.split("\n").filter((l) => /^Tutor:/i.test(l)).join(" ");
-  const needPromised = !input.early && !out.board.length && !needProblem && promisesBoard(tutorLines);
+  const needPromised = !input.toolMode && !input.early && !out.board.length && !needProblem && promisesBoard(tutorLines);
   const stepSaid = confirmedStudentStep(input.exchange);
   const needStep = !input.early && !!stepSaid && !out.board.some((e) => ["gap", "result", "formula", "insight"].includes(String(e.kind)));
   const needPicture = !input.early && canDraw && wantsPicture(input.exchange) && !out.board.some((e) => ["graph", "svg", "diagram", "geometry", "flow", "table", "numberline"].includes(String(e.kind)));

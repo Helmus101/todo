@@ -4,6 +4,7 @@ import { api } from "../../api.ts";
 import { startMic, Player, type Mic } from "./audio.ts";
 
 import { makeNoteTag } from "../../../shared/noteTag.ts";
+import { BOARD_TOOL_GEMINI, BOARD_TOOL_NAME } from "../../../shared/boardTool.ts";
 export const sessionNoteTag = makeNoteTag(); // per page load; the server puts it in the instructions
 export type LiveStatus = "idle" | "connecting" | "live" | "ended" | "unavailable";
 
@@ -20,6 +21,10 @@ export interface LiveOptions {
   onTurnComplete: () => void;
   /** The words so far, for the live caption. */
   onPartial?: (you: string, otto: string) => void;
+  /** Otto's pen: the voice model called write_board. Resolves to what goes back to the model (what was written, refused, and the board). */
+  onWriteBoard?: (args: any, said: { you: string; otto: string }) => Promise<unknown>;
+  /** The call restarts in the middle of a sitting (a drop, the silence timeout): no greeting, pick up where it was. */
+  quietResume?: boolean;
 }
 
 /** One live conversation with Gemini Live. The voice model IS the tutor (instructions and memory come from the server with the token);
@@ -46,6 +51,17 @@ export function useGeminiLive(opts: LiveOptions) {
   const oaiStreamRef = useRef<MediaStream | null>(null);
   const audioElRef = useRef<HTMLAudioElement | null>(null);
   const providerRef = useRef<"gemini" | "openai">("gemini");
+  // Whether this call's model accepted the write_board tool. Without it the separate board writer writes everything, as before.
+  const [toolMode, setToolMode] = useState(false);
+  const oaiContinueRef = useRef(false); // a tool result went back during this OpenAI response: ask for the rest once it is done
+  const runTool = useCallback(async (name: string, args: any): Promise<unknown> => {
+    if (name !== BOARD_TOOL_NAME || !optsRef.current.onWriteBoard) return { error: "unknown tool" };
+    try { return await optsRef.current.onWriteBoard(args, { you: youRef.current, otto: ottoRef.current }); }
+    catch (e: any) { return { written: [], refused: [{ line: "", reason: "the board could not be reached just now; do not say it is on the board" }], board: "", error: String(e?.message || e).slice(0, 120) }; }
+  }, []);
+  const greeting = () => (optsRef.current.quietResume
+    ? "(The call reconnected in the middle of our session. Do not greet me and do not say welcome back. Say one short sentence that picks up exactly where we were.)"
+    : "(Session started. Greet me briefly.)");
 
   const flush = useCallback(() => {
     const you = youRef.current.trim(), otto = ottoRef.current.trim();
@@ -86,6 +102,10 @@ export function useGeminiLive(opts: LiveOptions) {
     playerRef.current = player;
     const handle = (msg: any) => {
       if (!aliveRef.current) return;
+      // Otto writes on the board: run each call and send the result back, so the voice knows what is on the paper.
+      if (msg.toolCall?.functionCalls?.length) {
+        for (const fc of msg.toolCall.functionCalls) void runTool(fc.name, fc.args).then((result) => { try { sessionRef.current?.sendToolResponse({ functionResponses: [{ id: fc.id, name: fc.name, response: { result } }] }); } catch { /* socket closing */ } });
+      }
       const sc = msg.serverContent;
       if (!sc) return;
       if (sc.inputTranscription?.text || sc.outputTranscription?.text || sc.modelTurn) lastHeardRef.current = Date.now();
@@ -124,14 +144,26 @@ export function useGeminiLive(opts: LiveOptions) {
             case "output_audio_buffer.started": setSpeaking(true); break;
             case "output_audio_buffer.stopped": case "output_audio_buffer.cleared": setSpeaking(false); break;
             case "input_audio_buffer.speech_started": flush(); break;
-            case "response.done": flush(); optsRef.current.onTurnComplete(); break;
+            case "response.function_call_arguments.done": {
+              let args: any = {};
+              try { args = JSON.parse(String(ev.arguments || "{}")); } catch { /* malformed: the tool answers with nothing written */ }
+              void runTool(String(ev.name || ""), args).then((result) => {
+                try { dcRef.current?.send(JSON.stringify({ type: "conversation.item.create", item: { type: "function_call_output", call_id: ev.call_id, output: JSON.stringify(result) } })); oaiContinueRef.current = true; } catch { /* closing */ }
+              });
+              break;
+            }
+            case "response.done":
+              flush(); optsRef.current.onTurnComplete();
+              // The response ended on a board write: let Otto carry on speaking now that it knows what was written.
+              if (oaiContinueRef.current) { oaiContinueRef.current = false; try { dcRef.current?.send(JSON.stringify({ type: "response.create" })); } catch { /* closing */ } }
+              break;
             default: break;
           }
         };
         dc.onmessage = (e) => { try { handleOai(JSON.parse(e.data)); } catch { /* not ours */ } };
         dc.onopen = () => {
           // The model speaks first: a plain text turn, then ask for a response.
-          dc.send(JSON.stringify({ type: "conversation.item.create", item: { type: "message", role: "user", content: [{ type: "input_text", text: "(Session started. Greet me briefly.)" }] } }));
+          dc.send(JSON.stringify({ type: "conversation.item.create", item: { type: "message", role: "user", content: [{ type: "input_text", text: greeting() }] } }));
           dc.send(JSON.stringify({ type: "response.create" }));
         };
         pc.onconnectionstatechange = () => { if (aliveRef.current && ["failed", "closed", "disconnected"].includes(pc.connectionState)) teardown("ended"); };
@@ -140,13 +172,14 @@ export function useGeminiLive(opts: LiveOptions) {
         if (!r.ok) throw Object.assign(new Error(`The voice service refused the call (${r.status}).`), { status: 503 });
         await pc.setRemoteDescription({ type: "answer", sdp: await r.text() });
         if (!aliveRef.current) return;
+        setToolMode(!!(tok as any).tools && !!optsRef.current.onWriteBoard);
         liveSinceRef.current = Date.now(); lastHeardRef.current = Date.now(); setStatus("live");
       };
       const tryGemini = async (tok: Cred) => {
       providerRef.current = "gemini";
       if (!playerRef.current) { player = new Player(setSpeaking); player.unlock(); playerRef.current = player; }
       const ai = new GoogleGenAI({ apiKey: tok.token, httpOptions: { apiVersion: "v1alpha" } });
-      const config = {
+      const baseConfig = {
         responseModalities: [Modality.AUDIO],
         systemInstruction: tok.instructions,
         inputAudioTranscription: {},
@@ -154,9 +187,12 @@ export function useGeminiLive(opts: LiveOptions) {
         speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: "Charon" } } },
       } as any;
       // Try the model ids in order: Google renames its live models often, so one that is refused (not found / not supported) just moves on.
-      let session: any = null; const modelErrs: string[] = [];
-      for (const model of tok.models?.length ? tok.models : [tok.model]) {
+      // Each model is tried with Otto's pen (the write_board tool) first; a model that refuses tools is tried again without, and the board writer then writes everything.
+      let session: any = null; const modelErrs: string[] = []; let withTools = false;
+      const attempts = (tok.models?.length ? tok.models : [tok.model]).flatMap((model) => (optsRef.current.onWriteBoard ? [{ model, tools: true }, { model, tools: false }] : [{ model, tools: false }]));
+      for (const { model, tools } of attempts) {
         if (!aliveRef.current) return;
+        const config = tools ? { ...baseConfig, tools: [{ functionDeclarations: [BOARD_TOOL_GEMINI] }] } : baseConfig;
         try {
           session = await new Promise<any>((resolve, reject) => {
             let opened: any = null, connecting: Promise<any> | null = null, settled = false;
@@ -173,8 +209,9 @@ export function useGeminiLive(opts: LiveOptions) {
             });
             connecting.then((sess: any) => { opened = sess; }, (e: any) => done(() => reject(e)));
           });
+          withTools = tools;
           break;
-        } catch (e: any) { modelErrs.push(`${model}: ${String(e?.message || e).slice(0, 110)}`); session = null; }
+        } catch (e: any) { modelErrs.push(`${model}${tools ? " (with the board tool)" : ""}: ${String(e?.message || e).slice(0, 110)}`); session = null; }
       }
       if (!session) throw Object.assign(new Error(modelErrs.join("; ") || "no model accepted the call"), { status: 503 });
       if (!aliveRef.current) { try { session.close(); } catch { /* */ } return; }
@@ -183,10 +220,11 @@ export function useGeminiLive(opts: LiveOptions) {
       // The call may have been ended while the microphone was still starting: then the microphone must not stay open.
       if (!aliveRef.current) { mic.stop(); try { session.close(); } catch { /* */ } return; }
       micRef.current = mic;
+      setToolMode(withTools);
       liveSinceRef.current = Date.now(); lastHeardRef.current = Date.now(); setStatus("live");
       window.setTimeout(() => { if (aliveRef.current && player.state !== "running") setBlocked(true); }, 800);
       // The model speaks first: nudge it so it greets from what it knows.
-      session.sendClientContent({ turns: [{ role: "user", parts: [{ text: "(Session started. Greet me briefly.)" }] }], turnComplete: true });
+      session.sendClientContent({ turns: [{ role: "user", parts: [{ text: greeting() }] }], turnComplete: true });
       };
       // Gemini first; if it cannot connect (or isn't configured), OpenAI takes over. The server sends a credential for each provider it has a key for.
       const creds = (tok.providers?.length ? tok.providers : [tok]) as Array<Cred & { provider?: string }>;
@@ -214,7 +252,7 @@ export function useGeminiLive(opts: LiveOptions) {
       setError(e?.status === 429 ? String(e?.message || "Live voice limit reached for today.") : denied ? "Microphone blocked — allow it for this site and try again." : e?.status === 503 && /set up/i.test(String(e?.message)) ? "Live voice isn't set up on this server (no Gemini or OpenAI key)." : `Live voice couldn't connect. ${String(e?.message || "").replace(/^Error:\s*/, "").slice(0, 280)}`.trim());
       teardown(unavailable ? "unavailable" : "ended");
     }
-  }, [teardown, flush]);
+  }, [teardown, flush, runTool]);
 
   const setMuted = useCallback((m: boolean) => { micRef.current?.setMuted(m); oaiStreamRef.current?.getAudioTracks().forEach((t) => { t.enabled = !m; }); setMutedState(m); }, []);
   /** A picture of the student's drawing, as a video frame: the voice sees it and answers when they next speak. */
@@ -229,21 +267,22 @@ export function useGeminiLive(opts: LiveOptions) {
     if (!s || !m) return false;
     try { s.sendRealtimeInput({ video: { data: m[2], mimeType: m[1] } }); return true; } catch { return false; }
   }, []);
-  /** Something the student TYPED while the call is open: the voice answers it out loud. */
-  const sendText = useCallback((text: string) => {
+  /** Something the student TYPED while the call is open: the voice answers it out loud. `reply: false` (private notes) only adds it to the
+   *  conversation: Otto reads it with the student's next words instead of answering it on its own (which gave two replies to one message). */
+  const sendText = useCallback((text: string, reply = true) => {
     if (providerRef.current === "openai") {
       const dc = dcRef.current;
       if (!dc || dc.readyState !== "open" || !text.trim()) return false;
-      lastHeardRef.current = Date.now();
+      if (reply) lastHeardRef.current = Date.now();
       try {
         dc.send(JSON.stringify({ type: "conversation.item.create", item: { type: "message", role: "user", content: [{ type: "input_text", text }] } }));
-        dc.send(JSON.stringify({ type: "response.create" }));
+        if (reply) dc.send(JSON.stringify({ type: "response.create" }));
         return true;
       } catch { return false; }
     }
     const s = sessionRef.current;
     if (!s || !text.trim()) return false;
-    try { lastHeardRef.current = Date.now(); s.sendClientContent({ turns: [{ role: "user", parts: [{ text }] }], turnComplete: true }); youRef.current += ""; return true; } catch { return false; }
+    try { if (reply) lastHeardRef.current = Date.now(); s.sendClientContent({ turns: [{ role: "user", parts: [{ text }] }], turnComplete: reply }); return true; } catch { return false; }
   }, []);
   /** The play button: one tap lets the browser play Otto's voice. */
   const resumePlayback = useCallback(() => { playerRef.current?.unlock(); void audioElRef.current?.play().catch(() => {}); setBlocked(false); }, []);
@@ -258,5 +297,5 @@ export function useGeminiLive(opts: LiveOptions) {
     }, 5000);
     return () => window.clearInterval(t);
   }, [status, teardown]);
-  return { status, error, speaking, muted, blocked, start, stop, setMuted, sendImage, sendText, resumePlayback };
+  return { status, error, speaking, muted, blocked, toolMode, start, stop, setMuted, sendImage, sendText, resumePlayback };
 }

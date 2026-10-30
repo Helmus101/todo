@@ -10,6 +10,8 @@ import { M, ah, commit, dailyCap, isAdmin, isTutorBlocked, overWeeklyCap, rateLi
 import { backgroundBlock, learningPrefsFrom, mergePrefs } from "../tutor.ts";
 import { selectJournal } from "../journal.ts";
 import { writeBoard } from "../tutorTurn/boardWriter.ts";
+import { applyBoardTool } from "../tutorTurn/boardTool.ts";
+import { BOARD_TOOL_REALTIME } from "../../shared/boardTool.ts";
 import { normalizeStudentModel, emptyStudentModel, recordConceptEvidence } from "../studentModel.ts";
 import * as pronoteSvc from "../pronote.ts";
 import { validNoteTag } from "../../shared/noteTag.ts";
@@ -149,7 +151,7 @@ export function registerTutorRoutes(app: express.Express): void {
       // The browser tries these in order: Gemini Live first (when GEMINI_API_KEY is set), then OpenAI Realtime (a "mini" model, over WebRTC)
       // as the fallback. LIVE_PROVIDER=gemini or =openai pins one. A provider whose credential can't be minted is simply left out.
       const only = process.env.LIVE_PROVIDER;
-      const providers: Array<{ provider: "gemini" | "openai"; token: string; model: string; models: string[]; instructions: string }> = [];
+      const providers: Array<{ provider: "gemini" | "openai"; token: string; model: string; models: string[]; instructions: string; tools?: boolean }> = [];
       if (geminiKey && only !== "openai") {
         try {
           const now = Date.now();
@@ -172,12 +174,13 @@ export function registerTutorRoutes(app: express.Express): void {
           let got = false;
           for (const model of candidates) {
             for (const full of [true, false]) {
-              const session: any = { type: "realtime", model, instructions, output_modalities: ["audio"], audio: { output: { voice: "cedar" }, ...(full ? { input: { transcription: { model: "gpt-4o-mini-transcribe" }, turn_detection: { type: "semantic_vad" } } } : {}) } };
+              // The full session also carries Otto's pen (write_board); the bare fallback has neither, and the board writer then writes everything.
+              const session: any = { type: "realtime", model, instructions, output_modalities: ["audio"], audio: { output: { voice: "cedar" }, ...(full ? { input: { transcription: { model: "gpt-4o-mini-transcribe" }, turn_detection: { type: "semantic_vad" } } } : {}) }, ...(full ? { tools: [BOARD_TOOL_REALTIME], tool_choice: "auto" } : {}) };
               const r = await fetch("https://api.openai.com/v1/realtime/client_secrets", { method: "POST", headers: { Authorization: `Bearer ${openaiKey}`, "Content-Type": "application/json" }, body: JSON.stringify({ session }), signal: AbortSignal.timeout(6000) });
               if (r.ok) {
                 const j: any = await r.json();
                 const value = String(j?.value || j?.client_secret?.value || "");
-                if (value) { providers.push({ provider: "openai", token: value, model, models: [model], instructions }); got = true; break; }
+                if (value) { providers.push({ provider: "openai", token: value, model, models: [model], instructions, tools: full }); got = true; break; }
               }
               detail += `openai ${model} ${r.status}; `;
               if (r.status === 401 || r.status === 403 || r.status === 429) break;
@@ -201,6 +204,17 @@ export function registerTutorRoutes(app: express.Express): void {
 
   // THE BOARD FOR THE LIVE VOICE: after each spoken exchange the browser sends what was said and the board as it stands; one call decides
   // what goes on the paper (the problem, the student's correct steps as Otto's own lines, a takeaway of what was explained, figures).
+  // Otto's pen: the voice model's write_board tool call, relayed by the browser. No model call here, only the guards (shared with the simulator):
+  // the reply goes straight back to the voice model, so it knows what is on the board and what was refused.
+  app.post("/api/tutor/live/write", requireAuth, rateLimit(60, 60_000), dailyCap("live-write", Number(process.env.TUTOR_DAILY_LIVE_WRITE) || 1500), ah(async (req, res) => {
+    const lines = (Array.isArray(req.body?.lines) ? req.body.lines : []).slice(0, 8).filter((l: any) => l && typeof l === "object");
+    // The whole board (up to 120 lines), so the line numbers in the reply match the margin the student sees.
+    const board = (Array.isArray(req.body?.board) ? req.body.board : []).slice(-120).filter((e: any) => e && typeof e.id === "string" && typeof e.kind === "string" && (e.text === undefined || typeof e.text === "string"));
+    const recent = typeof req.body?.recent === "string" ? req.body.recent.slice(-4000) : "";
+    const out = applyBoardTool({ lines, board, recent });
+    res.json({ board: out.written, removed: out.removed, refused: out.refused, listing: out.listing });
+  }));
+
   app.post("/api/tutor/live/board", requireAuth, rateLimit(30, 60_000), dailyCap("live-board", Number(process.env.TUTOR_DAILY_LIVE_BOARD) || 900), ah(async (req, res) => {
     if (overWeeklyCap(req)) { res.status(429).json({ error: "This week's AI allowance is used up. Ask for more usage and it comes back as soon as it's approved.", code: "weekly_cap" }); return; }
     if (isTutorBlocked(req)) { res.status(429).json({ error: "This week's AI allowance is used up. Ask for more usage and it comes back as soon as it's approved.", code: "weekly_cap" }); return; }
@@ -214,7 +228,8 @@ export function registerTutorRoutes(app: express.Express): void {
       const history = typeof req.body?.history === "string" ? req.body.history.slice(-3000) : "";
       const language = isLangCode(req.body?.lang) && req.body.lang !== "en" ? languageName(req.body.lang) : "";
       const early = req.body?.early === true; // written while Otto is still speaking: the board only, the checks and the record come with the pass after the turn
-      const out = await writeBoard({ exchange, board, subject, history, language, early }, tokens);
+      const toolMode = req.body?.toolMode === true; // Otto writes the board itself: this pass only records the student's own working
+      const out = await writeBoard({ exchange, board, subject, history, language, early, toolMode }, tokens);
       const profile = req.session.profile || emptyProfile();
       addUsage(profile, tokens, "chat");
       if (early) { await commit(req); res.json({ board: out.board }); return; }
