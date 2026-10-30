@@ -19,6 +19,7 @@ import { AddTask, ConnectCard, TaskSkeleton } from "./pages/Dashboard.tsx";
 import { PrivacyBody, ResearchPageBody, TermsBody } from "./pages/Legal.tsx";
 import { PAGE_META, ORIGIN } from "../shared/seo.ts";
 import { BlogIndexPage, BlogPostPage } from "./pages/Blog.tsx";
+import { applyPendingHandled, loadPendingHandled, savePendingHandled, type PendingHandled } from "./pendingHandled.ts";
 
 // Heavy routes load on demand (each is its own chunk) so the landing/login visit doesn't download the whole study + tutor app.
 const StudyMode = lazy(() => import("./study/StudyMode.tsx").then((m) => ({ default: m.StudyMode })));
@@ -466,8 +467,19 @@ export function App() {
   // `sweepIfDue`/`kick` response that started before a confirm and resolves after it can silently
   // overwrite the just-confirmed task back to its old status, purely on network timing.
   const localMutations = useRef(new Map<string, number>());
+  const pendingHandled = useRef<PendingHandled | null>(null);
+  const healing = useRef(new Map<string, number>());
   const patchTask = useCallback((u: WebTask) => {
     localMutations.current.set(u.id, Date.now());
+    // Finished or dismissed on this device: remembered until the server shows it handled (see client/pendingHandled.ts).
+    {
+      const user = statusRef.current?.user || null;
+      const cur = pendingHandled.current ?? loadPendingHandled(user);
+      if (u.status === "done" || u.status === "dismissed") pendingHandled.current = { ...cur, [u.id]: { status: u.status, at: Date.now() } };
+      else if (cur[u.id]) { const { [u.id]: _gone, ...rest } = cur; pendingHandled.current = rest; } // a rolled-back confirm is not remembered as finished
+      else pendingHandled.current = cur;
+      savePendingHandled(user, pendingHandled.current);
+    }
     setTasks((prev) => prev.map((x) => (x.id === u.id ? u : x)));
   }, []);
 
@@ -512,7 +524,18 @@ export function App() {
       p.source === "manual" && 
       now - (Date.parse(p.createdAt || "") || 0) < RECENT_MS
     );
-    return [...recentlyMissing, ...merged];
+    // Safety net: a task finished on this device that the server still shows open (a lost write, a stale copy) stays finished, and the
+    // confirmation is sent again (at most once a minute per task) until the server agrees.
+    const user = statusRef.current?.user || null;
+    const applied = applyPendingHandled([...recentlyMissing, ...merged], pendingHandled.current ?? loadPendingHandled(user), now);
+    pendingHandled.current = applied.pending;
+    savePendingHandled(user, applied.pending);
+    for (const h of applied.heal) {
+      if (now - (healing.current.get(h.id) || 0) < 60_000) continue;
+      healing.current.set(h.id, now);
+      void (h.status === "done" ? api.confirm(h.id) : api.dismiss(h.id)).catch(() => {});
+    }
+    return applied.list;
   };
 
   // Pull the server's task list (cheap GET; also reconciles cross-device state server-side). Always resolves
@@ -1217,7 +1240,7 @@ export function App() {
                           retrying={retryingIds.includes(t.id)}
                           isNew={!seenTasks.has(t.id) && !isHandled(t.status) && !isInFlight(t.status)}
                           onOpen={() => navigate(`task/${t.id}`)}
-                          onChange={setTasks}
+                          onChange={(l) => setTasks((prev) => keepLocalHandled(prev, l))}
                           onTask={patchTask}
                           onConfirmed={flagJustDone}
                           onEnterStudyMode={STUDY_MODE_ENABLED && !isPhone ? () => { setStudyModeTask(t); navigate(`study/${t.id}`); } : undefined}
@@ -1254,7 +1277,7 @@ export function App() {
                                   retrying={retryingIds.includes(t.id)}
                                   isNew={!seenTasks.has(t.id) && !isHandled(t.status) && !isInFlight(t.status)}
                                   onOpen={() => navigate(`task/${t.id}`)}
-                                  onChange={setTasks}
+                                  onChange={(l) => setTasks((prev) => keepLocalHandled(prev, l))}
                                   onTask={patchTask}
                                   onConfirmed={flagJustDone}
                                   onEnterStudyMode={STUDY_MODE_ENABLED && !isPhone ? () => { setStudyModeTask(t); navigate(`study/${t.id}`); } : undefined}
@@ -1310,7 +1333,7 @@ export function App() {
                   <TaskFocus
                     task={openTask}
                     retrying={retryingIds.includes(openTask.id)}
-                    onChange={setTasks}
+                    onChange={(l) => setTasks((prev) => keepLocalHandled(prev, l))}
                     onTask={patchTask}
                     onConfirmed={flagJustDone}
                     onLeft={() => navigate("")}

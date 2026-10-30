@@ -816,6 +816,16 @@ check("structured settings survive merge", pm.responseStyle === "concise");
   check("pre-empting: a board line that uses the numbers of the question just asked and ends in an unsaid result is the answer; the formula alone is not", bw.answersOpenQuestion("$V = 0.0500 \\times 22.7 = 1.14\\ \\text{dm}^3$", "So what's 0.0500 times 22.7?", new Set([0.05, 22.7])) && !bw.answersOpenQuestion("$V = n \\times 22.7$", "So what's 0.0500 times 22.7?", new Set([0.05, 22.7])) && !bw.answersOpenQuestion("$V = 0.0500 \\times 22.7 = 1.14$", "So what's 0.0500 times 22.7?", new Set([0.05, 22.7, 1.14])));
   check("pre-empting: a question worded in words still blocks a line that computes to an unsaid value (2^4 = 16 before the student says 16), but not once 16 was said", bw.answersOpenQuestion("$\\log_2(x)=4 \\Rightarrow x=2^4=16$", "What is two to the power of four?", new Set([2, 4])) && !bw.answersOpenQuestion("$x=2^4=16$", "What is two to the power of four?", new Set([2, 4, 16])) && !bw.answersOpenQuestion("$3\\log_2(x)=12$", "What can you do with that?", new Set([2, 3, 12])));
   check("hinted rules: a formula the tutor names as a hint while waiting for the student stays off the board, unless the student asked for it; no open question means it is written", bw.hintedRuleHeld("formula", ["I have the equation, not sure how to start"], "Can you use the power rule on the first term?") && !bw.hintedRuleHeld("formula", ["what is the power rule"], "Can you apply it?") && !bw.hintedRuleHeld("formula", ["ok"], "") && !bw.hintedRuleHeld("result", ["ok"], "What next?") && bw.hintedRuleHeld("definition", ["mm"], "How would you combine them?"));
+  { const { applyPendingHandled, PENDING_TTL_MS } = await import("../client/pendingHandled.ts");
+    const mk = (id, status) => ({ id, title: id, status, createdAt: "2026-10-30T10:00:00Z", updatedAt: "2026-10-30T10:00:00Z", quadrant: "q2", source: "manual" });
+    const now = Date.parse("2026-10-30T12:00:00Z");
+    const stale = applyPendingHandled([mk("a", "ready"), mk("b", "ready")], { a: { status: "done", at: now - 60_000 } }, now);
+    check("a task finished on this device that the server still shows open is shown as done again and flagged for a re-send", stale.list.find((t) => t.id === "a").status === "done" && stale.list.find((t) => t.id === "b").status === "ready" && stale.heal.length === 1 && stale.heal[0].id === "a" && stale.pending.a);
+    const agreed = applyPendingHandled([mk("a", "done")], { a: { status: "done", at: now - 60_000 } }, now);
+    const gone = applyPendingHandled([mk("b", "ready")], { a: { status: "dismissed", at: now - 60_000 } }, now);
+    const old = applyPendingHandled([mk("a", "ready")], { a: { status: "done", at: now - PENDING_TTL_MS - 1 } }, now);
+    check("the memory clears once the server agrees, the task is gone, or a day has passed", Object.keys(agreed.pending).length === 0 && agreed.heal.length === 0 && Object.keys(gone.pending).length === 0 && Object.keys(old.pending).length === 0 && old.list[0].status === "ready");
+  }
   { const bt = await import("../server/tutorTurn/boardTool.ts");
     const { unclearSpeech } = await import("../shared/stuck.ts");
     const B = [{ id: "a", kind: "given", text: "Solve $\\frac{1}{2}\\log\\frac{1}{4} + \\log k = \\log(\\frac{1}{4}k - 3)$", at: "2026-10-30T10:00:00Z" }];
