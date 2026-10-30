@@ -229,7 +229,8 @@ export function registerTutorRoutes(app: express.Express): void {
       const language = isLangCode(req.body?.lang) && req.body.lang !== "en" ? languageName(req.body.lang) : "";
       const early = req.body?.early === true; // written while Otto is still speaking: the board only, the checks and the record come with the pass after the turn
       const toolMode = req.body?.toolMode === true; // Otto writes the board itself: this pass only records the student's own working
-      const out = await writeBoard({ exchange, board, subject, history, language, early, toolMode }, tokens);
+      const penWrote = req.body?.penWrote === true; // and when its pen wrote during this exchange, only a missing drawing
+      const out = await writeBoard({ exchange, board, subject, history, language, early, toolMode, penWrote }, tokens);
       const profile = req.session.profile || emptyProfile();
       addUsage(profile, tokens, "chat");
       if (early) { await commit(req); res.json({ board: out.board }); return; }

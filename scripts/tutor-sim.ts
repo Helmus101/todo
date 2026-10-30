@@ -209,7 +209,7 @@ async function runPersona(p: Persona): Promise<{ flags: { turn: number; kind: st
     // The board writer, in tool mode: records the student's own working the tutor did not write, and runs the step checks.
     const chatLines = history.slice(-14, -2).map((x) => ({ who: x.who === "student" ? "you" as const : "otto" as const, text: x.text.slice(0, 400) }));
     try {
-      const out = await writeBoard({ exchange: exchangeText([{ who: "you", text: student }, { who: "otto", text: reply }]), board: board.slice(-16), subject: p.subject, history: exchangeText(chatLines), toolMode: true }, tokens);
+      const out = await writeBoard({ exchange: exchangeText([{ who: "you", text: student }, { who: "otto", text: reply }]), board: board.slice(-16), subject: p.subject, history: exchangeText(chatLines), toolMode: true, penWrote: t.written.length > 0 }, tokens);
       for (const e of out.board) console.log(`   writer + [${e.kind}] ${cut(String(e.text || ""), 120)}`);
       board = mergeById(board, out.board);
       for (const f of out.flags || []) flags.push({ turn, kind: "second-opinion flag", text: f });

@@ -60,7 +60,8 @@ export function applyBoardTool(input: { lines: BoardToolLine[]; board: BoardEntr
     // A correction replaces the wrong line.
     const target = raw?.replaces !== undefined && raw?.replaces !== null && String(raw.replaces).trim() ? byNumber.get(Number(String(raw.replaces).replace(/^#/, ""))) : undefined;
     if (target) { removed.push(target); board = board.filter((e) => e.id !== target); }
-    ops.push(kind === "focus" ? { op: "topic", cue: 0, text } : { op: "step", cue: 0, kind, text });
+    // "step" is the tool's word for a line of the student's working; on the board that is a "result" line (the kinds the board knows).
+    ops.push(kind === "focus" ? { op: "topic", cue: 0, text } : { op: "step", cue: 0, kind: kind === "step" ? "result" : kind, text });
   }
   const applied = applyOps(ops, { board, problems: [], theirWords: [] });
   for (const d of applied.dropped) refused.push({ line: "", reason: d.replace(/^(?:step|topic): /, "") });

@@ -206,12 +206,11 @@ export function tutorExplained(exchange: string): boolean {
   return /\b(?:for example|for instance|means|is the (?:opposite|inverse|same)|opposite of|equals?|is called|defined as|the rule|formula|because|so that|therefore|works like|think of)\b/i.test(tutor) && (/\d|\$|=|\bsquared|\bpower\b|\bbase\b|\bderivative\b|\bintegral\b/i.test(tutor) || tutor.split(/\s+/).length > 30);
 }
 
-export async function writeBoard(input: { exchange: string; board: BoardEntry[]; subject?: string; history?: string; language?: string; early?: boolean; toolMode?: boolean }, tokens: { in: number; out: number; cachedIn: number }): Promise<{ board: BoardEntry[]; dropped: string[]; concepts: any[]; remember?: any[]; flags: string[] }> {
-  // Runs alongside the board call, so it adds no waiting: wrong numeric claims the tutor just agreed to (see checkStudentClaims).
-  const flagsP: Promise<string[]> = input.early ? Promise.resolve([] as string[]) : Promise.all([
-    checkStudentClaims(input.exchange, tokens).catch((): string[] => []),
-    verifyConfirmedStep({ exchange: input.exchange, history: input.history, board: input.board, subject: input.subject }, tokens).then((f) => (f ? [f] : [])).catch((): string[] => []),
-  ]).then(([a, b]) => [...a, ...b]);
+export async function writeBoard(input: { exchange: string; board: BoardEntry[]; subject?: string; history?: string; language?: string; early?: boolean; toolMode?: boolean; penWrote?: boolean }, tokens: { in: number; out: number; cachedIn: number }): Promise<{ board: BoardEntry[]; dropped: string[]; concepts: any[]; remember?: any[]; flags: string[] }> {
+  // Runs alongside the board call, so it adds no waiting: the step verifier recomputes a step the tutor just agreed to, from the problem. (The older
+  // claim checker, checkStudentClaims, turned spoken steps into equations and misread speech such as "root 1 over 2 is a half" as sqrt(1/2) = 1/2,
+  // which raised false alarms; it no longer feeds the tutor.)
+  const flagsP: Promise<string[]> = input.early ? Promise.resolve([] as string[]) : verifyConfirmedStep({ exchange: input.exchange, history: input.history, board: input.board, subject: input.subject }, tokens).then((f) => (f ? [f] : [])).catch((): string[] => []);
   const canDraw = true; // Unlimited visual artifact capabilities across all subjects
   const system = BOARD_WRITER_PROMPT + (input.language ? `\n\nLANGUAGE: the student works in ${input.language}. Write every board line, heading, option and label in ${input.language} (maths stays LaTeX). Op names and kinds stay as specified.` : "") + (canDraw ? DRAW_REFERENCE : "") + `\n\nTHE BOARD (margin numbers #n are what you point at)${boardSurfaceBlock(input.board, []) || ": empty."}`;
   // The tutor's closing question is still UNANSWERED: it is shown to the writer separately, so the working for it is never mistaken for something the student reached.
@@ -282,7 +281,9 @@ export async function writeBoard(input: { exchange: string; board: BoardEntry[];
     const unitFixed = askedUnit
       ? noPreempt.map((e) => (typeof e.text === "string" && ["result", "formula", "step", "given"].includes(String(e.kind)) ? { ...e, text: stripUnaskedUnit(e.text, studentWords.join(" ")) } : e))
       : noPreempt;
-    const finalBoard = input.toolMode ? unitFixed.filter((e) => { const keep = TOOL_KINDS.has(String(e.kind)); if (!keep) applied.dropped.push(`${e.kind}: the tutor writes that itself`); return keep; }) : unitFixed;
+    // When the tutor's pen already wrote during this exchange, only a drawing can still be missing: text lines would repeat what it wrote in other words.
+    const DRAWN = new Set(["graph", "svg", "diagram", "geometry", "flow", "table", "numberline", "choice"]);
+    const finalBoard = input.toolMode ? unitFixed.filter((e) => { const keep = input.penWrote ? DRAWN.has(String(e.kind)) : TOOL_KINDS.has(String(e.kind)); if (!keep) applied.dropped.push(`${e.kind}: the tutor writes that itself`); return keep; }) : unitFixed;
     return { board: finalBoard, dropped: applied.dropped, concepts };
   };
   let out = await once();

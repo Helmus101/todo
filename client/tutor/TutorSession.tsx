@@ -548,8 +548,11 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
   // `early`: the same pass while Otto is still speaking, on what has been said so far (whole sentences only), so the paper keeps up with the
   // voice. The pass after the turn repeats nothing: it sees the lines the early pass wrote.
   const boardPassRef = useRef(100), lastFlagPassRef = useRef(0), boardBackoffRef = useRef(0);
+  const penWroteRef = useRef(false); // Otto's pen wrote during the current exchange
   const queueBoard = useCallback((turns: { who: "you" | "otto"; text: string }[], early: boolean) => {
     if (!turns.length) return;
+    const penWrote = penWroteRef.current;
+    if (!early) penWroteRef.current = false;
     const inChat = early ? turnsRef.current.length : turns.length;
     setBoardPending((n) => n + 1);
     const forId = taskRef.current?.id; // lines belong to the session they were said in, even if it has ended or another has started
@@ -562,7 +565,7 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
         // EGRESS/CPU: the writer only needs the recent lines, not the whole paper, and never the drawings.
         const lean = (t.board || []).slice(-16).map((e: any) => (e && e.svg ? { ...e, svg: undefined } : e));
         // A slow board call must never hold up the ones behind it: after 40 s it is given up on.
-        const callBoard = () => Promise.race([api.liveBoard(exchangeText(turns), lean, t.sourceSubject, exchangeText((t.chat || []).slice(-14, Math.max(0, (t.chat || []).length - inChat)).map((m) => ({ who: m.role === "user" ? "you" as const : "otto" as const, text: String(m.text || "").slice(0, 400) }))), getLanguage(), early, liveRef.current.toolMode), new Promise<{ board: any[] }>((_, rej) => setTimeout(() => rej(new Error("board timeout")), 40_000))]);
+        const callBoard = () => Promise.race([api.liveBoard(exchangeText(turns), lean, t.sourceSubject, exchangeText((t.chat || []).slice(-14, Math.max(0, (t.chat || []).length - inChat)).map((m) => ({ who: m.role === "user" ? "you" as const : "otto" as const, text: String(m.text || "").slice(0, 400) }))), getLanguage(), early, liveRef.current.toolMode, penWrote), new Promise<{ board: any[] }>((_, rej) => setTimeout(() => rej(new Error("board timeout")), 40_000))]);
         // One quiet retry: a slow or failed pass must not leave the paper behind the conversation (the problem just posed would never appear).
         // While the provider is failing (502), the early passes stop and nothing is retried twice: they only burn quota and flood the console.
         if (early && Date.now() < boardBackoffRef.current) return;
@@ -623,6 +626,7 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
     try {
       const r = await api.liveWrite(Array.isArray(args?.lines) ? args.lines : [], lean, exchangeText(recentTurns));
       const cur = taskRef.current;
+      if (r.board.length) penWroteRef.current = true;
       if (cur && cur.id === t.id && (r.board.length || r.removed.length)) {
         if ((cur.board || []).length) { boardHistoryRef.current = [...boardHistoryRef.current, { taskId: cur.id, board: cur.board || [] }].slice(-20); setUndoCount(boardHistoryRef.current.length); }
         const merged = mergeBoardById((cur.board || []).filter((e: any) => !r.removed.includes(e.id)), r.board);
