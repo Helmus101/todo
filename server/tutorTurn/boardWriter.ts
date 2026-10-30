@@ -34,6 +34,7 @@ WRITE ONLY:
 4. FIGURES that help them see it (draw ops: a graph, geometry, flow / cycle / timeline, table, number line, source...), whenever a picture would teach faster. Draw on an existing graph with "extend" instead of redrawing it.
 
 PACING (the board must never run ahead of the student): the board shows only what the STUDENT has already said or reached, plus what the tutor explained as a general rule or a separate example. It never shows the next step, never the answer to the problem they are working on, and never a worked solution of that problem.
+- THE STUDENT'S OWN PROBLEM: write the working lines the student produced or confirmed. A line the TUTOR supplied (a substitution, a simplified form such as "t = 8 ln 3 / ln 2", a set-up) is written only after the student has repeated it, used it or agreed with it, and never in the same pass in which the tutor first says it while the next question about it is still open. What the tutor TEACHES on request (a definition, a formula the student asked for, a worked example on another case) is written as usual.
 - THE SAME HOLDS FOR EVERY KIND OF QUESTION, not only arithmetic: an algebraic expression, a name or term, a definition, a rule, a reason, a choice between options, a sign, a unit, a graph feature. If the tutor's last question asks the student to produce it ("what is the derivative?", "which rule applies?", "why?", "what do you get when you factorise?"), it goes on the board only after a Student line says it, in the student's own content cleaned into notation. What the tutor merely names or hints at does not count as the student having said it. Until then write the question's setup, never its answer.
 - A number, value or result goes on the board ONLY if it appears in a Student line of this exchange (or is already on the board). If you can compute it but the student has not said it, do not write it, even if the tutor hinted at it or asked about it.
 - Write at most the ONE step the student has just completed correctly. Never write the steps after it, and never a whole calculation chain (for example "$f(0) = \\frac{8}{-1/3} = -24$") unless the student said every part of it.
@@ -295,5 +296,6 @@ export async function writeBoard(input: { exchange: string; board: BoardEntry[];
     if (second.board.length) { const all = [...out.board, ...second.board]; out = { board: [...all.filter((e) => e.kind === "focus"), ...all.filter((e) => e.kind !== "focus")], dropped: out.dropped, concepts: out.concepts.length ? out.concepts : second.concepts }; }
     else console.warn(`[live] board writer still wrote nothing (${(second.dropped.length ? second.dropped : out.dropped).slice(0, 2).join("; ") || "no ops"})`);
   }
-  return { ...out, remember: remembered, flags: await flagsP };
+  // The step checks run beside the board call; the paper never waits for them longer than 8 s (a slow check is skipped, the board is not held up).
+  return { ...out, remember: remembered, flags: await Promise.race([flagsP, new Promise<string[]>((res) => setTimeout(() => res([]), 8000))]) };
 }

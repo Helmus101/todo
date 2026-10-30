@@ -206,7 +206,12 @@ function tutorProviders(): { name: string; client: OpenAI; model: string }[] {
   const out: { name: string; client: OpenAI; model: string }[] = [];
   const geminiKey = process.env.GEMINI_API_KEY;
   if (geminiKey) out.push({ name: "gemini", client: geminiClient(geminiKey), model: GEMINI_TUTOR_MODEL });
-  if (USING_GEMINI) return out; // the whole app is on Gemini: no second provider to fall back to
+  if (USING_GEMINI) {
+    // The whole app is on Gemini, but a rate limit or an outage must not leave the tutor and its board with nothing: DeepSeek stays as the fallback when its key exists.
+    const dk = process.env.DEEPSEEK_API_KEY;
+    if (dk) out.push({ name: "deepseek", client: new OpenAI({ apiKey: dk, baseURL: "https://api.deepseek.com", timeout: 90_000, maxRetries: 0 }), model: LEGACY_DEEPSEEK_MODEL_MAP[process.env.DEEPSEEK_MODEL || ""] || process.env.DEEPSEEK_MODEL || "deepseek-v4-flash" });
+    return out;
+  }
   try {
     out.push({ name: USING_NVIDIA ? "nvidia" : "deepseek", client: deepseekClient(), model: DEEPSEEK_MODEL === "deepseek-v4-pro" ? "deepseek-v4-flash" : DEEPSEEK_MODEL });
   } catch (e: any) {
