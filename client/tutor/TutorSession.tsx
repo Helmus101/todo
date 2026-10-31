@@ -28,7 +28,7 @@ import { classifySafety, crisisCardText } from "../../shared/safety.ts";
 import { exchangeText } from "../../shared/liveTutor.ts";
 import { toSpeakableText } from "../voice/useSpeechSynthesis.ts";
 import { buttonMessage, deviceStateOf } from "../../shared/deviceProtocol.ts";
-import { EXPLAIN_NOW_NOTE, askedToExplain, isOnlyAQuestion, nextStuckCount, unclearSpeech } from "../../shared/stuck.ts";
+import { EXPLAIN_NOW_NOTE, MISSING_OPTIONS_NOTE, askedToExplain, citesMissingOptions, isOnlyAQuestion, nextStuckCount, unclearSpeech } from "../../shared/stuck.ts";
 import { PageTour } from "../PageTour.tsx";
 import { TOURS } from "../tours.ts";
 import { ibStartChips, type IbSubject } from "../../shared/ibSubjectList.ts";
@@ -542,6 +542,8 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
       }
     }
     else {
+      // Invented context ("that matches option A" when nobody gave options): tell it privately to own the slip at its next turn.
+      if (liveRef.current.status === "live" && citesMissingOptions(text, [...(t.chat || []).map((m: any) => m.text), ...(t.board || []).map((e: any) => e.text)].join("\n"))) liveRef.current.sendText(`[${sessionNoteTag}] (${MISSING_OPTIONS_NOTE})`, false);
       // "I don't know" twice, or "just explain it" once: if the reply is still only a guiding question, nudge it (privately) to explain.
       const wants = wantsExplainRef.current; wantsExplainRef.current = false;
       if ((stuckRef.current >= 2 || wants) && isOnlyAQuestion(text) && liveRef.current.status === "live") {

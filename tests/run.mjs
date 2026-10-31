@@ -5285,6 +5285,13 @@ section("Answer box keys follow the answer; typed maths previews live; chat show
   check("the app's '[Exercise] I answered …' message is shown as 'My answer: …' with the maths typeset, in both chat views", /export function friendlyExerciseText/.test(ts) && (ts.match(/friendlyExerciseText\(msg\.text/g) || []).length === 2);
 }
 
+section("Invented answer options");
+{
+  const { citesMissingOptions } = await import("../shared/stuck.ts");
+  check("'matches option A' with no options in the conversation is flagged", citesMissingOptions("Well done, that matches option A!", "An object of mass m begins from rest.\nWhat is the final speed?"));
+  check("…but not when the problem really lists lettered options", !citesMissingOptions("Yes, that matches option B.", "Which is correct?\nA) 2 m/s\nB) 4 m/s\nC) 8 m/s"));
+  check("…and plain talk about answers is left alone", !citesMissingOptions("That is the answer to the first part.", "x"));
+}
 section("Research-backed teaching moves and a proactive board");
 check("the prompt carries the research playbook (retrieval, fading, self-explanation, dual coding, interleaving, feedback, metacognition)", /HOW PEOPLE LEARN/.test(TUTOR_PROMPT) && /Retrieval first/.test(TUTOR_PROMPT) && /faded example/.test(TUTOR_PROMPT) && /Self-explanation/.test(TUTOR_PROMPT) && /Dual coding/.test(TUTOR_PROMPT) && /Interleaving/.test(TUTOR_PROMPT) && /Metacognition/.test(TUTOR_PROMPT));
 check("the board is written when something new is established, not only on request", /Write when a turn establishes something new/.test(TUTOR_PROMPT) && /never only when asked/.test(TUTOR_PROMPT) && !/Teaching itself is spoken/.test(TUTOR_PROMPT));

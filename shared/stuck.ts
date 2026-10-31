@@ -50,3 +50,15 @@ export function unclearSpeech(text: string, lang = "en"): boolean {
   const latin = letters.filter((ch) => /\p{Script=Latin}/u.test(ch)).length;
   return latin / letters.length < 0.5;
 }
+
+/** The tutor says a result "matches option A" (or answer B, choice C) although no lettered options appear anywhere in the conversation or on the board:
+ *  it has invented context. `context` is everything the student and the tutor have seen so far. Pure. */
+export function citesMissingOptions(tutorText: string, context: string): boolean {
+  const cited = /\b(?:matches|is|choose|pick|go with|it'?s|that'?s)?\s*(?:option|answer|choice)\s+\(?([A-E])\)?(?![a-z])/i.test(String(tutorText || ""));
+  if (!cited) return false;
+  const ctx = String(context || "");
+  const letters = new Set([...ctx.matchAll(/(?:^|[\s(])\(?([A-E])[).:]\s/g)].map((m) => m[1].toUpperCase()));
+  return letters.size < 2 && !/\b(?:options?|choices?|multiple[- ]choice)\b/i.test(ctx);
+}
+
+export const MISSING_OPTIONS_NOTE = "Private note for you, not from the student: you just referred to an answer option, but no lettered options were given in this conversation or on the board. Do not invent context. At your next turn say briefly that you misspoke (there were no options) and that the result stands on their own working, which you checked.";
