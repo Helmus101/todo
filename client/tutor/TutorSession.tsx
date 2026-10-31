@@ -28,7 +28,7 @@ import { classifySafety, crisisCardText } from "../../shared/safety.ts";
 import { exchangeText } from "../../shared/liveTutor.ts";
 import { toSpeakableText } from "../voice/useSpeechSynthesis.ts";
 import { buttonMessage, deviceStateOf } from "../../shared/deviceProtocol.ts";
-import { EXPLAIN_NOW_NOTE, isOnlyAQuestion, nextStuckCount, unclearSpeech } from "../../shared/stuck.ts";
+import { EXPLAIN_NOW_NOTE, askedToExplain, isOnlyAQuestion, nextStuckCount, unclearSpeech } from "../../shared/stuck.ts";
 import { PageTour } from "../PageTour.tsx";
 import { TOURS } from "../tours.ts";
 import { ibStartChips, type IbSubject } from "../../shared/ibSubjectList.ts";
@@ -478,6 +478,7 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
   // The optional USB companion (Arduino): its buttons are the same asks the student could type, and its lights follow the tutor's state.
   const sendingRef = useRef(false);
   const stuckRef = useRef(0); // consecutive "I don't know" turns from the student (shared/stuck.ts)
+  const wantsExplainRef = useRef(false); // they asked to be shown, not quizzed
   const flaggedClaimsRef = useRef<Set<string>>(new Set()); // numeric claims already corrected with the voice, so a note is sent once
   sendingRef.current = sending;
   // LIVE VOICE (Gemini Live): the voice model only talks; every thought goes to Otto's engine through `ask`, and what Otto answers is
@@ -527,6 +528,7 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
     // question, nudge it (privately) to explain. Sent once per streak.
     if (who === "you") {
       stuckRef.current = nextStuckCount(stuckRef.current, text);
+      wantsExplainRef.current = askedToExplain(text);
       const hit = classifySafety(text);
       if (hit && Date.now() - lastSafetyAtRef.current > 120_000) {
         lastSafetyAtRef.current = Date.now();
@@ -539,7 +541,17 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
         }
       }
     }
-    else if (stuckRef.current >= 2 && isOnlyAQuestion(text) && liveRef.current.status === "live") { stuckRef.current = 0; liveRef.current.sendText(`[${sessionNoteTag}] ${EXPLAIN_NOW_NOTE}`, false); }
+    else {
+      // "I don't know" twice, or "just explain it" once: if the reply is still only a guiding question, nudge it (privately) to explain.
+      const wants = wantsExplainRef.current; wantsExplainRef.current = false;
+      if ((stuckRef.current >= 2 || wants) && isOnlyAQuestion(text) && liveRef.current.status === "live") {
+        stuckRef.current = 0;
+        // The app, not the model, remembers what has already been tried on this step: the note carries Otto's own last attempts back,
+        // so "explain it again" cannot turn into the same explanation a fourth time.
+        const tried = (t.chat || []).filter((m: any) => m.role === "assistant").slice(-3).map((m: any) => `"${String(m.text || "").replace(/\s+/g, " ").slice(0, 140)}"`).join(" · ");
+        liveRef.current.sendText(`[${sessionNoteTag}] ${EXPLAIN_NOW_NOTE}${tried ? ` YOUR LAST ATTEMPTS ON THIS STEP (do not repeat or paraphrase any of them — choose a different route): ${tried}` : ""}`, false);
+      }
+    }
     const chat = setLocalChat(t.id, [...(t.chat || []), { role: who === "you" ? "user" : "assistant", text, at: new Date().toISOString() } as any], userId);
     taskRef.current = { ...t, chat };
     setTask((prev) => (prev ? { ...prev, chat } : prev));

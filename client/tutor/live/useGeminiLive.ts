@@ -4,6 +4,7 @@ import { api } from "../../api.ts";
 import { startMic, Player, type Mic } from "./audio.ts";
 
 import { makeNoteTag } from "../../../shared/noteTag.ts";
+import { completeSentences } from "../../../shared/liveTutor.ts";
 import { BOARD_TOOL_GEMINI, BOARD_TOOL_NAME } from "../../../shared/boardTool.ts";
 export const sessionNoteTag = makeNoteTag(); // per page load; the server puts it in the instructions
 export type LiveStatus = "idle" | "connecting" | "live" | "ended" | "unavailable";
@@ -59,15 +60,24 @@ export function useGeminiLive(opts: LiveOptions) {
     try { return await optsRef.current.onWriteBoard(args, { you: youRef.current, otto: ottoRef.current }); }
     catch (e: any) { return { written: [], refused: [{ line: "", reason: "the board could not be reached just now; do not say it is on the board" }], board: "", error: String(e?.message || e).slice(0, 120) }; }
   }, []);
-  const greeting = () => (optsRef.current.quietResume
-    ? "(The call reconnected in the middle of our session. Do not greet me and do not say welcome back. Say one short sentence that picks up exactly where we were.)"
-    : "(Session started. Greet me briefly.)");
+  // Only a fresh call speaks first; a reconnect waits for the student (see `quietResume` below).
+  const greeting = () => "(Session started. Greet me briefly.)";
 
-  const flush = useCallback(() => {
-    const you = youRef.current.trim(), otto = ottoRef.current.trim();
+  const lastTurnRef = useRef<{ who: "you" | "otto"; text: string } | null>(null);
+  // `cut`: the turn was interrupted (the student spoke over Otto, or the call dropped), so the last words are half a sentence — only the
+  // sentences that were actually finished go into the transcript. A turn the model (or a reconnect) repeats word for word is shown once.
+  const flush = useCallback((cut = false) => {
+    const you = youRef.current.trim();
+    const otto = cut ? completeSentences(ottoRef.current.trim()) : ottoRef.current.trim();
     youRef.current = ""; youLiveRef.current = ""; ottoRef.current = "";
-    if (you) optsRef.current.onTurn("you", you);
-    if (otto) optsRef.current.onTurn("otto", otto);
+    const emit = (who: "you" | "otto", text: string) => {
+      const prev = lastTurnRef.current;
+      if (who === "otto" && prev?.who === "otto" && prev.text === text) return;
+      lastTurnRef.current = { who, text };
+      optsRef.current.onTurn(who, text);
+    };
+    if (you) emit("you", you);
+    if (otto) emit("otto", otto);
     optsRef.current.onPartial?.("", "");
   }, []);
 
@@ -109,7 +119,7 @@ export function useGeminiLive(opts: LiveOptions) {
       const sc = msg.serverContent;
       if (!sc) return;
       if (sc.inputTranscription?.text || sc.outputTranscription?.text || sc.modelTurn) lastHeardRef.current = Date.now();
-      if (sc.interrupted) { player.interrupt(); flush(); }
+      if (sc.interrupted) { player.interrupt(); flush(true); }
       if (sc.inputTranscription?.text) youRef.current += sc.inputTranscription.text;
       if (sc.outputTranscription?.text) ottoRef.current += sc.outputTranscription.text;
       if (sc.inputTranscription?.text || sc.outputTranscription?.text) optsRef.current.onPartial?.(youRef.current, ottoRef.current);
@@ -143,7 +153,7 @@ export function useGeminiLive(opts: LiveOptions) {
             case "response.output_audio_transcript.delta": lastHeardRef.current = Date.now(); ottoRef.current += String(ev.delta || ""); optsRef.current.onPartial?.(youRef.current, ottoRef.current); break;
             case "output_audio_buffer.started": setSpeaking(true); break;
             case "output_audio_buffer.stopped": case "output_audio_buffer.cleared": setSpeaking(false); break;
-            case "input_audio_buffer.speech_started": flush(); break;
+            case "input_audio_buffer.speech_started": flush(true); break;
             case "response.function_call_arguments.done": {
               let args: any = {};
               try { args = JSON.parse(String(ev.arguments || "{}")); } catch { /* malformed: the tool answers with nothing written */ }
@@ -162,7 +172,9 @@ export function useGeminiLive(opts: LiveOptions) {
         };
         dc.onmessage = (e) => { try { handleOai(JSON.parse(e.data)); } catch { /* not ours */ } };
         dc.onopen = () => {
-          // The model speaks first: a plain text turn, then ask for a response.
+          // The model speaks first: a plain text turn, then ask for a response. NOT when the call is only picking up again:
+          // an automatic "where we were" reply is one answer the student never asked for, and it repeats the question already asked.
+          if (optsRef.current.quietResume) return;
           dc.send(JSON.stringify({ type: "conversation.item.create", item: { type: "message", role: "user", content: [{ type: "input_text", text: greeting() }] } }));
           dc.send(JSON.stringify({ type: "response.create" }));
         };
@@ -223,8 +235,9 @@ export function useGeminiLive(opts: LiveOptions) {
       setToolMode(withTools);
       liveSinceRef.current = Date.now(); lastHeardRef.current = Date.now(); setStatus("live");
       window.setTimeout(() => { if (aliveRef.current && player.state !== "running") setBlocked(true); }, 800);
-      // The model speaks first: nudge it so it greets from what it knows.
-      session.sendClientContent({ turns: [{ role: "user", parts: [{ text: greeting() }] }], turnComplete: true });
+      // The model speaks first: nudge it so it greets from what it knows. On a reconnect it stays quiet until the student does:
+      // no automatic second reply that repeats what it already asked.
+      if (!optsRef.current.quietResume) session.sendClientContent({ turns: [{ role: "user", parts: [{ text: greeting() }] }], turnComplete: true });
       };
       // Gemini first; if it cannot connect (or isn't configured), OpenAI takes over. The server sends a credential for each provider it has a key for.
       const creds = (tok.providers?.length ? tok.providers : [tok]) as Array<Cred & { provider?: string }>;
