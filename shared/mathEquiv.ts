@@ -56,6 +56,12 @@ export function toExprSource(input: string, target?: string): string {
   else s = s.replace(/^\s*[A-Za-z]\s*=(?!=)/, "");
   s = s.replace(/\\(?:left|right|displaystyle|textstyle|,|;|!|:|\s)/g, " ");
   s = s.replace(/\^\s*\{\s*\\circ\s*\}|\^\s*\\circ|\\circ|°/g, "°");
+  // Change of base / explicit log base: \log_{b}(x), \log_b(x), \log_{b}{x}, \log_b x → ((ln(x))/(ln(b)))
+  s = s.replace(/\\?log\s*(?:_\{([^{}]+)\}|_([0-9a-zA-Z]+))\s*(?:\{([^{}]+)\}|\(([^()]+)\)|([a-zA-Z0-9]+))/gi, (_, b1, b2, a1, a2, a3) => {
+    const base = (b1 || b2).trim();
+    const arg = (a1 || a2 || a3).trim();
+    return `((ln(${arg}))/(ln(${base})))`;
+  });
   s = unfracs(s);
   s = s.replace(/\\cdot|\\times|×|·/g, "*").replace(/\\div|÷/g, "/").replace(/\\pi\b/g, "pi").replace(/−/g, "-");
   s = s.replace(new RegExp(`\\\\(${FN})\\b`, "g"), "$1").replace(/\b(arcsin|arccos|arctan)\b/g, (f) => ARC[f]);
@@ -68,7 +74,7 @@ export function toExprSource(input: string, target?: string): string {
   return s.replace(/\s+/g, " ").trim();
 }
 
-function varsIn(src: string): string[] {
+export function varsIn(src: string): string[] {
   const ids = src.match(/[A-Za-z_][A-Za-z_0-9]*/g) || [];
   const known = new Set([...FN.split("|"), "pi", "e", "asin", "acos", "atan", "abs", "floor", "ceil", "round", "sign", "log10"]);
   // Only single letters are variables: a multi-letter word ("the angle") then fails to compile → "unknown".

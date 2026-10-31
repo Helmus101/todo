@@ -3,6 +3,7 @@
 // if it were right). This reads a LaTeX line, evaluates every side of its equalities when they are plain numbers, and
 // says the line is wrong only when two sides both evaluate and disagree. Anything it cannot read (letters, units,
 // percent signs, inequalities, mixed numbers) is "unverified", never "wrong": a false alarm would delete a good line.
+import { equivalent, toExprSource, varsIn } from "../shared/mathEquiv.ts";
 
 type Tok = { t: "num"; v: number } | { t: "op"; v: string } | { t: "cmd"; v: string } | { t: "lb" } | { t: "rb" } | { t: "lp" } | { t: "rp" };
 
@@ -118,9 +119,9 @@ function sideValue(side: string): { v: number; literalDecimals: number | null } 
   return { v: tk.pm ? Math.abs(v) : v, literalDecimals: lit ? lit[2].length : null };
 }
 
-/** True when a line asserts an equality between numeric sides that is false (e.g. $\sqrt{\frac{72}{56}} = \sqrt{\frac{9}{14}}$).
- *  Unreadable or non-numeric lines are never "wrong". Exported for tests. */
-export function boardLineIsWrong(text: string): boolean {
+/** True when a line asserts an equality between numeric or algebraic sides that is false (e.g. $\sqrt{\frac{72}{56}} = \sqrt{\frac{9}{14}}$
+ *  or $\log_4 x = \frac{\log_2 4}{\log_2 x} = 2\log_2 x$). Unreadable lines and non-equalities are never "wrong". Exported for tests. */
+export function boardLineIsWrong(text: string, kind?: string): boolean {
   const t = String(text || "").replace(/\$/g, " ").replace(/\\\\/g, "\\");
   if (!/=/.test(t) || /[<>≤≥≠≈]|\\(?:le|ge|leq|geq|neq|ne|approx)\b/.test(t)) return false;
   const sides = t.split("=").map((x) => x.trim());
@@ -128,11 +129,24 @@ export function boardLineIsWrong(text: string): boolean {
   const vals = sides.map(sideValue);
   for (let i = 0; i + 1 < vals.length; i++) {
     const a = vals[i], b = vals[i + 1];
-    if (!a || !b) continue; // one side is not plain numbers: this pair is unverified
-    // A rounded decimal ("= 0.33") may differ from the exact value by half its last digit.
-    const rounded = [a.literalDecimals, b.literalDecimals].filter((d): d is number => d != null);
-    const tol = rounded.length ? 0.5 * Math.pow(10, -Math.min(...rounded)) * 1.001 : 1e-9 * Math.max(1, Math.abs(a.v), Math.abs(b.v));
-    if (Math.abs(a.v - b.v) > tol) return true;
+    if (a && b) {
+      // A rounded decimal ("= 0.33") may differ from the exact value by half its last digit.
+      const rounded = [a.literalDecimals, b.literalDecimals].filter((d): d is number => d != null);
+      const tol = rounded.length ? 0.5 * Math.pow(10, -Math.min(...rounded)) * 1.001 : 1e-9 * Math.max(1, Math.abs(a.v), Math.abs(b.v));
+      if (Math.abs(a.v - b.v) > tol) return true;
+    } else if (!a && !b && (sides.length >= 3 || kind === "formula")) {
+      // Algebraic chained equality A = B = C (or formula A = B): both sides are expressions. If both have the same
+      // set of free variables and equivalent returns "incorrect", the asserted identity is mathematically false.
+      const sA = toExprSource(sides[i]);
+      const sB = toExprSource(sides[i + 1]);
+      if (sA && sB) {
+        const vA = varsIn(sA).sort();
+        const vB = varsIn(sB).sort();
+        if (vA.length > 0 && vA.length === vB.length && vA.every((v, idx) => v === vB[idx])) {
+          if (equivalent(sides[i], sides[i + 1]) === "incorrect") return true;
+        }
+      }
+    }
   }
   return false;
 }

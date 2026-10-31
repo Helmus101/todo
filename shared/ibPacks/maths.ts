@@ -41,6 +41,7 @@ Algebra and functions
 2. Forgets plus or minus: x^2 = 9 gives only 3. Q: "Does -3 satisfy it? How many times does y = 9 meet y = x^2?"
 3. Accepts a negative for 2^x: after u = 2^x, u = -1 is kept. Q: "Can 2^x ever be negative? Sketch it."
 4. log(a+b) = log a + log b, or ln(x+3) - ln x = ln 3. Q: "Try a = b = 10. Which log law is actually true?"
+4b. Inverts change of base: writes log_b a = (log_c b)/(log_c a), or treats log_4 x as 2 log_2 x instead of (1/2) log_2 x. Q: "In log_b a = (log_c a)/(log_c b), which goes in the numerator: the argument a or the base b? Try b=4, a=16, c=2: log_4 16 is 2, but (log_2 4)/(log_2 16) is 2/4 = 1/2."
 5. (a+b)^2 = a^2 + b^2, or (x-3)^2 expanded as x^2 - 9. Q: "Put a = 1, b = 2 and compare."
 6. Multiplies an inequality by a negative or by x (sign unknown) without flipping or splitting cases. Q: "Is x positive? What if x = -1?"
 7. Sum to infinity used when |r| >= 1, or u1*r^n used instead of u1*r^(n-1). Q: "What is the condition for the sum to exist, and what is the first term's power of r?"

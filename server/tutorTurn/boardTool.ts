@@ -49,7 +49,7 @@ export function applyBoardTool(input: { lines: BoardToolLine[]; board: BoardEntr
     if (!text) continue;
     const refuse = (reason: string) => refused.push({ line: text.slice(0, 160), reason });
     // Each $...$ part is checked on its own as well: words before the maths ("Example: $3 \times 4 = 13$") hide it from the whole-line check.
-    const wrongMath = boardLineIsWrong(text) || [...text.matchAll(/\$([^$]+)\$/g)].some((m) => boardLineIsWrong(`$${m[1]}$`));
+    const wrongMath = boardLineIsWrong(text, kind) || [...text.matchAll(/\$([^$]+)\$/g)].some((m) => boardLineIsWrong(`$${m[1]}$`, kind));
     if (kind !== "focus" && kind !== "given" && kind !== "definition" && wrongMath) { refuse("its arithmetic does not hold; recompute it before writing it"); continue; }
     if (["step", "result", "formula"].includes(kind) && openQuestion && answersOpenQuestion(text, openQuestion, knownStudent)) { refuse("it is the answer to the question you just asked; wait until the student says it"); continue; }
     if (["step", "result"].includes(kind)) {
