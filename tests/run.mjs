@@ -5285,6 +5285,8 @@ section("Answer box keys follow the answer; typed maths previews live; chat show
   check("the app's '[Exercise] I answered …' message is shown as 'My answer: …' with the maths typeset, in both chat views", /export function friendlyExerciseText/.test(ts) && (ts.match(/friendlyExerciseText\(msg\.text/g) || []).length === 2);
 }
 
+section("Multiple choice without indirect answers");
+check("the prompt forbids hinting at the option, leading questions and solving it as an explanation, and states momentum conservation by net external impulse", /MULTIPLE CHOICE, WHILE THEY ARE WORKING/.test(TUTOR_PROMPT) && /answer in disguise/.test(TUTOR_PROMPT) && /STUDENT PERFORMS THE OPERATION/.test(TUTOR_PROMPT) && /net external impulse is zero or negligible/.test(TUTOR_PROMPT));
 section("Invented answer options");
 {
   const { citesMissingOptions } = await import("../shared/stuck.ts");
