@@ -325,7 +325,7 @@ export function App() {
   }, []);
   const dismissNote = useCallback(() => { if (noteTimer.current) clearTimeout(noteTimer.current); setNote(""); }, []);
   // Onboarding is hidden for now (the code stays): nobody is walked through it, new accounts go straight to the tutor.
-  const ONBOARDING_ENABLED = false;
+  const ONBOARDING_ENABLED = true;
   const [onboard, setOnboard] = useState(() => { if (!ONBOARDING_ENABLED) return false; try { return localStorage.getItem("otto-onboard") === "1"; } catch { return false; } });
   // Page guides already shown (client/PageTour.tsx): cached locally for instant paint, merged with the account's
   // server-side list so a guide never repeats on another device.
