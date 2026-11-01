@@ -9,6 +9,7 @@ import { LANG_ARTS_CORE_PACKS } from "./ibPacks/languagesArtsCore.ts";
 import { MATHS_PACKS } from "./ibPacks/maths.ts";
 import { SCIENCE_PACKS } from "./ibPacks/sciences.ts";
 import { GROUP3_PACKS } from "./ibPacks/group3.ts";
+import { schoolAddendum } from "./ibPacks/schoolCourses.ts";
 
 interface Pack { test: RegExp; title: string; text: string }
 
@@ -80,7 +81,7 @@ export function ibSubjectPack(subject?: string): string {
     : lv === "SL"
     ? `\nTHIS STUDENT TAKES THIS SUBJECT AT STANDARD LEVEL: pitch questions at SL standard, keep to the SL content, and do not drift into HL-only material unless they ask for a stretch.`
     : "";
-  return p ? `\n\nTHIS SUBJECT IN THE IB: ${p.title}${level}\n${p.text}` : level ? `\n\nTHIS SUBJECT IN THE IB: ${s}${level}` : "";
+  return p ? `\n\nTHIS SUBJECT IN THE IB: ${p.title}${level}\n${p.text}${schoolAddendum(s)}` : level ? `\n\nTHIS SUBJECT IN THE IB: ${s}${level}` : "";
 }
 
 /** Everything the tutor knows about the IB, for a student who said they are in the IB: the general programme knowledge plus
