@@ -37,23 +37,37 @@ export function Onboarding({ onStatus, onDone }: { status?: ConnectionStatus | n
     return () => { alive = false; };
   }, []);
 
+  // Every screen saves to the account before it moves on; a save that fails keeps the student here with the reason and a retry.
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+  const save = async (work: () => Promise<unknown>): Promise<boolean> => {
+    setBusy(true); setErr("");
+    try { await work(); await onStatus(); return true; }
+    catch { setErr("That didn't save. Check your connection and try again."); return false; }
+    finally { setBusy(false); }
+  };
   const answerIb = async (yes: boolean) => {
+    if (!(await save(() => api.setProfilePreference("track", yes ? "ib" : "other")))) return;
     setInIb(yes);
-    if (!yes) { try { await api.setProfilePreference("track", "other"); await onStatus(); } catch { /* Settings has the same switch */ } }
     setStep(1);
   };
   const saveName = async () => {
     const n = name.trim();
-    if (n) { try { await api.setProfile("name", n); await onStatus(); } catch { notify("Name didn't save. You can set it later in Settings.", "error"); } }
+    if (n && !(await save(() => api.setProfile("name", n)))) return;
     if (inIb === false) onDone(); else setStep(2);
   };
+  const saveYear = async () => {
+    const dp = /DP\s?([12])/i.exec(year);
+    if (!dp) return;
+    if (await save(() => api.setProfilePreference("yearLevel", `IB DP${dp[1]}`))) setStep(3);
+  };
   const saveSubjects = async () => {
-    try {
-      const dp = /DP\s?([12])/i.exec(year);
-      await api.setIbSubjects(ibSubs, dp ? (`DP${dp[1]}` as "DP1" | "DP2") : undefined);
-      await onStatus();
-    } catch { notify("Your subjects didn't save. You can set them later in Settings.", "error"); }
-    onDone();
+    const dp = /DP\s?([12])/i.exec(year);
+    const ok = await save(async () => {
+      const r = await api.setIbSubjects(ibSubs, dp ? (`DP${dp[1]}` as "DP1" | "DP2") : undefined);
+      if (!r?.ok || (r.ibSubjects || []).length !== ibSubs.length) throw new Error("not saved");
+    });
+    if (ok) onDone();
   };
   const at = Math.min(step, OB_STEPS - 1);
 
@@ -68,14 +82,16 @@ export function Onboarding({ onStatus, onDone }: { status?: ConnectionStatus | n
           </div>
         </div>
 
+        {err ? <p className="onboard-error" role="alert" style={{ color: "var(--danger, #b3261e)" }}>{err}</p> : null}
+
         {step === 0 && (
           <div className="onboard-step">
             <h2>{"Welcome to Otto"}</h2>
             <p className="onboard-lead">{"The voice tutor built for the IB Diploma. It asks instead of telling, teaches to your papers and mark schemes, and never does the work for you."}</p>
             <p className="onboard-lead mt-3">{"Are you in the IB?"}</p>
             <div className="onboard-actions onboard-actions-split">
-              <button className="btn primary big" onClick={() => void answerIb(true)}>{"Yes"}</button>
-              <button className="btn ghost big" onClick={() => void answerIb(false)}>{"No"}</button>
+              <button className="btn primary big" disabled={busy} onClick={() => void answerIb(true)}>{"Yes"}</button>
+              <button className="btn ghost big" disabled={busy} onClick={() => void answerIb(false)}>{"No"}</button>
             </div>
           </div>
         )}
@@ -91,7 +107,7 @@ export function Onboarding({ onStatus, onDone }: { status?: ConnectionStatus | n
             <p className="muted small">{"You can change these later in Settings."}</p>
             <div className="onboard-actions onboard-actions-split">
               <button className="btn ghost" onClick={() => setStep(0)}>{"Back"}</button>
-              <button className="btn primary big" onClick={() => void saveName()}>{inIb === false ? "Start" : "Continue"}</button>
+              <button className="btn primary big" disabled={busy} onClick={() => void saveName()}>{inIb === false ? "Start" : "Continue"}</button>
             </div>
           </div>
         )}
@@ -106,7 +122,7 @@ export function Onboarding({ onStatus, onDone }: { status?: ConnectionStatus | n
             </div>
             <div className="onboard-actions onboard-actions-split">
               <button className="btn ghost" onClick={() => setStep(1)}>{"Back"}</button>
-              <button className="btn primary big" disabled={!year} onClick={() => setStep(3)}>{"Continue"}</button>
+              <button className="btn primary big" disabled={!year || busy} onClick={() => void saveYear()}>{"Continue"}</button>
             </div>
           </div>
         )}
@@ -118,7 +134,7 @@ export function Onboarding({ onStatus, onDone }: { status?: ConnectionStatus | n
             <IbSubjectPicker value={ibSubs} onChange={setIbSubs} />
             <div className="onboard-actions onboard-actions-split">
               <button className="btn ghost" onClick={() => setStep(2)}>{"Back"}</button>
-              <button className="btn primary big" onClick={() => void saveSubjects()}>{"Start"}</button>
+              <button className="btn primary big" disabled={busy || ibSubs.length === 0} onClick={() => void saveSubjects()}>{"Start"}</button>
             </div>
           </div>
         )}
