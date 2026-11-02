@@ -32,6 +32,9 @@ export async function runTutorTurnSim(check, section) {
     { const r = applyOps([{ op: "topic", cue: 0, text: "Quadratics" }, { op: "step", cue: 1, text: "$x^2 - 5x + 6 = 0$", kind: "given" }, { op: "step", cue: 1, text: "$x^2 - 5x + 6 = 0$", kind: "given" }, { op: "mark", cue: 1, target: "#9", note: "here" }], { board: [], problems: [], theirWords: [] });
       check("topic and step ops become board entries; a duplicate line and a mark on a missing line are dropped", r.board.length === 2 && r.board[0].kind === "focus" && r.board[1].cue === 1 && r.dropped.length === 2); }
 
+    { const r = applyOps([{ op: "step", cue: 0, text: "$E_k = \\frac{p^2}{2m}$", kind: "formula" }, { op: "step", cue: 0, text: "$E_k(m) = \\frac{p^2}{2m}$", kind: "formula" }, { op: "step", cue: 0, text: "$E_k(2m) = \\frac{p^2}{4m}$", kind: "formula" }], { board: [], problems: [], theirWords: [] });
+      check("equations with different left-hand sides (E_k, E_k(m), E_k(2m)) are three lines, not near-duplicates", r.board.length === 3 && r.dropped.length === 0); }
+
     section("Tutor turn — one call, speech and board together");
     calls.length = 0;
     script = () => ({ speech: ["Let's factor it.", "What two numbers multiply to 6 and add to −5?"], board: [{ op: "step", cue: 0, text: "$x^2 - 5x + 6 = 0$", kind: "given" }] });

@@ -117,7 +117,9 @@ export function applyOps(ops: BoardOp[], c: ApplyContext): Applied {
         // (the tail of a spoken sentence). A decimal, a percentage or a value with its unit is a real result and stays.
         if (bareNumeral(text)) { drop("a bare number says nothing without its label"); break; }
         const owner = "otto"; // (no student ink, ever)
-        if (isDuplicateBoardEntry(all(), { text, kind })) { drop("already on the board"); break; }
+        const lhsOf = (t: string) => { const q = mathOf(t).split("="); return q.length === 2 ? q[0] : ""; };
+        const sameSide = all().filter((e) => e.text && !(lhsOf(text) && lhsOf(String(e.text)) && lhsOf(text) !== lhsOf(String(e.text))));
+        if (isDuplicateBoardEntry(sameSide, { text, kind })) { drop("already on the board"); break; }
         if (c.pen && kind === "given") {
           const r = makeBoardEntry({ text, kind, owner, why: o.why });
           if ("error" in r) { drop(r.error); break; }
@@ -128,7 +130,9 @@ export function applyOps(ops: BoardOp[], c: ApplyContext): Applied {
         if (m.length >= 6 && all().slice(-20).some((e) => e.kind !== "gap" && mathOf(String(e.text || "")).includes(m))) { drop("that equation is already on the board"); break; }
         // "dy/dx = -x/y" after a line that already ends "... = -x/y": same result, said twice.
         { const parts = m.split("="); if (parts.length === 2 && parts[0].length >= 3 && parts[1].length >= 2 && all().slice(-20).some((e) => { const em = mathOf(String(e.text || "")); return e.kind !== "gap" && em.startsWith(`${parts[0]}=`) && em.endsWith(`=${parts[1]}`); })) { drop("that result is already on the board"); break; } }
-        if (all().slice(-20).some((e) => e.text && nearDuplicateLine(String(e.text), text))) { drop("near-duplicate line"); break; }
+        // Two equations with different left-hand sides are different lines even when they look alike: "E_k(m) = p²/2m" after "E_k = p²/2m" is
+        // the piece the tutor is naming, not a repeat (reported live: the second kinetic energy never reached the board).
+        if (all().slice(-20).some((e) => e.text && nearDuplicateLine(String(e.text), text) && !(lhsOf(text) && lhsOf(String(e.text)) && lhsOf(text) !== lhsOf(String(e.text))))) { drop("near-duplicate line"); break; }
         const r = makeBoardEntry({ text, kind, owner, why: o.why });
         if ("error" in r) { drop(r.error); break; }
         add(r.entry, o.cue);

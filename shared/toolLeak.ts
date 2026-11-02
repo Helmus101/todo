@@ -18,6 +18,8 @@ function groupEnd(text: string, at: number): number {
 
 export function hideToolLeaks(text: string): string {
   let t = String(text || "");
+  // A write_board call printed as a fenced JSON block ({"lines":[…]}) is plumbing too, closed or cut off mid-way.
+  t = t.replace(/```(?:json)?\s*\{\s*"lines"\s*:[\s\S]*?(?:```|$)/gi, " ");
   // A tool name and the argument group right after it go; the prose around them stays.
   for (let guard = 0; guard < 30; guard++) {
     CALL.lastIndex = 0;

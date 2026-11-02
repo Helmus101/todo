@@ -66,7 +66,11 @@ export function applyBoardTool(input: { lines: BoardToolLine[]; board: BoardEntr
     ops.push(kind === "focus" ? { op: "topic", cue: 0, text } : { op: "step", cue: 0, kind: kind === "step" ? "result" : kind, text });
   }
   const applied = applyOps(ops, { board, problems: [], theirWords: [], pen: true });
-  for (const d of applied.dropped) refused.push({ line: "", reason: d.replace(/^(?:step|topic): /, "") });
+  for (const d of applied.dropped) {
+    const why = d.replace(/^(?:step|topic): /, "");
+    // A repeat is not a failure: the line is already there. Say so, so the tutor points at it instead of blaming the board.
+    refused.push({ line: "", reason: /already on the board|near-duplicate/.test(why) ? `${why}: this exact line is already on the board (see the listing); point at it by its number instead of rewriting it, and never tell the student the board "won't allow" it or use the moment to give the result` : why });
+  }
   const after = [...board, ...applied.board];
   return { written: applied.board, removed, refused, listing: boardListing(after) };
 }
