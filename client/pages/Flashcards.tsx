@@ -112,6 +112,7 @@ export function FlashcardsLibraryPage({ lang, tasks, embedded, userId }: { lang?
             taskId={open.taskId}
             userId={userId}
             onReview={liveOwner ? (cardIndex, correct) => { void api.reviewFlashcard(open.taskId, open.deck.id, cardIndex, correct).catch(() => {}); } : undefined}
+            onLearnt={liveOwner ? (cardIndex) => { void api.markFlashcardLearnt(open.taskId, open.deck.id, cardIndex).catch(() => {}); } : undefined}
             onNotNeeded={liveOwner ? (cardIndex) => { void api.markFlashcardNotNeeded(open.taskId, open.deck.id, cardIndex).catch(() => {}); } : undefined}
             onAllCorrect={() => setOpenId(null)}
           />

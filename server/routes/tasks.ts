@@ -1246,6 +1246,17 @@ export function registerTaskRoutes(app: express.Express): void {
     res.json(tasksPayload(req, req.session.tasks));
   }));
 
+  // "I have learnt this": the card is never shown again (passes and due lists skip it). Reversible: {learnt:false}.
+  app.post("/api/tasks/:id/flashcard/:deckId/:cardIndex/learnt", requireAuth, rateLimit(120, 60_000), ah(async (req, res) => {
+    const task = await findTaskOrReload(req, String(req.params.id));
+    const card = task?.flashcards?.find((d) => d.id === String(req.params.deckId))?.cards?.[Number(req.params.cardIndex)];
+    if (!task || !card) { res.status(404).json({ error: "Card not found — it may have already changed elsewhere." }); return; }
+    if (req.body?.learnt !== false) card.learnt = true; else delete card.learnt;
+    task.updatedAt = new Date().toISOString();
+    await commit(req);
+    res.json(tasksPayload(req, req.session.tasks));
+  }));
+
   app.post("/api/tasks/:id/quiz/:quizId/attempt", requireAuth, rateLimit(200, 60_000), ah(async (req, res) => {
     const id = String(req.params.id);
     const quizId = String(req.params.quizId);

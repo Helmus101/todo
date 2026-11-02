@@ -1627,6 +1627,9 @@ export interface TaskFlashcards {
      *  lists and every "still shaky" signal, and fed back into future deck generation as content to avoid
      *  (see notNeededFronts in server/tasks.ts / notNeededLine in server/claude.ts). */
     notNeeded?: boolean;
+    /** The student marked this card "I have learnt this": it never comes back in a pass or a due-review list (unlike
+     *  a card answered correctly, which returns on its Leitner schedule). Still counts in their history. Reversible. */
+    learnt?: boolean;
   }[];
   createdAt: string;
   lastReviewedAt?: string;

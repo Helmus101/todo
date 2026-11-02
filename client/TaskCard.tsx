@@ -1680,6 +1680,12 @@ function ArtifactPopups({ task, onTask, openNote, openDeck, openQuiz, setOpenNot
       if (fresh) onTask(fresh);
     }).catch(() => {});
   } : undefined;
+  const onLearnt = deck ? (cardIndex: number) => {
+    void api.markFlashcardLearnt(task.id, deck.id, cardIndex).then((list) => {
+      const fresh = list.find((t) => t.id === task.id);
+      if (fresh) onTask(fresh);
+    }).catch(() => {});
+  } : undefined;
   const onNotNeeded = deck ? (cardIndex: number) => {
     void api.markFlashcardNotNeeded(task.id, deck.id, cardIndex).then((list) => {
       const fresh = list.find((t) => t.id === task.id);
@@ -1696,7 +1702,7 @@ function ArtifactPopups({ task, onTask, openNote, openDeck, openQuiz, setOpenNot
           </div>
         </TaskModal>
       ) : null}
-      {deck ? <TaskModal onClose={() => setOpenDeck(null)} nested title={deck.title}><FlashcardDeck deck={deck} onReview={onReview} onNotNeeded={onNotNeeded} taskId={task.id} onAllCorrect={() => setOpenDeck(null)} userId={userId} /></TaskModal> : null}
+      {deck ? <TaskModal onClose={() => setOpenDeck(null)} nested title={deck.title}><FlashcardDeck deck={deck} onReview={onReview} onLearnt={onLearnt} onNotNeeded={onNotNeeded} taskId={task.id} onAllCorrect={() => setOpenDeck(null)} userId={userId} /></TaskModal> : null}
       {quiz ? <TaskModal onClose={() => setOpenQuiz(null)} nested title={quiz.title}><QuizPlayer quiz={quiz} taskId={task.id} subject={task.sourceSubject} userId={userId} /></TaskModal> : null}
     </>
   );

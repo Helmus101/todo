@@ -247,7 +247,7 @@ export function registerStudyRoutes(app: express.Express): void {
       for (const deck of t.flashcards || []) {
         // Never-reviewed cards aren't "due" — they're simply unreviewed; a fresh deck showing up in the due
         // list before the student has even seen it once would be confusing, not helpful.
-        const deckDue = deck.cards.flatMap((c, i) => (!c.notNeeded && c.review?.dueAt && Date.parse(c.review.dueAt) <= now)
+        const deckDue = deck.cards.flatMap((c, i) => (!c.notNeeded && !c.learnt && c.review?.dueAt && Date.parse(c.review.dueAt) <= now)
           ? [{ taskId: t.id, taskTitle: t.title, deckId: deck.id, deckTitle: deck.title, cardIndex: i, front: c.front }]
           : []);
         if (!deckDue.length) continue;
@@ -365,7 +365,7 @@ export function registerStudyRoutes(app: express.Express): void {
     const priorWeakCards = list
       .filter((x) => x.source === "studylog" && x.logDate && x.logDate !== date && !x.logDate.startsWith("week:") && !x.logDate.startsWith("month:"))
       .flatMap((x) => (x.flashcards || []).flatMap((deck) => deck.cards
-        .filter((c) => !c.notNeeded && c.review?.dueAt && Date.parse(c.review.dueAt) <= nowMs)
+        .filter((c) => !c.notNeeded && !c.learnt && c.review?.dueAt && Date.parse(c.review.dueAt) <= nowMs)
         .map((c) => ({ front: c.front, box: c.review!.box || 1 }))))
       .sort((a, b) => a.box - b.box)
       .slice(0, 6)

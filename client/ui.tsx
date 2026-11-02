@@ -6,7 +6,8 @@
  * (App.tsx imports TaskCard.tsx, so anything TaskCard needs from App has to live in a third module).
  * Everything here is moved verbatim — no behaviour changes belong in this file's history.
  */
-import { useEffect, useState, useCallback, useRef, useContext, createContext, type ReactNode } from "react";
+import { useEffect, useMemo, useState, useCallback, useRef, useContext, createContext, type ReactNode } from "react";
+import katex from "katex";
 import { createPortal } from "react-dom";
 import { motion, useReducedMotion } from "motion/react";
 import type { WebTask, TaskFlashcards, TaskQuiz, DailyPracticeProblem } from "../shared/types.ts";
@@ -541,6 +542,29 @@ function formatMath(text: string): string {
 
 export { formatMath, boldify };
 
+/** Card text with real typeset maths: $…$, $$…$$, \(…\) and \[…\] go through KaTeX, everything else through formatMath
+ *  (so a bare "x^2" still reads well). A piece KaTeX cannot parse falls back to the plain-text conversion. */
+const MATH_SPAN = /\$\$([\s\S]+?)\$\$|\$([^$\n]+?)\$|\\\(([\s\S]+?)\\\)|\\\[([\s\S]+?)\\\]/g;
+export function MathText({ text }: { text: string }) {
+  const parts = useMemo(() => {
+    const out: ReactNode[] = [];
+    let last = 0, k = 0;
+    for (const m of text.matchAll(MATH_SPAN)) {
+      const at = m.index ?? 0;
+      if (at > last) out.push(formatMath(text.slice(last, at)));
+      const tex = (m[1] ?? m[2] ?? m[3] ?? m[4] ?? "").trim();
+      const display = m[1] !== undefined || m[4] !== undefined;
+      let html: string | null = null;
+      try { html = katex.renderToString(tex, { throwOnError: true, strict: false, trust: false, displayMode: display, output: "html", maxSize: 20, maxExpand: 500 }); } catch { html = null; }
+      out.push(html === null ? formatMath(m[0]) : <span key={k++} className={display ? "deck-math-block" : undefined} dangerouslySetInnerHTML={{ __html: html }} />);
+      last = at + m[0].length;
+    }
+    if (last < text.length) out.push(formatMath(text.slice(last)));
+    return out;
+  }, [text]);
+  return <>{parts}</>;
+}
+
 /** Light markdown → JSX for an in-app note (CREATE_NOTE's body): headings, **bold**, and bullet/numbered
  *  lists. Never sent anywhere — this only ever renders inside the popup, so a small hand-rolled pass is
  *  enough (no need for a full markdown library just for this). */
@@ -882,7 +906,7 @@ function loadDeckProgress(deckId: string, userId: string | null): { i: number; r
     return { i: p.i, right: p.right, wrong: p.wrong };
   } catch { return null; }
 }
-function FlashcardDeckInner({ deck, onReview, onNotNeeded, taskId, onAllCorrect, onlyIndices, userId }: { deck: TaskFlashcards; onReview?: (cardIndex: number, correct: boolean) => void; onNotNeeded?: (cardIndex: number) => void; taskId?: string; onAllCorrect?: () => void; userId?: string | null;
+function FlashcardDeckInner({ deck, onReview, onLearnt, onNotNeeded, taskId, onAllCorrect, onlyIndices, userId }: { deck: TaskFlashcards; onReview?: (cardIndex: number, correct: boolean) => void; onLearnt?: (cardIndex: number) => void; onNotNeeded?: (cardIndex: number) => void; taskId?: string; onAllCorrect?: () => void; userId?: string | null;
   /** Restricts the review pass to exactly these card indices (still excludes `notNeeded` ones) instead of
    *  every card in the deck — the DueReviews cross-task view (App.tsx) needs this: a deck's spaced-
    *  repetition schedule (nextLeitnerReview, shared/types.ts) can have most of its cards sitting on a
@@ -924,7 +948,7 @@ function FlashcardDeckInner({ deck, onReview, onNotNeeded, taskId, onAllCorrect,
   // Cards already marked "not something I need to learn" (card.notNeeded) never enter the pass at all; ones
   // marked during THIS pass land in `dropped` and leave the score's denominator. Frozen at mount so a server
   // re-render mid-pass can't shift which card position `i` points at.
-  const baseSeq = useRef(deck.cards.map((_, idx) => idx).filter((idx) => !deck.cards[idx].notNeeded && (!onlyIndices || onlyIndices.includes(idx)))).current;
+  const baseSeq = useRef(deck.cards.map((_, idx) => idx).filter((idx) => !deck.cards[idx].notNeeded && !deck.cards[idx].learnt && (!onlyIndices || onlyIndices.includes(idx)))).current;
   const [dropped, setDropped] = useState<number[]>([]);
   const inScope = baseSeq.length - dropped.length;
   const seqLen = retryQueue ? retryQueue.length : baseSeq.length;
@@ -955,6 +979,17 @@ function FlashcardDeckInner({ deck, onReview, onNotNeeded, taskId, onAllCorrect,
     setRight((prev) => prev.filter((x) => x !== cardIndex));
     setWrong((prev) => prev.filter((x) => x !== cardIndex));
     onNotNeeded?.(cardIndex);
+    setSkipFlipAnim(true);
+    setFlipped(false);
+    setI((v) => v + 1);
+  };
+  // "I have learnt this": the card is answered correctly now and never shown again (not in this pass, not in later ones).
+  const markLearnt = () => {
+    if (!card) return;
+    (setRight)((prev) => [...prev.filter((x) => x !== cardIndex), cardIndex]);
+    setWrong((prev) => prev.filter((x) => x !== cardIndex));
+    onReview?.(cardIndex, true);
+    onLearnt?.(cardIndex);
     setSkipFlipAnim(true);
     setFlipped(false);
     setI((v) => v + 1);
@@ -1049,11 +1084,11 @@ function FlashcardDeckInner({ deck, onReview, onNotNeeded, taskId, onAllCorrect,
                 {LEITNER_BOX_LABEL[Math.min(card!.review.box, 2) - 1]}
               </span>
             ) : null}
-            <div className="deck-face-text">{formatMath(stripStrayMarkdown(card!.front))}</div>
+            <div className="deck-face-text"><MathText text={stripStrayMarkdown(card!.front)} /></div>
           </div>
           <div className="deck-card-face deck-card-back">
             <span className="deck-face-label">{"Back"}</span>
-            <div className="deck-face-text">{formatMath(stripStrayMarkdown(card!.back))}</div>
+            <div className="deck-face-text"><MathText text={stripStrayMarkdown(card!.back)} /></div>
           </div>
         </div>
       </div>
@@ -1065,6 +1100,12 @@ function FlashcardDeckInner({ deck, onReview, onNotNeeded, taskId, onAllCorrect,
       </div>
       {i > 0 ? (
         <button type="button" className="btn xs ghost deck-btn-back" onClick={back}>{"‹ Previous card"}</button>
+      ) : null}
+      {onLearnt ? (
+        <button type="button" className="btn xs ghost deck-btn-learnt" onClick={markLearnt}
+          title={"You know this card well: it will not come back"}>
+          {"I've learnt this: don't show it again"}
+        </button>
       ) : null}
       {onNotNeeded ? (
         <button type="button" className="btn xs ghost deck-btn-not-needed" onClick={markNotNeeded}
