@@ -214,7 +214,7 @@ export async function writeBoard(input: { exchange: string; board: BoardEntry[];
   const canDraw = true; // Unlimited visual artifact capabilities across all subjects
   const system = BOARD_WRITER_PROMPT + (input.language ? `\n\nLANGUAGE: the student works in ${input.language}. Write every board line, heading, option and label in ${input.language} (maths stays LaTeX). Op names and kinds stay as specified.` : "") + (canDraw ? DRAW_REFERENCE : "") + `\n\nTHE BOARD (margin numbers #n are what you point at)${boardSurfaceBlock(input.board, []) || ": empty."}`;
   // The tutor's closing question is still UNANSWERED: it is shown to the writer separately, so the working for it is never mistaken for something the student reached.
-  const { finished, openQuestion } = splitOpenQuestion(input.exchange.slice(0, 4000));
+  const { finished, openQuestion } = splitOpenQuestion(input.exchange.slice(-4000));
   // toolMode: the tutor writes the board itself (write_board). This pass then records only what the tutor may have missed: the student's own
   // working, and pictures. Problems, rules, explanations and corrections are the tutor's.
   const toolNote = input.toolMode ? "\n\nTHE TUTOR WRITES THE BOARD ITSELF in this session. You only add (a) a drawing the exchange needs (graph, diagram, number line, table, multiple-choice options), (b) a step or result the STUDENT said and the tutor confirmed that is not on the board yet (the tutor wrote nothing this time), and (c) a NEW problem the tutor just posed out loud that is not on the board (as a task line, kind \"given\", without its answer). Never write a heading, rule, formula, definition or explanation, and never a step the student has not said yet: those are the tutor's." : "";

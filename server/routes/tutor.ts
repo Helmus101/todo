@@ -219,7 +219,7 @@ export function registerTutorRoutes(app: express.Express): void {
     if (overWeeklyCap(req)) { res.status(429).json({ error: "This week's AI allowance is used up. Ask for more usage and it comes back as soon as it's approved.", code: "weekly_cap" }); return; }
     if (isTutorBlocked(req)) { res.status(429).json({ error: "This week's AI allowance is used up. Ask for more usage and it comes back as soon as it's approved.", code: "weekly_cap" }); return; }
     if (!aiReady()) { res.status(503).json({ error: "AI isn't configured." }); return; }
-    const exchange = typeof req.body?.exchange === "string" ? req.body.exchange.slice(0, 4000) : "";
+    const exchange = typeof req.body?.exchange === "string" ? req.body.exchange.slice(-4000) : "";
     if (!exchange.trim()) { res.json({ board: [] }); return; }
     const board = (Array.isArray(req.body?.board) ? req.body.board : []).slice(-40).filter((e: any) => e && typeof e.id === "string" && typeof e.kind === "string" && (e.text === undefined || typeof e.text === "string"));
     const subject = typeof req.body?.subject === "string" ? req.body.subject.trim().slice(0, 80) : "";
