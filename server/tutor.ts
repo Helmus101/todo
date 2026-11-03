@@ -992,10 +992,14 @@ export function asksForSeveralValues(question: string): boolean {
 export function nearDuplicateLine(existing: string, text: string): boolean {
   // Two lines with different numbers are different lines, however alike they look: a new log equation after an old one has the same shape and
   // different numbers, and used to be dropped as a "near-duplicate" (reported live: the next problem never reached the board).
-  const nums = (s: string) => (String(s).match(/\d+(?:\.\d+)?/g) || []).join(",");
+  // Spelled differently, the same equation is still the same line: "\frac{1}{2}" and "\frac12" both read 12, and braces, spaces and \left/\right do not count.
+  const plain = (s: string) => String(s).replace(/\\(?:left|right|displaystyle|dfrac|tfrac)/g, (m) => (m === "\\dfrac" || m === "\\tfrac" ? "\\frac" : "")).replace(/[{}\s]/g, "");
+  const nums = (s: string) => (plain(s).match(/\d+(?:\.\d+)?/g) || []).join(",");
   if (nums(existing) !== nums(text)) return false;
-  if (similarity(existing, text) < 0.75) return false;
-  return text.length <= String(existing).length * 1.5;
+  // Similarity is word-based, so it reads the text with spaces (only the math markup is normalised), length is compared without them.
+  const words = (s: string) => String(s).replace(/\\(?:left|right|displaystyle)/g, "").replace(/\\[dt]frac/g, "\\frac").replace(/[{}]/g, "");
+  if (similarity(words(existing), words(text)) < 0.75 && similarity(plain(existing), plain(text)) < 0.75) return false;
+  return plain(text).length <= plain(existing).length * 1.5;
 }
 
 /** The student's own calculation, checked by code ("10/100 divided by 10/40 = 0.4"): when every claim in it is true,

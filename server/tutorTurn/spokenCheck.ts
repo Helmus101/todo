@@ -10,7 +10,7 @@ import { createTutorChat, usageOf } from "../claude.ts";
 import { extractJsonObject } from "../../shared/tutorTurn.ts";
 import { renderJudgeRubric } from "../../shared/tutorCharter.ts";
 
-export interface SpokenFlag { kind: "gaveResult" | "confirmedUnclear" | "falseMath" | "claimedBoard" | "ignoredRoute"; quote: string; fix: string }
+export interface SpokenFlag { kind: "gaveResult" | "confirmedUnclear" | "falseMath" | "claimedBoard" | "ignoredRoute" | "stockPraise"; quote: string; fix: string }
 
 const SYSTEM = `You audit ONE spoken turn of an AI maths/science tutor. You do not teach and you do not speak to the student. Input: the board (numbered lines), the last few turns ("Student:" / "Tutor:" lines; the LAST Tutor line is the turn you audit), and nothing else.
 
@@ -43,6 +43,7 @@ export function spokenCheckNote(flags: SpokenFlag[]): string {
     const what = f.kind === "gaveResult" ? "you stated a result or next step the student had not reached"
       : f.kind === "confirmedUnclear" ? "you agreed to something that was not a real answer"
       : f.kind === "falseMath" ? "that is not correct"
+      : f.kind === "stockPraise" ? "that opens with stock praise"
       : f.kind === "ignoredRoute" ? "they had named their own method and you steered away from it"
       : "that does not match the board";
     return `You said "${f.quote}": ${what}.${f.fix ? ` ${f.fix}` : ""}`;
@@ -65,6 +66,19 @@ export async function checkSpokenTurn(input: { exchange: string; listing: string
       ],
     }, true, { deepseekOnly: true });
     const u = usageOf(res); tokens.in += u.in; tokens.out += u.out; tokens.cachedIn += u.cachedIn;
-    return parseSpokenFlags(String(res?.choices?.[0]?.message?.content || ""), turn);
-  } catch { return []; }
+    return withStockPraise(parseSpokenFlags(String(res?.choices?.[0]?.message?.content || ""), turn), turn);
+  } catch { return withStockPraise([], turn); }
+}
+
+/** The deterministic flag (stock praise opener) joins whatever the judge found. Pure. */
+export function withStockPraise(flags: SpokenFlag[], tutorTurn: string): SpokenFlag[] {
+  const opener = stockPraiseOpener(tutorTurn);
+  return opener ? [...flags, { kind: "stockPraise", quote: opener, fix: "Open with what they did, in their own terms, or just ask the next thing; no praise word." }] : flags;
+}
+
+const STOCK_OPENERS = /^\s*(?:(?:oh|ah|ok(?:ay)?|yes|yep|yeah|right|so|and)[,!.\s]+)*(?:exactly|spot on|perfect(?:ly)?|great(?: job| question| work)?|wonderful|absolutely|brilliant|excellent|fantastic|awesome|that'?s (?:spot on|exactly (?:right|it)|perfect|great|correct|right|exactly it)|you'?re exactly right|that is (?:exactly right|correct|right)|well done)\b/i;
+/** Pure: the tutor's turn opens with stock praise ("Exactly", "That's spot on", "Perfect"), which the charter bans: returns the opening words, or "". Code can see this; no model call. */
+export function stockPraiseOpener(tutorTurn: string): string {
+  const m = STOCK_OPENERS.exec(String(tutorTurn || "").trim());
+  return m ? m[0].trim() : "";
 }

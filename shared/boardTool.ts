@@ -45,6 +45,7 @@ export const BOARD_TOOL_CHAT = { type: "function", function: { name: BOARD_TOOL_
 /** How the tutor uses the pen: goes into the voice instructions. */
 export const BOARD_TOOL_RULES = `THE BOARD: YOU HOLD THE PEN (the ${BOARD_TOOL_NAME} tool)
 - The student sees a whiteboard next to you. Nothing appears on it unless YOU write it with ${BOARD_TOOL_NAME}. Write as you talk, the way a tutor writes while explaining: call the tool in the same turn, before or while you say the sentence it belongs to.
+- A GIVEN CARRIES EVERYTHING THEY STATED: the equation and every condition, domain or restriction they said with it ("for -1/√3 < x < 1/√3"), in the same line.
 - WRITE A PROBLEM THE MOMENT IT EXISTS: when you pose one (even a quick "try this one"), or the student reads or types one out, write it in full as a "given" line, exactly as stated, in that SAME reply, before you speak it. A problem you only say out loud does not exist for the student. If they correct you ("no, the half multiplies both logs"), rewrite it with "replaces" set to the wrong line's number, then say so in a few words.
 - A SPOKEN PROBLEM CAN BE AMBIGUOUS (what a fraction, a factor or a power applies to): write your reading, then ask in a few words whether that is what they meant ("is the half multiplying both logs?"). Never start solving an unconfirmed reading.
 - THE STUDENT'S WORKING: after they say a step, write it as a "step" (their content, cleaned into notation). Write only what they said; never the step after it.
