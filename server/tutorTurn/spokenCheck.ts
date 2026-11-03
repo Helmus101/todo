@@ -15,11 +15,11 @@ const SYSTEM = `You audit ONE spoken turn of an AI maths/science tutor. You do n
 
 Report each problem you find, quoting the tutor's own words EXACTLY as they appear in the last Tutor line:
 - "gaveResult": the tutor states the result of the step the student is working on, or the next algebraic step, before the student has said it (it solved it for them, or confirmed a final value they never reached). Explaining an idea or a different example is fine; naming the value they are meant to find is not.
-- "confirmedUnclear": the tutor agrees with, praises or builds on a Student line that is not a real answer (a filler, a fragment, noise such as "Um", "Hi", "dart", "power 2" with no maths context), or answers its own question after a filler.
+- "confirmedUnclear": the tutor agrees with, praises or builds on a Student line that is not a real answer (a filler, a fragment, noise such as "Um", "Hi", "dart", "power 2" with no maths context), or answers its own question after a filler. Waiting or asking again ("Take your time", "Didn't catch that, say it again?") is CORRECT behaviour and is never flagged.
 - "falseMath": the tutor states something mathematically or scientifically false. Recompute it yourself first (ranges of functions, signs, identities, arithmetic). Put the correct statement in "fix".
-- "claimedBoard": the tutor says it wrote/drew/updated something, or that something is not on the board, and the board listing says otherwise.
+- "claimedBoard": the tutor says something is NOT on the board / has not been drawn, or points at a numbered line, and the board listing clearly says otherwise. Never flag "it is on the board" / "I wrote it": the board is updated a moment after the turn and the listing can lag.
 
-Be strict about evidence and lenient about style: only report a clear problem. Hints, questions, rephrasing, praise for a real answer and correct statements are fine.
+Be strict about evidence and lenient about style: only report a clear problem, and when in doubt report nothing. Fewer, correct flags are far better than many doubtful ones. Hints, questions, rephrasing, praise for a real answer and correct statements are fine.
 Return ONLY JSON: {"flags":[{"kind":"gaveResult|confirmedUnclear|falseMath|claimedBoard","quote":"exact words from the last Tutor line","fix":"what the tutor should do now, in one short sentence addressed to the tutor"}]} with an empty list when the turn is fine.`;
 
 /** Pure: the flags the judge returned, kept only when their quote really is in the tutor's turn. Exported for tests. */

@@ -41,7 +41,7 @@ export const EXPLAIN_NOW_NOTE = "(Private note for you, not from the student: th
 const LATIN_SCRIPT_LANGS = /^(?:en|fr|es|de|it|pt|nl|pl|sv|da|no|nb|fi|ro|cs|sk|hu|tr|id|ms|vi|ca|hr|sl|lt|lv|et)\b/i;
 /** Speech recognition heard noise as words of another script ("뚜루뚜루 뚜루" in an English session), or nothing but symbols: not something the
  *  student said. Only for languages written in Latin script; a stray Greek letter (θ, π) inside a sentence is fine. Pure. */
-const FILLER_WORDS = new Set(["um", "uh", "uhm", "umm", "er", "erm", "hmm", "hm", "mm", "mmm", "mhm", "ah", "oh", "so", "well", "like", "hi", "hey", "hello"]);
+const FILLER_WORDS = new Set(["um", "uh", "uhm", "umm", "er", "erm", "hmm", "hm", "mm", "mmm", "mhm", "ah", "oh", "so", "well", "like", "hi", "hey", "hello", "ahora", "viceversa", "gracias", "obrigado", "nee", "amai", "aga"]);
 export function unclearSpeech(text: string, lang = "en"): boolean {
   const t = String(text || "").trim();
   if (!t) return false;
