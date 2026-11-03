@@ -76,7 +76,7 @@ export function withStockPraise(flags: SpokenFlag[], tutorTurn: string): SpokenF
   return opener ? [...flags, { kind: "stockPraise", quote: opener, fix: "Open with what they did, in their own terms, or just ask the next thing; no praise word." }] : flags;
 }
 
-const STOCK_OPENERS = /^\s*(?:(?:oh|ah|ok(?:ay)?|yes|yep|yeah|right|so|and)[,!.\s]+)*(?:exactly|spot on|perfect(?:ly)?|great(?: job| question| work)?|wonderful|absolutely|brilliant|excellent|fantastic|awesome|that'?s (?:spot on|exactly (?:right|it)|perfect|great|correct|right|exactly it)|you'?re exactly right|that is (?:exactly right|correct|right)|well done)\b/i;
+const STOCK_OPENERS = /^\s*(?:(?:oh|ah|ok(?:ay)?|yes|yep|yeah|right|so|and)[,!.\s]+)*(?:exactly(?=\s*(?:[.!,]|$))|spot on|perfect(?:ly)?|great(?: job| question| work)?|wonderful|absolutely|brilliant|excellent|fantastic|awesome|that'?s (?:spot on|exactly (?:right|it)|perfect|great)|you'?re exactly right|that is exactly right|well done)\b/i;
 /** Pure: the tutor's turn opens with stock praise ("Exactly", "That's spot on", "Perfect"), which the charter bans: returns the opening words, or "". Code can see this; no model call. */
 export function stockPraiseOpener(tutorTurn: string): string {
   const m = STOCK_OPENERS.exec(String(tutorTurn || "").trim());

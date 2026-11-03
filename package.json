@@ -21,7 +21,9 @@
     "test:load": "tsx tests/load-sim.mjs",
     "test:smoke": "tsx tests/smoke.mjs",
     "eval:tutor": "tsx scripts/tutor-eval.ts",
-    "sim:tutor": "tsx scripts/tutor-sim.ts"
+    "sim:tutor": "tsx scripts/tutor-sim.ts",
+    "prompt:lock": "tsx scripts/prompt-lock.ts",
+    "prompt:freeze": "tsx scripts/tutor-sim.ts --personas arccos-test-review,arccos-noisy-mic,rational-from-asymptotes,explosion-ratio,doing-own-problems,exam-tomorrow-wants-answer,board-watcher --turns 10 --max-usd 4 --strict && tsx scripts/prompt-lock.ts"
   },
   "dependencies": {
     "@blockshub/pawnote-lts": "^1.6.4",

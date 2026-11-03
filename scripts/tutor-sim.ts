@@ -14,12 +14,14 @@ import { BOARD_TOOL_CHAT, BOARD_TOOL_NAME } from "../shared/boardTool.ts";
 import { applyBoardTool } from "../server/tutorTurn/boardTool.ts";
 import { checkSpokenTurn, spokenCheckNote } from "../server/tutorTurn/spokenCheck.ts";
 import { boardListing } from "../shared/boardTool.ts";
+import { stockPraiseOpener } from "../server/tutorTurn/spokenCheck.ts";
 import { liveInstructions, exchangeText } from "../shared/liveTutor.ts";
 import { writeBoard, splitOpenQuestion, posesProblem, problemOnBoard, promisesBoard } from "../server/tutorTurn/boardWriter.ts";
 import { boardLineIsWrong } from "../server/boardMath.ts";
 
 const arg = (name: string) => { const i = process.argv.indexOf(name); return i >= 0 ? process.argv[i + 1] : undefined; };
-const onlyPersona = arg("--persona");
+const onlyPersonas = (arg("--personas") || arg("--persona") || "").split(",").map((x) => x.trim()).filter(Boolean);
+const strict = process.argv.includes("--strict"); // exit 1 when a hard flag was raised (the freeze suite)
 const turnsN = Math.max(4, Number(arg("--turns")) || 12);
 const runs = Math.max(1, Number(arg("--runs")) || 1);
 const verbose = process.argv.includes("--verbose");
@@ -30,6 +32,8 @@ const spend = (res: any) => { const u = usageOf(res); spentUsd += callCostUsd(u.
 interface Persona { id: string; subject: string; level: string; who: string; opener: string }
 
 const PERSONAS: Persona[] = [
+  { id: "explosion-ratio", subject: "Physics HL", level: "IB DP2", opener: "a body of mass 3m at rest explodes into two pieces of mass m and 2m, what is the ratio of the kinetic energy of m to that of 2m",
+    who: "You are a Physics HL student. You know momentum is conserved and that the pieces' momenta are equal and opposite; you half remember kinetic energy as p squared over 2m. You write p squared over 2m for m and p squared over 4m for 2m yourself, then say 'there's only one on the board' if you cannot see both, and ask 'can you just write it on the board' if a line is missing. You do the division yourself only when asked to set it up." },
   { id: "arccos-noisy-mic", subject: "Math AA HL", level: "IB DP2", opener: "arccos x plus arccos root 3 x equals 3 pi over 2 and we need to find x given it's between minus 1 over root 3 and 1 over root 3",
     who: "You are a Math AA HL student with a bad microphone: much of what you say is transcribed as noise. Reply with EXACTLY these lines, in this order, one per turn, and nothing else (after the last one, reply 'um'): 1) 'minus power to the power to' 2) 'Aga' 3) 'Pai.' 4) 'Well, the sum is valid because it's smaller than 2 pi.' 5) 'ahora o viceversa' 6) 'two values that are smaller than well, they must add to 3 pi over 2.' 7) 'Ahora no.' 8) 'um'." },
   { id: "arccos-test-review", subject: "Math AA HL", level: "IB DP2", opener: "I just had a test and there was a question I want to go over: arccos of x plus arccos of root 3 x equals 3 pi over 2, find x",
@@ -216,6 +220,7 @@ async function runPersona(p: Persona): Promise<{ flags: { turn: number; kind: st
     console.log(`Tutor: ${reply}`);
     for (const e of t.written) console.log(`   pen  + [${e.kind}] ${cut(String(e.text || ""), 120)}`);
     for (const r of t.refused) { console.log(`   pen  x ${cut(r.line, 80)} (${cut(r.reason, 90)})`); const k = r.reason.replace(/\d[\d., ]*/g, "#").slice(0, 60); refusedAll[k] = (refusedAll[k] || 0) + 1; }
+    const praise = stockPraiseOpener(reply); if (praise) flags.push({ turn, kind: "CODE: stock praise opener", text: praise });
     // The independent check of what the tutor just said (the same call the live app makes after each tutor turn).
     try {
       const ck = await checkSpokenTurn({ exchange: history.slice(-8).map((x) => `${x.who === "student" ? "Student" : "Tutor"}: ${x.text}`).join("\n"), listing: boardListing(board) }, tokens);
@@ -265,8 +270,8 @@ async function runPersona(p: Persona): Promise<{ flags: { turn: number; kind: st
   return { flags, turns: turnsN };
 }
 
-const picked = PERSONAS.filter((p) => !onlyPersona || p.id === onlyPersona);
-if (!picked.length) { console.error(`No persona '${onlyPersona}'. Choose from: ${PERSONAS.map((p) => p.id).join(", ")}`); process.exit(2); }
+const picked = PERSONAS.filter((p) => !onlyPersonas.length || onlyPersonas.includes(p.id));
+if (!picked.length) { console.error(`No persona '${onlyPersonas.join(",")}'. Choose from: ${PERSONAS.map((p) => p.id).join(", ")}`); process.exit(2); }
 if (!process.env.GEMINI_API_KEY && !process.env.DEEPSEEK_API_KEY) { console.error("No GEMINI_API_KEY or DEEPSEEK_API_KEY set."); process.exit(2); }
 
 const summary: Record<string, number> = {};
@@ -292,5 +297,11 @@ if (scores.length) {
   const avg = (k: "explains" | "adapts" | "diagnoses" | "voice" | "truthful" | "hints" | "selfc" | "board" | "human") => (scores.reduce((a, r) => a + r[k], 0) / scores.length).toFixed(2);
   console.log(`  ${"AVERAGE".padEnd(30)} ${avg("explains")} ${avg("adapts")} ${avg("diagnoses")} ${avg("voice")} ${avg("truthful")} ${avg("hints")} ${avg("selfc")} ${avg("board")} ${avg("human")}`);
 }
+// Hard flags fail the freeze suite: the commitments a model judge or a line of code can both see. Soft flags (style, board tidiness) are leads to read.
+// Only what code verified is hard; the judge is a model that is wrong often enough (it called a correct step wrong and a correct line reference a maths error) that its flags are leads to read, not a gate.
+const HARD = /^CODE:/;
+const hard = Object.entries(summary).filter(([k]) => HARD.test(k)).reduce((a, [, v]) => a + v, 0);
+console.log(`\nHARD FLAGS: ${hard}`);
 console.log(`\nSPENT: about $${spentUsd.toFixed(3)} (cap $${maxUsd}; DeepSeek rates; calls Gemini answered are not metered)`);
 console.log("\nThe judge is a model: read the flagged lines in the transcript before acting on a flag. A flag is a lead, not a verdict.");
+if (strict && hard > 0) process.exit(1);
