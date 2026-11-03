@@ -850,6 +850,15 @@ check("structured settings survive merge", pm.responseStyle === "concise");
     { const { liveInstructions, voiceTutorPrompt } = await import("../shared/liveTutor.ts"); const { TUTOR_PROMPT } = await import("../shared/tutorPrompt.ts");
       const ins = liveInstructions({ subject: "Math AA HL", ib: true });
       check("the voice instructions open with the five things that matter (with real good/bad pairs), repeat a reminder at the end, and drop the typed-only sections", ins.startsWith("FIRST, THE FIVE THINGS") && /x squared equals one quarter/.test(ins.slice(0, 2500)) && /range 0 to π/.test(ins.slice(0, 2500)) && /BEFORE EVERY REPLY/.test(ins.slice(-600)) && !/THE PLAN — SET IT AND START/.test(ins) && !/THE BOARD IS THEIR NOTES/.test(ins) && /WHAT MAKES YOU TRUSTWORTHY/.test(ins) && voiceTutorPrompt().length < TUTOR_PROMPT.length - 5000); }
+    { const { parseSpokenFlags, spokenCheckNote } = await import("../server/tutorTurn/spokenCheck.ts");
+      const turn = "So, solving that gives x squared equals one quarter, meaning x could be a half or minus a half.";
+      const good = JSON.stringify({ flags: [{ kind: "gaveResult", quote: "solving that gives x squared equals one quarter", fix: "Ask what is left once the 3x⁴ cancel." }] });
+      const invented = JSON.stringify({ flags: [{ kind: "gaveResult", quote: "the answer is seventeen", fix: "x" }, { kind: "nonsense", quote: "solving that gives", fix: "x" }, { kind: "falseMath", quote: "x", fix: "x" }] });
+      const f = parseSpokenFlags(good, turn);
+      const note = spokenCheckNote(f);
+      check("the spoken-turn check keeps a flag only when its quote is really in the tutor's turn, and turns it into a private note the tutor answers in its own words", f.length === 1 && f[0].kind === "gaveResult" && parseSpokenFlags(invented, turn).length === 0 && parseSpokenFlags("not json", turn).length === 0 && /^Private note for you, not from the student: You said "solving that gives x squared equals one quarter"/.test(note) && /own words/.test(note) && spokenCheckNote([]) === ""); }
+    { const route = readFileSync(new URL("../server/routes/tutor.ts", import.meta.url), "utf8"), client = readFileSync(new URL("../client/tutor/TutorSession.tsx", import.meta.url), "utf8");
+      check("the live check is wired: a route that returns a note, and the session sends it privately (no reply of its own) after a finished tutor turn", /\/api\/tutor\/live\/check/.test(route) && /spokenCheckNote\(flags\)/.test(route) && /api\.liveCheck\(/.test(client) && /liveRef\.current\.sendText\(`\[\$\{sessionNoteTag\}\] \(\$\{r\.note\}\)`, false\)/.test(client)); }
   }
   check("the writer is told to write a multi-part question whole, each part on its own line, with the tutor's exact numbers", /A MULTI-PART QUESTION/.test(readFileSync(new URL("../server/tutorTurn/boardWriter.ts", import.meta.url), "utf8")) && /gives the answer to the question the tutor just asked/.test(readFileSync(new URL("../server/tutorTurn/boardWriter.ts", import.meta.url), "utf8")));
 }

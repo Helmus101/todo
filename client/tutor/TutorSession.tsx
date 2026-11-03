@@ -504,6 +504,7 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
     return () => { window.removeEventListener("pagehide", onHide); onHide(); }; // leaving the tutor screen counts as leaving the sitting
   }, [reportSitting]);
   const turnsRef = useRef<{ who: "you" | "otto"; text: string }[]>([]);
+  const spokenCheckBusyRef = useRef(false), spokenCheckNoteAtRef = useRef(0);
   const boardQueueRef = useRef<Promise<void>>(Promise.resolve());
   const endedTaskRef = useRef<WebTask | null>(null);
   // "Otto is writing…" shows on the board from the moment the tutor promises something on it until the board writer has landed it.
@@ -544,6 +545,15 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
     else {
       // Invented context ("that matches option A" when nobody gave options): tell it privately to own the slip at its next turn.
       if (liveRef.current.status === "live" && citesMissingOptions(text, [...(t.chat || []).map((m: any) => m.text), ...(t.board || []).map((e: any) => e.text)].join("\n"))) liveRef.current.sendText(`[${sessionNoteTag}] (${MISSING_OPTIONS_NOTE})`, false);
+      // An independent look at what it just said (gave the result away, agreed to a non-answer, said something false, misdescribed the board): if the
+      // check finds a problem the tutor gets one private note and owns it in its own words. Best effort, one at a time, never blocks the call.
+      if (liveRef.current.status === "live" && !spokenCheckBusyRef.current && turnsRef.current.some((x) => x.who === "you") && Date.now() - spokenCheckNoteAtRef.current > 15_000) {
+        spokenCheckBusyRef.current = true;
+        void api.liveCheck(exchangeText(turnsRef.current.slice(-8)), (taskRef.current?.board || []).slice(-120))
+          .then((r) => { if (r?.note && liveRef.current.status === "live") { spokenCheckNoteAtRef.current = Date.now(); liveRef.current.sendText(`[${sessionNoteTag}] (${r.note})`, false); } })
+          .catch(() => {})
+          .finally(() => { spokenCheckBusyRef.current = false; });
+      }
       // "I don't know" twice, or "just explain it" once: if the reply is still only a guiding question, nudge it (privately) to explain.
       const wants = wantsExplainRef.current; wantsExplainRef.current = false;
       if ((stuckRef.current >= 2 || wants) && isOnlyAQuestion(text) && liveRef.current.status === "live") {

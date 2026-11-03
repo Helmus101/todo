@@ -307,6 +307,7 @@ export const api = {
   /** After each spoken exchange: what should go on the paper (entries to merge into the board). */
   archiveTutor: (sessionId: string, subject: string | undefined, chat: unknown[], board: unknown[]): Promise<{ ok: boolean }> => post("/api/tutor/archive", { sessionId, subject, chat, board }),
   setTrainingShare: (on: boolean): Promise<{ ok: boolean; trainingShare: boolean }> => post("/api/profile/training-share", { on }),
+  liveCheck: (exchange: string, board: unknown[]): Promise<{ note: string; flags?: string[] }> => post("/api/tutor/live/check", { exchange, board }),
   liveBoard: (exchange: string, board: unknown[], subject?: string, history?: string, lang?: string, early?: boolean, toolMode?: boolean, penWrote?: boolean): Promise<{ board: any[]; flags?: string[] }> => post("/api/tutor/live/board", { exchange, board, subject, history, lang, ...(early ? { early: true } : {}), ...(toolMode ? { toolMode: true } : {}), ...(penWrote ? { penWrote: true } : {}) }),
   /** Otto's own pen: a write_board call from the voice model, checked on the server. */
   liveWrite: (lines: unknown[], board: unknown[], recent: string): Promise<{ board: any[]; removed: string[]; refused: { line: string; reason: string }[]; listing: string }> => post("/api/tutor/live/write", { lines, board, recent }),

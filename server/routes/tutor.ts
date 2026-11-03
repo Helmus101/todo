@@ -11,7 +11,8 @@ import { backgroundBlock, learningPrefsFrom, mergePrefs } from "../tutor.ts";
 import { selectJournal } from "../journal.ts";
 import { writeBoard } from "../tutorTurn/boardWriter.ts";
 import { applyBoardTool } from "../tutorTurn/boardTool.ts";
-import { BOARD_TOOL_REALTIME } from "../../shared/boardTool.ts";
+import { checkSpokenTurn, spokenCheckNote } from "../tutorTurn/spokenCheck.ts";
+import { BOARD_TOOL_REALTIME, boardListing } from "../../shared/boardTool.ts";
 import { normalizeStudentModel, emptyStudentModel, recordConceptEvidence } from "../studentModel.ts";
 import * as pronoteSvc from "../pronote.ts";
 import { validNoteTag } from "../../shared/noteTag.ts";
@@ -213,6 +214,20 @@ export function registerTutorRoutes(app: express.Express): void {
     const recent = typeof req.body?.recent === "string" ? req.body.recent.slice(-4000) : "";
     const out = applyBoardTool({ lines, board, recent });
     res.json({ board: out.written, removed: out.removed, refused: out.refused, listing: out.listing });
+  }));
+
+  // An independent look at the tutor's last spoken turn (spokenCheck.ts): returns a private note for the tutor when it gave away a result, agreed to a
+  // non-answer, said something false, or misdescribed the board. Cheap (one small call), best effort, never blocks the call.
+  app.post("/api/tutor/live/check", requireAuth, rateLimit(40, 60_000), dailyCap("live-check", Number(process.env.TUTOR_DAILY_LIVE_CHECK) || 1500), ah(async (req, res) => {
+    if (isTutorBlocked(req) || overWeeklyCap(req) || !aiReady()) { res.json({ note: "" }); return; }
+    const exchange = typeof req.body?.exchange === "string" ? req.body.exchange.slice(-3000) : "";
+    const board = (Array.isArray(req.body?.board) ? req.body.board : []).slice(-120).filter((e: any) => e && typeof e.id === "string" && typeof e.kind === "string" && (e.text === undefined || typeof e.text === "string"));
+    const tokens = { in: 0, out: 0, cachedIn: 0 };
+    const flags = await checkSpokenTurn({ exchange, listing: boardListing(board) }, tokens);
+    const profile = req.session.profile || emptyProfile();
+    addUsage(profile, tokens, "chat");
+    await commit(req);
+    res.json({ note: spokenCheckNote(flags), flags: flags.map((f) => f.kind) });
   }));
 
   app.post("/api/tutor/live/board", requireAuth, rateLimit(30, 60_000), dailyCap("live-board", Number(process.env.TUTOR_DAILY_LIVE_BOARD) || 900), ah(async (req, res) => {
