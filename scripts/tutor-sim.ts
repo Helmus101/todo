@@ -12,6 +12,8 @@ import { createTutorChat, usageOf } from "../server/claude.ts";
 import { callCostUsd } from "../shared/types.ts";
 import { BOARD_TOOL_CHAT, BOARD_TOOL_NAME } from "../shared/boardTool.ts";
 import { applyBoardTool } from "../server/tutorTurn/boardTool.ts";
+import { checkSpokenTurn, spokenCheckNote } from "../server/tutorTurn/spokenCheck.ts";
+import { boardListing } from "../shared/boardTool.ts";
 import { liveInstructions, exchangeText } from "../shared/liveTutor.ts";
 import { writeBoard, splitOpenQuestion, posesProblem, problemOnBoard, promisesBoard } from "../server/tutorTurn/boardWriter.ts";
 import { boardLineIsWrong } from "../server/boardMath.ts";
@@ -28,6 +30,10 @@ const spend = (res: any) => { const u = usageOf(res); spentUsd += callCostUsd(u.
 interface Persona { id: string; subject: string; level: string; who: string; opener: string }
 
 const PERSONAS: Persona[] = [
+  { id: "arccos-test-review", subject: "Math AA HL", level: "IB DP2", opener: "I just had a test and there was a question I want to go over: arccos of x plus arccos of root 3 x equals 3 pi over 2, find x",
+    who: "You are a Math AA HL student going over a question from a test you just sat. You think aloud with long pauses and fillers (um, so basically, hmm) and sometimes say a fragment that is not an answer. You know the cosine addition formula and that arccos has range 0 to pi; if the tutor claims otherwise you challenge it ('wait, are you sure?'). You expand products correctly but lose the thread, and say 'we've been over the whole question' when impatient. You only reach x squared equals one quarter yourself; you forget to check the candidates in the original equation until asked." },
+  { id: "rational-from-asymptotes", subject: "Math AA HL", level: "IB DP2", opener: "the graph of f has vertical asymptote x equals 0.25, horizontal asymptote y equals 0.5 and crosses the x axis at (5, 0); find f of x as (ax plus b) over (cx plus d) with integers",
+    who: "You are a Math AA HL student who gets the structure slowly. You say 'what do you mean?' when a sentence loses you (twice in a row sometimes), ask why a constant like c = 4 is chosen ('isn't that random?'), and suggest plugging in x = 0 although the intercept given is (5, 0). You say 'you drew the graph wrong, the left branch goes to plus infinity' if the sketch shows otherwise." },
   { id: "logs-confused", subject: "Math AA HL", level: "IB DP2", opener: "let's work on some log questions",
     who: "You are a Math AA HL student who half understands logarithms. You mix up when to add and multiply, forget to check the domain, and sometimes say a step out loud wrongly and then correct yourself. Your speech comes from a microphone: lowercase, fillers (um, uh, so), sometimes a word is mis-heard. Ask 'wait, which one is it?' or 'did you put it on the board?' when you cannot see the problem on the board." },
   { id: "log-law-misconception", subject: "Math AA SL", level: "IB DP1", opener: "I need help with logs, I think log of a plus b is log a plus log b",
@@ -193,9 +199,11 @@ async function runPersona(p: Persona): Promise<{ flags: { turn: number; kind: st
   history.push({ who: "tutor", text: greet.speech });
   console.log(`Tutor: ${greet.speech}`);
   let student = p.opener;
+  let pendingNote = ""; // the independent check's private note about the previous tutor turn, as the app sends it in a live session
   for (let turn = 1; turn <= turnsN; turn++) {
     if (spentUsd >= maxUsd) { console.log(`   (spend cap of $${maxUsd} reached: stopping)`); break; }
     history.push({ who: "student", text: student });
+    if (pendingNote) { msgs.push({ role: "user", content: `(${pendingNote})` }); pendingNote = ""; }
     msgs.push({ role: "user", content: student });
     console.log(`\nStudent: ${student}`);
     const before = board;
@@ -206,6 +214,11 @@ async function runPersona(p: Persona): Promise<{ flags: { turn: number; kind: st
     console.log(`Tutor: ${reply}`);
     for (const e of t.written) console.log(`   pen  + [${e.kind}] ${cut(String(e.text || ""), 120)}`);
     for (const r of t.refused) { console.log(`   pen  x ${cut(r.line, 80)} (${cut(r.reason, 90)})`); const k = r.reason.replace(/\d[\d., ]*/g, "#").slice(0, 60); refusedAll[k] = (refusedAll[k] || 0) + 1; }
+    // The independent check of what the tutor just said (the same call the live app makes after each tutor turn).
+    try {
+      const ck = await checkSpokenTurn({ exchange: history.slice(-8).map((x) => `${x.who === "student" ? "Student" : "Tutor"}: ${x.text}`).join("\n"), listing: boardListing(board) }, tokens);
+      if (ck.length) { pendingNote = spokenCheckNote(ck); console.log(`   check: ${ck.map((f) => `${f.kind} "${cut(f.quote, 70)}"`).join(" | ")}`); }
+    } catch { /* best effort */ }
     // The board writer, in tool mode: records the student's own working the tutor did not write, and runs the step checks.
     const chatLines = history.slice(-14, -2).map((x) => ({ who: x.who === "student" ? "you" as const : "otto" as const, text: x.text.slice(0, 400) }));
     try {
