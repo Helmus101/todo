@@ -175,7 +175,7 @@ export function registerTutorRoutes(app: express.Express): void {
           for (const model of candidates) {
             for (const full of [true, false]) {
               // The full session also carries Otto's pen (write_board); the bare fallback has neither, and the board writer then writes everything.
-              const session: any = { type: "realtime", model, instructions, output_modalities: ["audio"], audio: { output: { voice: "cedar" }, ...(full ? { input: { transcription: { model: "gpt-4o-mini-transcribe" }, turn_detection: { type: "semantic_vad" } } } : {}) }, ...(full ? { tools: [BOARD_TOOL_REALTIME], tool_choice: "auto" } : {}) };
+              const session: any = { type: "realtime", model, instructions, output_modalities: ["audio"], audio: { output: { voice: "cedar" }, ...(full ? { input: { transcription: { model: "gpt-4o-mini-transcribe" }, turn_detection: { type: "semantic_vad", eagerness: "low" } } } : {}) }, ...(full ? { tools: [BOARD_TOOL_REALTIME], tool_choice: "auto" } : {}) };
               const r = await fetch("https://api.openai.com/v1/realtime/client_secrets", { method: "POST", headers: { Authorization: `Bearer ${openaiKey}`, "Content-Type": "application/json" }, body: JSON.stringify({ session }), signal: AbortSignal.timeout(6000) });
               if (r.ok) {
                 const j: any = await r.json();

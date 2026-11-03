@@ -201,10 +201,17 @@ export function useGeminiLive(opts: LiveOptions) {
       // Try the model ids in order: Google renames its live models often, so one that is refused (not found / not supported) just moves on.
       // Each model is tried with Otto's pen (the write_board tool) first; a model that refuses tools is tried again without, and the board writer then writes everything.
       let session: any = null; const modelErrs: string[] = []; let withTools = false;
-      const attempts = (tok.models?.length ? tok.models : [tok.model]).flatMap((model) => (optsRef.current.onWriteBoard ? [{ model, tools: true }, { model, tools: false }] : [{ model, tools: false }]));
-      for (const { model, tools } of attempts) {
+      // Patient turn-taking: a student who thinks aloud ("um…", "so basically…") must not hand the turn to Otto at every pause, or Otto answers its
+      // own question. A model that refuses these settings is tried once more without them (last attempt below), so voice never fails because of them.
+      const patient = { realtimeInputConfig: { automaticActivityDetection: { endOfSpeechSensitivity: "END_SENSITIVITY_LOW", startOfSpeechSensitivity: "START_SENSITIVITY_LOW", silenceDurationMs: 1800, prefixPaddingMs: 250 } } };
+      const models = tok.models?.length ? tok.models : [tok.model];
+      const attempts = [
+        ...models.flatMap((model) => (optsRef.current.onWriteBoard ? [{ model, tools: true, vad: true }, { model, tools: false, vad: true }] : [{ model, tools: false, vad: true }])),
+        ...models.flatMap((model) => (optsRef.current.onWriteBoard ? [{ model, tools: true, vad: false }, { model, tools: false, vad: false }] : [{ model, tools: false, vad: false }])),
+      ];
+      for (const { model, tools, vad } of attempts) {
         if (!aliveRef.current) return;
-        const config = tools ? { ...baseConfig, tools: [{ functionDeclarations: [BOARD_TOOL_GEMINI] }] } : baseConfig;
+        const config = { ...baseConfig, ...(vad ? patient : {}), ...(tools ? { tools: [{ functionDeclarations: [BOARD_TOOL_GEMINI] }] } : {}) };
         try {
           session = await new Promise<any>((resolve, reject) => {
             let opened: any = null, connecting: Promise<any> | null = null, settled = false;
