@@ -28,6 +28,7 @@ import { classifySafety, crisisCardText } from "../../shared/safety.ts";
 import { exchangeText } from "../../shared/liveTutor.ts";
 import { toSpeakableText } from "../voice/useSpeechSynthesis.ts";
 import { buttonMessage, deviceStateOf } from "../../shared/deviceProtocol.ts";
+import { dueCards, situationNote } from "../../shared/situations.ts";
 import { EXPLAIN_NOW_NOTE, MISSING_OPTIONS_NOTE, askedToExplain, citesMissingOptions, isOnlyAQuestion, nextStuckCount, unclearSpeech } from "../../shared/stuck.ts";
 import { PageTour } from "../PageTour.tsx";
 import { TOURS } from "../tours.ts";
@@ -505,6 +506,7 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
   }, [reportSitting]);
   const turnsRef = useRef<{ who: "you" | "otto"; text: string }[]>([]);
   const spokenCheckBusyRef = useRef(false), spokenCheckNoteAtRef = useRef(0);
+  const situationAtRef = useRef<Record<string, number>>({}); // situation card id -> the student-turn number it was last sent at
   const boardQueueRef = useRef<Promise<void>>(Promise.resolve());
   const endedTaskRef = useRef<WebTask | null>(null);
   // "Otto is writing…" shows on the board from the moment the tutor promises something on it until the board writer has landed it.
@@ -529,6 +531,14 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
     // question, nudge it (privately) to explain. Sent once per streak.
     if (who === "you") {
       stuckRef.current = nextStuckCount(stuckRef.current, text);
+      // Situation cards (shared/situations.ts): guidance for the moment they are in, sent privately once, shaping the next turns.
+      if (liveRef.current.status === "live") {
+        const studentTurns = turnsRef.current.filter((x) => x.who === "you").length;
+        const lastTutor = [...turnsRef.current].reverse().find((x) => x.who === "otto")?.text || "";
+        const cards = dueCards({ student: text, tutor: lastTutor, turns: studentTurns }, situationAtRef.current);
+        const note = situationNote(cards);
+        if (note) { for (const c of cards) situationAtRef.current[c.id] = studentTurns; liveRef.current.sendText(`[${sessionNoteTag}] (${note})`, false); }
+      }
       wantsExplainRef.current = askedToExplain(text);
       const hit = classifySafety(text);
       if (hit && Date.now() - lastSafetyAtRef.current > 120_000) {

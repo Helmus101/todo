@@ -9,7 +9,7 @@ import { sanitizeForPrompt, neutralizeBlock } from "./promptSafe.ts";
 import { TUTOR_PROMPT } from "./tutorPrompt.ts";
 import { renderCharter } from "./tutorCharter.ts";
 
-const VOICE_DROP = ["THE BOARD IS THEIR NOTES", "THE PLAN — SET IT AND START", "HOW EXPERT TUTORS WORK", "HOW PEOPLE LEARN", "STRATEGIES — teach them", "CRITICAL THINKING"];
+const VOICE_DROP = ["EXAM READINESS", "PITCH IT HARD ENOUGH", "THE BOARD IS THEIR NOTES", "THE PLAN — SET IT AND START", "HOW EXPERT TUTORS WORK", "HOW PEOPLE LEARN", "STRATEGIES — teach them", "CRITICAL THINKING"];
 /** The tutor prompt without the sections about typed notes, plans and study strategies: on a call the pen rules and the five points above cover what matters. */
 export function voiceTutorPrompt(full: string = TUTOR_PROMPT): string {
   const header = /^[A-Z][A-Z0-9 ,'&—()\/:.-]{11,}/;
