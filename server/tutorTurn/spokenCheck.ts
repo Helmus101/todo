@@ -8,23 +8,21 @@
 // ignored. The result is a private note the tutor reads and answers with its own words; nothing canned is ever shown to the student.
 import { createTutorChat, usageOf } from "../claude.ts";
 import { extractJsonObject } from "../../shared/tutorTurn.ts";
+import { renderJudgeRubric } from "../../shared/tutorCharter.ts";
 
-export interface SpokenFlag { kind: "gaveResult" | "confirmedUnclear" | "falseMath" | "claimedBoard"; quote: string; fix: string }
+export interface SpokenFlag { kind: "gaveResult" | "confirmedUnclear" | "falseMath" | "claimedBoard" | "ignoredRoute"; quote: string; fix: string }
 
 const SYSTEM = `You audit ONE spoken turn of an AI maths/science tutor. You do not teach and you do not speak to the student. Input: the board (numbered lines), the last few turns ("Student:" / "Tutor:" lines; the LAST Tutor line is the turn you audit), and nothing else.
 
-Report each problem you find, quoting the tutor's own words EXACTLY as they appear in the last Tutor line:
-- "gaveResult": the tutor states the result of the step the student is working on, or the next algebraic step, before the student has said it (it solved it for them, or confirmed a final value they never reached). Explaining an idea or a different example is fine; naming the value they are meant to find is not.
-- "confirmedUnclear": the tutor agrees with, praises or builds on a Student line that is not a real answer (a filler, a fragment, noise such as "Um", "Hi", "dart", "power 2" with no maths context), or answers its own question after a filler. Waiting or asking again ("Take your time", "Didn't catch that, say it again?") is CORRECT behaviour and is never flagged.
-- "falseMath": the tutor states something mathematically or scientifically false. Recompute it yourself first (ranges of functions, signs, identities, arithmetic). Put the correct statement in "fix".
-- "claimedBoard": the tutor says something is NOT on the board / has not been drawn, or points at a numbered line, and the board listing clearly says otherwise. Never flag "it is on the board" / "I wrote it": the board is updated a moment after the turn and the listing can lag.
+Report each problem you find, quoting the tutor's own words EXACTLY as they appear in the last Tutor line. The kinds:
+${renderJudgeRubric()}
 
-Be strict about evidence and lenient about style: only report a clear problem, and when in doubt report nothing. Fewer, correct flags are far better than many doubtful ones. Hints, questions, rephrasing, praise for a real answer and correct statements are fine.
-Return ONLY JSON: {"flags":[{"kind":"gaveResult|confirmedUnclear|falseMath|claimedBoard","quote":"exact words from the last Tutor line","fix":"what the tutor should do now, in one short sentence addressed to the tutor"}]} with an empty list when the turn is fine.`;
+Be strict about evidence and lenient about style: only report a clear problem, and when in doubt report nothing. Fewer, correct flags are far better than many doubtful ones.
+Return ONLY JSON: {"flags":[{"kind":"gaveResult|confirmedUnclear|falseMath|claimedBoard|ignoredRoute","quote":"exact words from the last Tutor line","fix":"what the tutor should do now, in one short sentence addressed to the tutor"}]} with an empty list when the turn is fine.`;
 
 /** Pure: the flags the judge returned, kept only when their quote really is in the tutor's turn. Exported for tests. */
 export function parseSpokenFlags(raw: unknown, tutorTurn: string): SpokenFlag[] {
-  const kinds = ["gaveResult", "confirmedUnclear", "falseMath", "claimedBoard"];
+  const kinds = ["gaveResult", "confirmedUnclear", "falseMath", "claimedBoard", "ignoredRoute"];
   const flat = (s: string) => s.toLowerCase().replace(/\s+/g, " ").trim();
   const turn = flat(tutorTurn);
   const parsed: any = typeof raw === "string" ? extractJsonObject(raw) : raw;
@@ -45,6 +43,7 @@ export function spokenCheckNote(flags: SpokenFlag[]): string {
     const what = f.kind === "gaveResult" ? "you stated a result or next step the student had not reached"
       : f.kind === "confirmedUnclear" ? "you agreed to something that was not a real answer"
       : f.kind === "falseMath" ? "that is not correct"
+      : f.kind === "ignoredRoute" ? "they had named their own method and you steered away from it"
       : "that does not match the board";
     return `You said "${f.quote}": ${what}.${f.fix ? ` ${f.fix}` : ""}`;
   });
