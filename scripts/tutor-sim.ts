@@ -8,6 +8,7 @@
 // Needs GEMINI_API_KEY and/or DEEPSEEK_API_KEY in .env and costs a few cents per persona. The tutor here is the typed tutor model standing in
 // for the live voice model; it follows the same prompt but is not identical, so treat results as strong evidence, not proof.
 import "../server/env.ts";
+import { writeFileSync } from "node:fs";
 import { createTutorChat, usageOf } from "../server/claude.ts";
 import { callCostUsd } from "../shared/types.ts";
 import { BOARD_TOOL_CHAT, BOARD_TOOL_NAME } from "../shared/boardTool.ts";
@@ -24,6 +25,9 @@ const turnsN = Math.max(4, Number(arg("--turns")) || 12);
 const runs = Math.max(1, Number(arg("--runs")) || 1);
 const verbose = process.argv.includes("--verbose");
 const maxUsd = Number(arg("--max-usd")) || 5;
+/** --out writes the run's numbers as JSON (one file per prompt version), so two versions can be compared line by line. */
+const outPath = arg("--out");
+const tag = arg("--tag") || "";
 let spentUsd = 0;
 const spend = (res: any) => { const u = usageOf(res); spentUsd += callCostUsd(u.in, u.out, u.cachedIn); };
 
@@ -292,3 +296,7 @@ if (scores.length) {
 }
 console.log(`\nSPENT: about $${spentUsd.toFixed(3)} (cap $${maxUsd}; DeepSeek rates; calls Gemini answered are not metered)`);
 console.log("\nThe judge is a model: read the flagged lines in the transcript before acting on a flag. A flag is a lead, not a verdict.");
+if (outPath) {
+  writeFileSync(outPath, JSON.stringify({ tag, turns: turnsN, runs, flags: total, byKind: summary, perPersona, scores, spentUsd: Number(spentUsd.toFixed(4)) }, null, 1));
+  console.log(`Saved: ${outPath}`);
+}
