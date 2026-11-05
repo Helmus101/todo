@@ -2,6 +2,7 @@
 // and returns whatever JSON each test scripts, so the REAL engine (prompt, one call, board ops) runs with no network or key.
 process.env.DEEPSEEK_API_KEY ||= "sim-key";
 delete process.env.GEMINI_API_KEY;
+process.env.TUTOR_GATE = "off"; // the gate has its own test below; every other test counts model calls
 
 export async function runTutorTurnSim(check, section) {
   let script = () => ({});
@@ -26,18 +27,29 @@ export async function runTutorTurnSim(check, section) {
     check("the JSON is read leniently (fence, speech as one string, synonyms) and unknown ops are dropped",
       (() => { const t = normalizeTurn(extractJsonObject('```json\n{"speech":"One. Two?","board_actions":[{"type":"mark","cue":7,"target":"#1"},{"op":"gap","text":"x"}]}\n```')); return t && t.speech.length === 2 && t.board.length === 1 && t.board[0].op === "mark" && t.board[0].cue === 1; })());
     check("no speech → no turn", normalizeTurn({ speech: [] }) === null && normalizeTurn("x") === null);
-    { const { enforceSocraticTurn } = await import("../server/tutorTurn/socraticGuard.ts");
-      check("natural tutor turns are preserved without forcing a question", (() => { const t = { speech: ["That sounds frustrating. Let me show the idea with a fresh example."], board: [] }; return enforceSocraticTurn(t) === t; })());
-      check("a direct answer leak is softened while the rest of the tutor turn survives", (() => { const t = enforceSocraticTurn({ speech: ["The answer is 4.", "Try checking the units."], board: [] }); return t.speech.length === 2 && !/answer is 4/.test(t.speech.join(" ")) && /units/.test(t.speech[1]); })());
-      check("the guard does not rewrite ordinary explanations or confirmations that are not answer leaks", (() => { const t = { speech: ["Exactly right to compare the two slopes."], board: [] }; return enforceSocraticTurn(t) === t; })()); }
+    { const eng = (await import("node:fs")).readFileSync(new URL("../server/tutorTurn/engine.ts", import.meta.url), "utf8");
+      check("no fixed replacement text: the old guard that swapped sentences for canned lines is gone, and a flagged reply goes back to the model to be written again (gateTurn)", !/enforceSocraticTurn/.test(eng) && /gateTurn\(first/.test(eng) && /spokenCheckNote\(flags, \{ rewrite: true \}\)/.test(eng)); }
     check("single-backslash LaTeX inside the JSON survives (\\theta, \\times, \\text)", (() => { const t = normalizeTurn(extractJsonObject('{"speech":["ok."],"board":[{"op":"step","text":"$a \\times b \\theta \\text{N}$"}]}')); return t && /\\times/.test(t.board[0].text) && /\\theta/.test(t.board[0].text) && /\\text/.test(t.board[0].text); })());
     { const { TUTOR_PROMPT } = await import("../shared/tutorPrompt.ts");
-      check("the turn prompt IS the one tutor prompt plus the board ops (not a second set of rules), teaching on the board with one question at a time and the last step left to the student", TURN_PROMPT.startsWith(TUTOR_PROMPT) && TURN_PROMPT.length < 70000 && /Use the board when it helps/.test(TURN_PROMPT) && /ONE question/.test(TURN_PROMPT) && /last step/.test(TURN_PROMPT) && /regions/.test(DRAW_REFERENCE)); }
+      check("the turn prompt IS the one tutor prompt plus the board ops (not a second set of rules), teaching on the board with one question at a time and the last step left to the student", TURN_PROMPT.startsWith(TUTOR_PROMPT) && TURN_PROMPT.length < 73000 && /Use the board when it helps/.test(TURN_PROMPT) && /ONE question/.test(TURN_PROMPT) && /last step/.test(TURN_PROMPT) && /regions/.test(DRAW_REFERENCE)); }
     { const r = applyOps([{ op: "topic", cue: 0, text: "Quadratics" }, { op: "step", cue: 1, text: "$x^2 - 5x + 6 = 0$", kind: "given" }, { op: "step", cue: 1, text: "$x^2 - 5x + 6 = 0$", kind: "given" }, { op: "mark", cue: 1, target: "#9", note: "here" }], { board: [], problems: [], theirWords: [] });
       check("topic and step ops become board entries; a duplicate line and a mark on a missing line are dropped", r.board.length === 2 && r.board[0].kind === "focus" && r.board[1].cue === 1 && r.dropped.length === 2); }
 
     { const r = applyOps([{ op: "step", cue: 0, text: "$E_k = \\frac{p^2}{2m}$", kind: "formula" }, { op: "step", cue: 0, text: "$E_k(m) = \\frac{p^2}{2m}$", kind: "formula" }, { op: "step", cue: 0, text: "$E_k(2m) = \\frac{p^2}{4m}$", kind: "formula" }], { board: [], problems: [], theirWords: [] });
       check("equations with different left-hand sides (E_k, E_k(m), E_k(2m)) are three lines, not near-duplicates", r.board.length === 3 && r.dropped.length === 0); }
+
+    section("Tutor turn — a second reader before the student hears it");
+    { process.env.TUTOR_GATE = "on"; calls.length = 0;
+      const leak = { speech: ["So x squared is one quarter, meaning x is a half or minus a half.", "Which one works?"], board: [{ op: "step", cue: 0, text: "$x^2 = \\frac{1}{4}$", kind: "result" }] };
+      const fixed = { speech: ["You've got the 3x⁴ terms on both sides. What happens when they cancel?"], board: [] };
+      script = (body, i) => i === 0 ? leak : i === 1 ? { flags: [{ kind: "gaveResult", quote: "So x squared is one quarter", fix: "Ask what is left once the 3x⁴ cancel." }] } : fixed;
+      const r = await runTutorTurn({ ...base, message: "we've been over the whole question", history: [{ role: "assistant", text: "Expand the right side and simplify." }, { role: "user", text: "3x⁴ minus 4x² plus 1" }] });
+      check("a reply that states the result is checked, sent back to the model once, and the model's own rewrite is what is spoken (nothing canned, the leaked board line is gone)", calls.length === 3 && r.reply === fixed.speech[0] && r.board.length === 0 && /your reply was checked before they heard it/.test(JSON.stringify(calls[2].messages)) && !/Let's check that reasoning/.test(r.reply));
+      calls.length = 0;
+      script = (body, i) => i === 0 ? { speech: ["What's left once the 3x⁴ cancel?"], board: [] } : { flags: [] };
+      const ok = await runTutorTurn({ ...base, message: "so we expand it" });
+      check("a clean reply costs one check and is spoken as the model wrote it", calls.length === 2 && ok.reply === "What's left once the 3x⁴ cancel?");
+      process.env.TUTOR_GATE = "off"; }
 
     section("Tutor turn — one call, speech and board together");
     calls.length = 0;

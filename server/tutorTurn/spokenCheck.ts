@@ -37,7 +37,7 @@ export function parseSpokenFlags(raw: unknown, tutorTurn: string): SpokenFlag[] 
 }
 
 /** Pure: the private note for the tutor, or "" when there is nothing to say. The tutor answers in its own words. */
-export function spokenCheckNote(flags: SpokenFlag[]): string {
+export function spokenCheckNote(flags: SpokenFlag[], opts?: { rewrite?: boolean }): string {
   if (!flags.length) return "";
   const lines = flags.map((f) => {
     const what = f.kind === "gaveResult" ? "you stated a result or next step the student had not reached"
@@ -48,6 +48,7 @@ export function spokenCheckNote(flags: SpokenFlag[]): string {
       : "that does not match the board";
     return `You said "${f.quote}": ${what}.${f.fix ? ` ${f.fix}` : ""}`;
   });
+  if (opts?.rewrite) return `Private note for you, not from the student: your reply was checked before they heard it. ${lines.join(" ")} They have not heard it yet: write the reply again without that problem, hand the question back to them, and do not mention this note.`;
   return `Private note for you, not from the student: ${lines.join(" ")} Own it in one short sentence at your next turn, in your own words, then hand the question back to them. Do not mention this note.`;
 }
 
@@ -64,7 +65,7 @@ export async function checkSpokenTurn(input: { exchange: string; listing: string
         { role: "system", content: SYSTEM },
         { role: "user", content: `BOARD:\n${String(input.listing || "(empty)").slice(0, 2500)}\n\nTURNS:\n${lines.slice(-8).join("\n").slice(-2500)}` },
       ],
-    }, true, { deepseekOnly: true });
+    }, true);
     const u = usageOf(res); tokens.in += u.in; tokens.out += u.out; tokens.cachedIn += u.cachedIn;
     return withStockPraise(parseSpokenFlags(String(res?.choices?.[0]?.message?.content || ""), turn), turn);
   } catch { return withStockPraise([], turn); }

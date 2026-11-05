@@ -13,7 +13,8 @@ import { TURN_PROMPT, VOICE_NOTE, DRAW_REFERENCE } from "./prompt.ts";
 import { applyOps, type Applied } from "./apply.ts";
 import { carriesWorking, checkWork } from "./check.ts";
 import { researchBlock } from "./research.ts";
-import { enforceSocraticTurn } from "./socraticGuard.ts";
+import { checkSpokenTurn, spokenCheckNote } from "./spokenCheck.ts";
+import { boardListing } from "../../shared/boardTool.ts";
 
 const MAX_HISTORY = 14;
 /** A turn is a few sentences plus a few board ops; this caps a runaway reply (and its cost), not a normal one. */
@@ -37,6 +38,24 @@ async function callTurn(messages: { role: string; content: string }[], tokens: T
 const WRITING_CLAIM = /\b(?:(?:let(?:'s| us)|let me|i(?:'ll| will)|i'm going to|now)\s+(?:get|put|write|jot|draw|add|set)\b[^.?!]{0,40}\b(?:board|down|up)\b|(?:on|to|onto) the board|i(?:'ve| have) (?:written|put|added|drawn))/i;
 const ASKS_BOARD = /\b(?:on|onto|to) the (?:board|whiteboard|paper)\b|\bwrite (?:it|that|this|everything|the)\b|\bput (?:it|that|this) (?:up|down|on)\b/i;
 const POINTS_AT_BOARD = /\b(?:here(?:'s| is| are)|we have|we got|this|these|that|the following|look at|see)\b[^.?!]{0,40}\b(?:equation|expression|formula|identity|figure|graph|diagram|curve|triangle|step|line|inequality|function)\b/i;
+
+/** A second reader before the student hears it: the reply is checked against the charter (gave the result, agreed to a non-answer, false maths,
+ *  steered off their route, stock praise). When something is found the model gets one chance to write the turn again without it, in its own
+ *  words: nothing is ever replaced with fixed text. After the soft budget the turn goes out as it is. */
+async function gateTurn(first: TurnOutput, args: { input: TutorTurnInput; messages: Msg[]; tokens: Tokens; deadline: number; soft: () => boolean }): Promise<TurnOutput> {
+  const { input, messages, tokens, deadline, soft } = args;
+  if (process.env.TUTOR_GATE === "off" || !soft() || !first.speech.length) return first;
+  try {
+    const recent = input.history.slice(-6).filter((h) => h.text?.trim()).map((h) => `${h.role === "user" ? "Student" : "Tutor"}: ${h.text.replace(/\s+/g, " ").slice(0, 400)}`);
+    const exchange = [...recent, `Student: ${input.message.replace(/\s+/g, " ").slice(0, 500)}`, `Tutor: ${first.speech.join(" ")}`].join("\n");
+    const flags = await checkSpokenTurn({ exchange, listing: boardListing(input.board) }, tokens);
+    if (!flags.length || !soft()) return first;
+    const note = spokenCheckNote(flags, { rewrite: true });
+    const again = await callTurn([...messages, { role: "assistant" as const, content: JSON.stringify(first) }, { role: "user" as const, content: `(${note} Send the turn again as ONLY the JSON object. The board ops must not contain what you were told not to say.)` }], tokens, deadline);
+    if (again.turn?.speech.length) console.log(`[tutor] gate rewrote the turn: ${flags.map((f) => f.kind).join(",")}`);
+    return again.turn?.speech.length ? again.turn : first;
+  } catch { return first; }
+}
 
 /** The start of a long sitting, kept for free (no model call): only the last MAX_HISTORY messages are sent, so the first thing the student
  *  asked for and a few of their older messages ride along as one short block. Empty while the whole conversation still fits. */
@@ -130,8 +149,9 @@ export async function runTutorTurn(input: TutorTurnInput): Promise<TutorTurnResu
   }
   if (!first) { console.error("[tutor] no usable turn"); result.error = true; return result; }
 
-  const ensured = await ensureBoardWritten(first, { input, messages, tokens: result.tokens, deadline, soft });
-  const turn = enforceSocraticTurn(ensured.turn);
+  const gated = await gateTurn(first, { input, messages, tokens: result.tokens, deadline, soft });
+  const ensured = await ensureBoardWritten(gated, { input, messages, tokens: result.tokens, deadline, soft });
+  const turn = ensured.turn;
   const sources = input.researchFresh ? sourcesNote(input.research) : null;
   result.board = sources ? [sources, ...ensured.applied.board] : ensured.applied.board;
   result.reply = turn.speech.join(" ");
