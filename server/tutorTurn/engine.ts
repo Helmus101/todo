@@ -179,7 +179,7 @@ export async function runTutorTurn(input: TutorTurnInput): Promise<TutorTurnResu
   // Real working in the message: a second reader recomputes it first, so Otto neither praises a slip nor asks them to redo a step.
   const [checked, reference] = await Promise.all([
     carriesWorking(message) && soft() ? checkWork(message, board.map((b) => b.text || "").filter(Boolean), result.tokens) : Promise.resolve(null),
-    referenceSolution(input, result.tokens, 30_000),
+    referenceSolution(input, result.tokens, input.voiceMode ? 4_000 : 8_000),
   ]);
   // The reference solve (first turn of a problem only; cached after) has its own wait, so the reply keeps a full time budget.
   t0 = Date.now(); deadline = t0 + TURN_HARD_MS;
