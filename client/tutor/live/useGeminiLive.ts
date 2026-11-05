@@ -203,7 +203,7 @@ export function useGeminiLive(opts: LiveOptions) {
       let session: any = null; const modelErrs: string[] = []; let withTools = false;
       // Patient turn-taking: a student who thinks aloud ("um…", "so basically…") must not hand the turn to Otto at every pause, or Otto answers its
       // own question. A model that refuses these settings is tried once more without them (last attempt below), so voice never fails because of them.
-      const patient = { realtimeInputConfig: { automaticActivityDetection: { endOfSpeechSensitivity: "END_SENSITIVITY_LOW", startOfSpeechSensitivity: "START_SENSITIVITY_LOW", silenceDurationMs: 1800, prefixPaddingMs: 250 } } };
+      const patient = { realtimeInputConfig: { automaticActivityDetection: { endOfSpeechSensitivity: "END_SENSITIVITY_LOW", startOfSpeechSensitivity: "START_SENSITIVITY_HIGH", silenceDurationMs: 1800, prefixPaddingMs: 250 } } };
       const models = tok.models?.length ? tok.models : [tok.model];
       const attempts = [
         ...models.flatMap((model) => (optsRef.current.onWriteBoard ? [{ model, tools: true, vad: true }, { model, tools: false, vad: true }] : [{ model, tools: false, vad: true }])),

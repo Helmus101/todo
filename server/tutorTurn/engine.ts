@@ -50,7 +50,8 @@ async function gateTurn(first: TurnOutput, args: { input: TutorTurnInput; messag
   try {
     const recent = input.history.slice(-6).filter((h) => h.text?.trim()).map((h) => `${h.role === "user" ? "Student" : "Tutor"}: ${h.text.replace(/\s+/g, " ").slice(0, 400)}`);
     const exchange = [...recent, `Student: ${input.message.replace(/\s+/g, " ").slice(0, 500)}`, `Tutor: ${first.speech.join(" ")}`].join("\n");
-    const flags = await checkSpokenTurn({ exchange, listing: boardListing(input.board) }, tokens);
+    // Only a substantive slip is worth a second full model call (which adds seconds and a stiffer reply); cosmetic ones are let through.
+    const flags = (await checkSpokenTurn({ exchange, listing: boardListing(input.board) }, tokens)).filter((f) => f.kind === "falseMath" || f.kind === "gaveResult");
     if (!flags.length || !soft()) return first;
     const note = spokenCheckNote(flags, { rewrite: true });
     const again = await callTurn([...messages, { role: "assistant" as const, content: JSON.stringify(first) }, { role: "user" as const, content: `(${note} Send the turn again as ONLY the JSON object. The board ops must not contain what you were told not to say.)` }], tokens, deadline);
@@ -81,9 +82,11 @@ export function problemStatement(input: Pick<TutorTurnInput, "board" | "history"
 }
 
 const solved = new Map<string, { sol: TutorSolution | null; agree: boolean }>();
+const solving = new Map<string, Promise<{ sol: TutorSolution | null; agree: boolean }>>(); // in flight: a later turn joins the same solve instead of starting another
 const flat = (t: string) => String(t || "").toLowerCase().replace(/[^a-z0-9.]+/g, "");
 const sameAnswer = (a: string, b: string) => { const x = flat(a), y = flat(b); return !!x && !!y && (x === y || x.includes(y) || y.includes(x)); };
-/** An independent solution of the problem, solved twice with the model's thinking ON (the second pass told to hunt for the trap; the fast no-thinking mode fell for trick questions) so a single confident slip cannot become the
+/** Started in the background and NEVER waited for (ms = 0): a reply is never slowed by it; from the turn after it finishes, the tutor has it.
+ *  An independent solution of the problem, solved twice with the model's thinking ON (the second pass told to hunt for the trap; the fast no-thinking mode fell for trick questions) so a single confident slip cannot become the
  *  tutor's "truth". Cached per statement in this instance. Never throws and never holds the turn past `ms`. */
 async function referenceSolution(input: TutorTurnInput, tokens: Tokens, ms: number): Promise<{ sol: TutorSolution | null; agree: boolean }> {
   if (input.solution) return { sol: input.solution, agree: true };
@@ -92,6 +95,8 @@ async function referenceSolution(input: TutorTurnInput, tokens: Tokens, ms: numb
   const key = statement.toLowerCase().replace(/\s+/g, " ").slice(0, 400);
   const hit = solved.get(key);
   if (hit) return hit;
+  const running = solving.get(key);
+  if (running) return Promise.race([running, new Promise<{ sol: null; agree: boolean }>((res) => setTimeout(() => res({ sol: null, agree: true }), ms))]);
   const add = (t: Tokens) => { tokens.in += t.in; tokens.out += t.out; tokens.cachedIn += t.cachedIn; };
   const run = Promise.all([solveProblem(statement, input.context.subject, { think: true }), solveProblem(statement, input.context.subject, { hunt: true, think: true })]).then(([a, b]) => {
     add(a.tokens); add(b.tokens);
@@ -101,7 +106,8 @@ async function referenceSolution(input: TutorTurnInput, tokens: Tokens, ms: numb
     const out = { sol: agree ? a.solution : (b.solution || sol), agree };
     solved.set(key, out); if (solved.size > 60) solved.delete(solved.keys().next().value as string);
     return out;
-  }).catch(() => ({ sol: null, agree: true }));
+  }).catch(() => ({ sol: null, agree: true })).finally(() => { solving.delete(key); });
+  solving.set(key, run);
   return Promise.race([run, new Promise<{ sol: null; agree: boolean }>((res) => setTimeout(() => res({ sol: null, agree: true }), ms))]);
 }
 
@@ -179,7 +185,7 @@ export async function runTutorTurn(input: TutorTurnInput): Promise<TutorTurnResu
   // Real working in the message: a second reader recomputes it first, so Otto neither praises a slip nor asks them to redo a step.
   const [checked, reference] = await Promise.all([
     carriesWorking(message) && soft() ? checkWork(message, board.map((b) => b.text || "").filter(Boolean), result.tokens) : Promise.resolve(null),
-    referenceSolution(input, result.tokens, input.voiceMode ? 4_000 : 8_000),
+    referenceSolution(input, result.tokens, 0),
   ]);
   // The reference solve (first turn of a problem only; cached after) has its own wait, so the reply keeps a full time budget.
   t0 = Date.now(); deadline = t0 + TURN_HARD_MS;

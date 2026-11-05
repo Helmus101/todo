@@ -695,7 +695,7 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
   liveRef.current = live;
   // CAREFUL VOICE: the same checked tutor as the typed chat (charter in the prompt, every reply read by a second model before it is spoken) with the
   // browser listening and speaking. Slower to answer than the live voice, but nothing is said that was not checked. The live voice stays one tap away.
-  const [voiceEngine, setVoiceEngineState] = useState<"careful" | "live">(() => { try { return localStorage.getItem("otto-voice-engine") === "live" ? "live" : "careful"; } catch { return "careful"; } });
+  const [voiceEngine, setVoiceEngineState] = useState<"careful" | "live">(() => { try { return localStorage.getItem("otto-voice-engine") === "careful" ? "careful" : "live"; } catch { return "live"; } });
   const setVoiceEngine = (v: "careful" | "live") => { setVoiceEngineState(v); try { localStorage.setItem("otto-voice-engine", v); } catch { /* best-effort */ } };
   const [carefulOn, setCarefulOn] = useState(false);
   const carefulOnRef = useRef(false); carefulOnRef.current = carefulOn;
