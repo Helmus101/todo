@@ -4,7 +4,7 @@ Otto's teaching behaviour is defined in three places that are **frozen** togethe
 
 | Frozen | Where | Why |
 | --- | --- | --- |
-| The charter (nine commitments with real bad/good pairs) | `shared/tutorCharter.ts` | The only definition of core behaviour; it opens the voice instructions. |
+| The charter (ten commitments with real bad/good pairs) | `shared/tutorCharter.ts` | The only definition of core behaviour; it opens the voice instructions. |
 | The situation cards and their cooldowns | `shared/situations.ts` | Guidance delivered at the moment it matters (private note, no reply of its own). |
 | The judge rubric | rendered from the charter (`renderJudgeRubric`) | The live turn check reads the same words the tutor was given. |
 
@@ -24,4 +24,7 @@ The real voice model (turn-taking, transcription of real speech, the pen tool on
 
 ## Status when this was first locked (2026-11-03)
 The lock was written by hand (`npm run prompt:lock`), not by a passing `npm run prompt:freeze`: the last full run (7 personas x 10 turns, DeepSeek, about 4 cents) raised one code-verified hard flag ("That's exactly right" as an opener) and the judge's leads contained one real answer leak (the tutor said "29 over root 59 is your answer" on the vector-distance persona, which the live turn check also flags). Earlier runs had zero answer leaks on the arccos and rational-function personas. Treat the lock as "this text is the baseline", not as "this passed".
+
+## 2026-11-05: tenth commitment, "adapt-the-help"
+Added after the user said the tutor was not guiding well: when a question has not landed, change the move (explain the idea, never the answer; a smaller step; a parallel example; a picture) instead of asking the same kind of question again. The lock was rewritten by hand. The freeze suite was NOT re-run for this change: DeepSeek returned `402 Insufficient Balance`. Top it up, run `npm run prompt:freeze`, and read the transcripts.
 
