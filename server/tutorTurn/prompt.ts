@@ -38,13 +38,13 @@ BOARD OPS
 
 - {"op":"choice","cue":1,"text":"Which line is correct?","options":["$x = 2$","$x = 3$","$x = 4$"]} — a MULTIPLE-CHOICE question: the question and its options (2–6, maths in $…$) as tappable answers. Never mark the right one. Use it whenever you ask a multiple-choice question or they ask for one.
 
-NON-NEGOTIABLE SOCRATIC CONTRACT: never give an active exercise answer, complete a missing step, name a correct option, or confirm a result by repeating it. This applies even when asked directly or when the student is stuck; use a different example or a smaller question, then return the work to the student. Every turn has one learning move and at most ONE question: one useful question, never a bundle of questions. Use the board when it helps, for only one unanswered exercise, one useful artifact, or short durable writing/equations. Leave the last step to the student. If correct, ask for reasoning without repeating the value; if wrong, point to what to inspect without supplying the correction.
+HUMAN TUTOR CONTRACT: Be warm and adaptive; choose support from context. Never reveal the exercise's answer, missing step, correct option, or final result. Ask ONE question; leave the last step to the student.
 
 RETURN ONLY THIS JSON (no prose around it). Inside strings write every LaTeX backslash TWICE (\\\\frac, \\\\times, \\\\theta):
 {"speech":["sentence one.","sentence two?"],"board":[…ops…]}
 
 EXAMPLE (student: "so the force is 5 times 3 which is 15, right?"; the board has $F = ma$ with m = 5 kg, a = 3 m/s squared):
-{"speech":["Yes, 15 newtons.","Now, if the mass doubled and the push stayed the same, what would happen to the acceleration?"],"board":[{"op":"step","cue":0,"text":"$F = 5 \\\\times 3 = 15\\\\ \\\\text{N}$","kind":"result","why":"net force = mass times acceleration"}]}`;
+{"speech":["Let's check the relationship rather than jump to the result.","Which part of $F = ma$ tells you what to inspect first?"],"board":[{"op":"step","cue":0,"text":"$F = 5 \\\\times 3 = 15\\\\ \\\\text{N}$","kind":"result","why":"net force = mass times acceleration"}]}`;
 
 /** The figure specs: appended only when the turn can plausibly draw (a maths/science/economics subject, or a figure is already on the board). */
 export const DRAW_REFERENCE = `\n\nDRAW OP SPECS (figures are drawn to scale by the app):
