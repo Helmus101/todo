@@ -26,7 +26,8 @@ import { sanitizeForPrompt } from "../../shared/promptSafe.ts";
 import { defangTyped } from "../../shared/noteTag.ts";
 import { classifySafety, crisisCardText } from "../../shared/safety.ts";
 import { exchangeText } from "../../shared/liveTutor.ts";
-import { toSpeakableText } from "../voice/useSpeechSynthesis.ts";
+import { toSpeakableText, useSpeechSynthesis } from "../voice/useSpeechSynthesis.ts";
+import { createEchoFilter } from "../voice/echoGuard.ts";
 import { buttonMessage, deviceStateOf } from "../../shared/deviceProtocol.ts";
 import { dueCards, situationNote } from "../../shared/situations.ts";
 import { EXPLAIN_NOW_NOTE, MISSING_OPTIONS_NOTE, askedToExplain, citesMissingOptions, isOnlyAQuestion, nextStuckCount, unclearSpeech } from "../../shared/stuck.ts";
@@ -692,6 +693,55 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
   });
   const liveRef = useRef(live);
   liveRef.current = live;
+  // CAREFUL VOICE: the same checked tutor as the typed chat (charter in the prompt, every reply read by a second model before it is spoken) with the
+  // browser listening and speaking. Slower to answer than the live voice, but nothing is said that was not checked. The live voice stays one tap away.
+  const [voiceEngine, setVoiceEngineState] = useState<"careful" | "live">(() => { try { return localStorage.getItem("otto-voice-engine") === "live" ? "live" : "careful"; } catch { return "careful"; } });
+  const setVoiceEngine = (v: "careful" | "live") => { setVoiceEngineState(v); try { localStorage.setItem("otto-voice-engine", v); } catch { /* best-effort */ } };
+  const [carefulOn, setCarefulOn] = useState(false);
+  const carefulOnRef = useRef(false); carefulOnRef.current = carefulOn;
+  const synth = useSpeechSynthesis(getLanguage());
+  const echoRef = useRef(createEchoFilter());
+  const heardRef = useRef<string[]>([]);
+  const heardTimerRef = useRef<number | undefined>(undefined);
+  const lastSpokenRef = useRef("");
+  const speakReply = useCallback((reply: string) => { const t = toSpeakableText(reply); if (t) { lastSpokenRef.current = t; synth.speak(t); } }, [synth]);
+  const flushHeard = useCallback(async () => {
+    const text = heardRef.current.join(" ").replace(/\s+/g, " ").trim(); heardRef.current = [];
+    if (!text || !carefulOnRef.current) return;
+    const out = await sendRef.current(text, true);
+    if (out?.reply && carefulOnRef.current) speakReply(out.reply);
+  }, [speakReply]);
+  const carefulMic = useSpeechRecognition({
+    lang: getLanguage(),
+    onResult: (text) => {
+      if (!carefulOnRef.current || sendingRef.current || echoRef.current.isEcho(text) || unclearSpeech(text, getLanguage())) return;
+      // A student thinking aloud pauses mid-thought: keep gathering until about two seconds of quiet, then send it as ONE message.
+      heardRef.current.push(text); setCaption({ who: "you", text: heardRef.current.join(" ") });
+      window.clearTimeout(heardTimerRef.current);
+      heardTimerRef.current = window.setTimeout(() => void flushHeard(), 2000);
+    },
+  });
+  const wasSpeakingRef = useRef(false);
+  useEffect(() => {
+    if (synth.speaking && !wasSpeakingRef.current) echoRef.current.speechStarted(lastSpokenRef.current, false);
+    else if (!synth.speaking && wasSpeakingRef.current) echoRef.current.speechEnded();
+    wasSpeakingRef.current = synth.speaking;
+  });
+  // The mic is open only while Otto is neither thinking nor speaking.
+  useEffect(() => {
+    if (carefulOn && !sending && !synth.speaking) carefulMic.start(); else carefulMic.abort();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [carefulOn, sending, synth.speaking]);
+  const startCareful = useCallback(() => {
+    synth.unlock();
+    setCarefulOn(true);
+    const last = [...(taskRef.current?.chat || [])].reverse()[0];
+    // A fresh sitting opens with Otto's own first line, spoken; a resumed one just listens.
+    if (last && last.role === "assistant" && !(taskRef.current?.chat || []).some((m: any) => m.role === "user")) speakReply(String(last.text || ""));
+  }, [synth, speakReply]);
+  const stopCareful = useCallback(() => { setCarefulOn(false); window.clearTimeout(heardTimerRef.current); heardRef.current = []; synth.cancel(); carefulMic.abort(); }, [synth, carefulMic]);
+  const startVoice = useCallback(() => { if (voiceEngine === "careful" && carefulMic.supported) startCareful(); else void liveRef.current.start(); }, [voiceEngine, carefulMic.supported, startCareful]);
+  useEffect(() => () => { synth.cancel(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
   const toDataUrl = (file: File, max = 1400): Promise<string> => new Promise((resolve, reject) => {
     const r = new FileReader();
     r.onerror = () => reject(r.error);
@@ -894,7 +944,7 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
   useEffect(() => {
     if (!talkRequest || !task || talkRequest === autoStartedRef.current || (liveStatus !== "idle" && liveStatus !== "ended")) return;
     autoStartedRef.current = talkRequest;
-    void live.start();
+    startVoice();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [talkRequest, task?.id, liveStatus]);
   const startNewSession = useCallback(async (talk = false) => {
@@ -958,6 +1008,7 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
   // mic already allowed for this site; if the sound is blocked the usual play button appears on screen.
   const [deviceStartFor, setDeviceStartFor] = useState("");
   micPressRef.current = () => {
+    if (carefulOn) { stopCareful(); return; }
     if (liveStatus === "live" || liveStatus === "connecting") { live.stop(); return; }
     if (task) { setTalkRequest((n) => n + 1); return; }
     if (startingSession) return;
@@ -1307,10 +1358,11 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
           </div>
         )}
           <LiveBar
-            status={liveStatus} speaking={live.speaking} thinking={false} muted={live.muted} error={live.error || boardNote}
-            caption={liveStatus === "live" ? caption : lastOttoText ? { who: "otto", text: lastOttoText } : null}
+            status={carefulOn ? "live" : liveStatus} speaking={carefulOn ? synth.speaking : live.speaking} thinking={carefulOn && sending} muted={carefulOn ? false : live.muted} error={live.error || boardNote}
+            caption={carefulOn || liveStatus === "live" ? caption : lastOttoText ? { who: "otto", text: lastOttoText } : null}
             sending={sending} blocked={live.blocked} onResume={live.resumePlayback}
-            onStart={() => void live.start()} onStop={live.stop} onMute={live.setMuted}
+            onStart={startVoice} onStop={carefulOn ? stopCareful : live.stop} onMute={carefulOn ? () => {} : live.setMuted}
+            engine={voiceEngine} onEngine={carefulMic.supported ? (v) => { if (!carefulOn && liveStatus !== "live" && liveStatus !== "connecting") setVoiceEngine(v); } : undefined}
             onType={(t) => { if (liveStatus === "live") { onLiveTurn("you", t); live.sendText(`(Typed by the student — their full message, read it as given: ) ${defangTyped(t)}`); } else void send(t, false); }}
             onHistory={() => setChatDrawer((v) => !v)} historyCount={task.chat?.length || 0}
             onAttach={(f) => attachRef.current(f)} attaching={attaching}

@@ -29,6 +29,9 @@ export function LiveBar(p: {
   /** Files the student picked (a worksheet, a PDF, a photo of the problem). */
   onAttach?: (files: File[]) => void;
   attaching?: boolean;
+  /** Which voice starts: "careful" (every reply checked before it is spoken) or "live" (faster, less checked). Hidden when the browser cannot listen. */
+  engine?: "careful" | "live";
+  onEngine?: (v: "careful" | "live") => void;
 }) {
   const fileRef = useRef<HTMLInputElement>(null);
   const [typing, setTyping] = useState(false);
@@ -66,6 +69,11 @@ export function LiveBar(p: {
           {live || connecting ? <PhoneOff size={18} aria-hidden="true" /> : <Mic size={18} aria-hidden="true" />}
           <span>{connecting ? "Cancel" : live ? "Voice on" : p.status === "unavailable" ? "Try voice again" : "Voice mode"}</span>
         </button>
+        {!live && !connecting && p.onEngine ? (
+          <button type="button" className="btn ghost xs live-engine" onClick={() => p.onEngine!(p.engine === "live" ? "careful" : "live")} title={p.engine === "live" ? "Live voice: fastest, replies are not checked first. Tap to switch to careful voice." : "Careful voice: every reply is checked before you hear it. Tap to switch to live voice."}>
+            {p.engine === "live" ? "Live voice" : "Careful voice"}
+          </button>
+        ) : null}
         {p.blocked ? <button type="button" className="live-icon-btn live-play" onClick={p.onResume} aria-label="Play Otto's voice" title="Play Otto's voice"><Play size={18} aria-hidden="true" /></button> : null}
         {p.onAttach ? (
           <>
