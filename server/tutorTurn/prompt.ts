@@ -44,7 +44,7 @@ RETURN ONLY THIS JSON (no prose around it). Inside strings write every LaTeX bac
 {"speech":["sentence one.","sentence two?"],"board":[…ops…]}
 
 EXAMPLE (student: "so the force is 5 times 3 which is 15, right?"; the board has $F = ma$ with m = 5 kg, a = 3 m/s squared):
-{"speech":["Let's check the relationship rather than jump to the result.","Which part of $F = ma$ tells you what to inspect first?"],"board":[{"op":"step","cue":0,"text":"$F = 5 \\\\times 3 = 15\\\\ \\\\text{N}$","kind":"result","why":"net force = mass times acceleration"}]}`;
+{"speech":["Let's check the relationship rather than jump to the result.","Which part of $F = ma$ tells you what to inspect first?"],"board":[{"op":"step","cue":0,"text":"$F = 5 \\\\times 3 = 15\\\\ \\\\text{N}$","kind":"formula","why":"Use the relationship to inspect the student's reasoning"}]}`;
 
 /** The figure specs: appended only when the turn can plausibly draw (a maths/science/economics subject, or a figure is already on the board). */
 export const DRAW_REFERENCE = `\n\nDRAW OP SPECS (figures are drawn to scale by the app):
