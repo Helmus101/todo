@@ -13,6 +13,7 @@ import { TURN_PROMPT, VOICE_NOTE, DRAW_REFERENCE } from "./prompt.ts";
 import { applyOps, type Applied } from "./apply.ts";
 import { carriesWorking, checkWork } from "./check.ts";
 import { researchBlock } from "./research.ts";
+import { enforceSocraticTurn } from "./socraticGuard.ts";
 
 const MAX_HISTORY = 14;
 /** A turn is a few sentences plus a few board ops; this caps a runaway reply (and its cost), not a normal one. */
@@ -129,12 +130,13 @@ export async function runTutorTurn(input: TutorTurnInput): Promise<TutorTurnResu
   }
   if (!first) { console.error("[tutor] no usable turn"); result.error = true; return result; }
 
-  const { turn, applied } = await ensureBoardWritten(first, { input, messages, tokens: result.tokens, deadline, soft });
+  const ensured = await ensureBoardWritten(first, { input, messages, tokens: result.tokens, deadline, soft });
+  const turn = enforceSocraticTurn(ensured.turn);
   const sources = input.researchFresh ? sourcesNote(input.research) : null;
-  result.board = sources ? [sources, ...applied.board] : applied.board;
+  result.board = sources ? [sources, ...ensured.applied.board] : ensured.applied.board;
   result.reply = turn.speech.join(" ");
   result.turn = { speech: turn.speech, ms: Date.now() - t0 };
-  console.log(`[tutor] turn ${result.turn.ms}ms tokens in=${result.tokens.in} out=${result.tokens.out} cached=${result.tokens.cachedIn} board=${applied.board.length}`); // (counts only: never the text)
+  console.log(`[tutor] turn ${result.turn.ms}ms tokens in=${result.tokens.in} out=${result.tokens.out} cached=${result.tokens.cachedIn} board=${ensured.applied.board.length}`); // (counts only: never the text)
   return result;
 }
 
