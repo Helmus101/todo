@@ -15,6 +15,8 @@ import { carriesWorking, checkWork } from "./check.ts";
 import { researchBlock } from "./research.ts";
 import { checkSpokenTurn, spokenCheckNote } from "./spokenCheck.ts";
 import { boardListing } from "../../shared/boardTool.ts";
+import { solveProblem } from "../solver.ts";
+import type { TutorSolution } from "../../shared/types.ts";
 
 const MAX_HISTORY = 14;
 /** A turn is a few sentences plus a few board ops; this caps a runaway reply (and its cost), not a normal one. */
@@ -68,10 +70,52 @@ export function earlierInSitting(history: { role: "user" | "assistant"; text: st
 }
 
 type Tokens = TutorTurnResult["tokens"];
+
+/** The problem the student is working on: what is pinned on the board as "given", else the first long thing they asked (their opening request). */
+export function problemStatement(input: Pick<TutorTurnInput, "board" | "history" | "message">): string {
+  const given = [...input.board].reverse().find((b) => b.kind === "given" && (b.text || "").length >= 25);
+  if (given?.text) return given.text.slice(0, 1200);
+  const mine = [...input.history.filter((h) => h.role === "user").map((h) => h.text || ""), input.message];
+  const first = mine.find((t) => t.trim().length >= 80);
+  return (first || "").trim().slice(0, 1200);
+}
+
+const solved = new Map<string, { sol: TutorSolution | null; agree: boolean }>();
+const flat = (t: string) => String(t || "").toLowerCase().replace(/[^a-z0-9.]+/g, "");
+const sameAnswer = (a: string, b: string) => { const x = flat(a), y = flat(b); return !!x && !!y && (x === y || x.includes(y) || y.includes(x)); };
+/** An independent solution of the problem, solved twice with the model's thinking ON (the second pass told to hunt for the trap; the fast no-thinking mode fell for trick questions) so a single confident slip cannot become the
+ *  tutor's "truth". Cached per statement in this instance. Never throws and never holds the turn past `ms`. */
+async function referenceSolution(input: TutorTurnInput, tokens: Tokens, ms: number): Promise<{ sol: TutorSolution | null; agree: boolean }> {
+  if (input.solution) return { sol: input.solution, agree: true };
+  const statement = problemStatement(input);
+  if (!statement || process.env.TUTOR_SOLVE === "off") return { sol: null, agree: true };
+  const key = statement.toLowerCase().replace(/\s+/g, " ").slice(0, 400);
+  const hit = solved.get(key);
+  if (hit) return hit;
+  const add = (t: Tokens) => { tokens.in += t.in; tokens.out += t.out; tokens.cachedIn += t.cachedIn; };
+  const run = Promise.all([solveProblem(statement, input.context.subject, { think: true }), solveProblem(statement, input.context.subject, { hunt: true, think: true })]).then(([a, b]) => {
+    add(a.tokens); add(b.tokens);
+    const sol = a.solution || b.solution;
+    const agree = !!a.solution && !!b.solution && sameAnswer(a.solution.finalAnswer, b.solution.finalAnswer);
+    // On disagreement prefer the pass that was told to hunt for the trap, but mark the whole thing uncertain.
+    const out = { sol: agree ? a.solution : (b.solution || sol), agree };
+    solved.set(key, out); if (solved.size > 60) solved.delete(solved.keys().next().value as string);
+    return out;
+  }).catch(() => ({ sol: null, agree: true }));
+  return Promise.race([run, new Promise<{ sol: null; agree: boolean }>((res) => setTimeout(() => res({ sol: null, agree: true }), ms))]);
+}
+
+function referenceBlock(ref: { sol: TutorSolution | null; agree: boolean }): string {
+  const sol = ref.sol;
+  if (!sol) return "";
+  if (!ref.agree) return `\n\nTHEIR PROBLEM IS A POSSIBLE TRAP AND TWO INDEPENDENT SOLVES DISAGREED, so you do NOT know the answer. Do not confirm or hint at any option or result yet. If they asked you to explain, begin by explaining the DEFINITIONS that decide it (the exact quantity asked: done by which force or agent, on what, over what displacement of its own point of application; net versus one part), in plain words and without naming an option, then let them apply it. Work each claim out from first principles as you say it. Once the definitions settle the question and the student has reasoned their way there, confirm it plainly and say why, and what the tempting wrong options mistook. One attempt led to: ${sol.finalAnswer}${sol.mistakes?.length ? ` (traps: ${sol.mistakes.join(" | ")})` : ""}: treat that as a lead to test, not a fact.`;
+  const steps = sol.steps.map((x, i) => `  ${i + 1}. ${x.idea}${x.result ? ` → ${x.result}` : ""}`).join("\n");
+  return `\n\nREFERENCE SOLUTION OF THEIR PROBLEM (two independent reasoning attempts agreed${sol.verified ? "; numbers checked by code" : "; not fully verified"}; for YOUR accuracy). Answer: ${sol.finalAnswer}\n${steps ? `Steps:\n${steps}\n` : ""}${sol.keyIdea ? `Key idea: ${sol.keyIdea}\n` : ""}${sol.mistakes?.length ? `Traps and common mistakes: ${sol.mistakes.join(" | ")}\n` : ""}This is a strong lead from an independent solver, NOT the truth: solvers fall for trick questions. Before you assert or confirm any conclusion, test it against the DEFINITION of the exact quantity asked (done by which force or agent, on what, over what displacement of its own point of application; net versus one part). If your own derivation from the definition disagrees with this reference, trust the derivation, say you are double-checking, and work it through with the student. Their reasoning can be right while the answer they head to is wrong, or the reverse. The reference is for your accuracy, not for announcing: until the student has reasoned their own way to the answer, never name the option letter, the final value or the decisive step; steer them there with explanation and one good question, and confirm only after they have said it.`;
+}
 type Msg = { role: "system" | "user" | "assistant"; content: string };
 
 /** Everything the model is told before the conversation: who Otto is, the student, the board as it stands, research, earlier context. */
-function buildSystemPrompt(input: TutorTurnInput, checked: string | null): string {
+function buildSystemPrompt(input: TutorTurnInput, checked: string | null, reference: { sol: TutorSolution | null; agree: boolean } = { sol: null, agree: true }): string {
   const { message, history, board, problems, context } = input;
   const spokenRepair: SpokenRepair | null = input.spoken ? repairSpokenMath(message, spokenContextFrom([context.subject || "", ...board.map((b) => b.text || "")])) : null;
   return TURN_PROMPT
@@ -81,6 +125,7 @@ function buildSystemPrompt(input: TutorTurnInput, checked: string | null): strin
     + `\n\nToday is ${new Date().toLocaleDateString("en-US", { weekday: "long", year: "numeric", month: "long", day: "numeric" })}.`
     + `\n\nTHE BOARD (margin numbers #n are what you point at)${boardSurfaceBlock(board, problems) || ": empty."}`
     + researchBlock(input.research)
+    + referenceBlock(reference)
     + earlierInSitting(history)
     + (checked ? `\n\nCHECKED BY CODE-LIKE RECOMPUTATION (trust this over your own quick reading of their message): ${checked}` : "")
     + (input.spoken && spokenRepair ? voiceInputBlock(message, input.spoken.alternatives, spokenRepair) : "")
@@ -125,16 +170,21 @@ function sourcesNote(research: TutorTurnInput["research"]): BoardEntry | null {
 }
 
 export async function runTutorTurn(input: TutorTurnInput): Promise<TutorTurnResult & { turn?: { speech: string[]; ms: number } }> {
-  const t0 = Date.now();
-  const deadline = t0 + TURN_HARD_MS;
+  const tStart = Date.now();
+  let t0 = tStart, deadline = t0 + TURN_HARD_MS;
   const soft = () => Date.now() < t0 + TURN_SOFT_MS;
   const { message, history, board } = input;
   const result: TutorTurnResult & { turn?: { speech: string[]; ms: number } } = { reply: "", board: [], problems: [], tokens: { in: 0, out: 0, cachedIn: 0 }, guardrailTripped: false };
 
   // Real working in the message: a second reader recomputes it first, so Otto neither praises a slip nor asks them to redo a step.
-  const checked = carriesWorking(message) && soft() ? await checkWork(message, board.map((b) => b.text || "").filter(Boolean), result.tokens) : null;
+  const [checked, reference] = await Promise.all([
+    carriesWorking(message) && soft() ? checkWork(message, board.map((b) => b.text || "").filter(Boolean), result.tokens) : Promise.resolve(null),
+    referenceSolution(input, result.tokens, 30_000),
+  ]);
+  // The reference solve (first turn of a problem only; cached after) has its own wait, so the reply keeps a full time budget.
+  t0 = Date.now(); deadline = t0 + TURN_HARD_MS;
   const messages: Msg[] = [
-    { role: "system", content: buildSystemPrompt(input, checked) },
+    { role: "system", content: buildSystemPrompt(input, checked, reference) },
     ...history.slice(-MAX_HISTORY).filter((h) => h.text?.trim()).map((h) => ({ role: h.role, content: h.text.slice(0, 4000) })),
     { role: "user", content: message },
   ];
@@ -155,7 +205,7 @@ export async function runTutorTurn(input: TutorTurnInput): Promise<TutorTurnResu
   const sources = input.researchFresh ? sourcesNote(input.research) : null;
   result.board = sources ? [sources, ...ensured.applied.board] : ensured.applied.board;
   result.reply = turn.speech.join(" ");
-  result.turn = { speech: turn.speech, ms: Date.now() - t0 };
+  result.turn = { speech: turn.speech, ms: Date.now() - tStart };
   console.log(`[tutor] turn ${result.turn.ms}ms tokens in=${result.tokens.in} out=${result.tokens.out} cached=${result.tokens.cachedIn} board=${ensured.applied.board.length}`); // (counts only: never the text)
   return result;
 }

@@ -32,7 +32,7 @@ const SOLVER_PROMPT = `You are an expert teacher preparing to tutor ONE problem.
   "mistakes": ["a common wrong move a student makes here, and why it's wrong"],
   "skill": "a short name for the skill practiced, e.g. \\"power on an incline\\""
 }
-Use the givens exactly as stated. 2-6 steps. Be precise: these values will be used to check the student's work.`;
+Before you answer, check the DEFINITION of the exact quantity asked (what is asked, done by which force or agent, on what, over which displacement, net versus one part, distance versus displacement, per what). Questions often put a tempting plausible option next to the right one: name that trap in "mistakes". Use the givens exactly as stated. 2-6 steps. Be precise: these values will be used to check the student's work.`;
 
 function firstJson(raw: string): any {
   const t = String(raw || "");
@@ -82,18 +82,18 @@ export function toSolution(statement: string, j: any, now = new Date()): TutorSo
 
 /** Solve a problem (one model call, a second one if code disagrees with the first answer). Never throws: returns
  *  null when the model fails, so a tutor turn always goes ahead. */
-export async function solveProblem(statement: string, subject?: string): Promise<{ solution: TutorSolution | null; tokens: { in: number; out: number; cachedIn: number } }> {
+export async function solveProblem(statement: string, subject?: string, opts: { hunt?: boolean; think?: boolean } = {}): Promise<{ solution: TutorSolution | null; tokens: { in: number; out: number; cachedIn: number } }> {
   const tokens = { in: 0, out: 0, cachedIn: 0 };
   let best: TutorSolution | null = null;
   for (let attempt = 0; attempt < 2; attempt++) {
     try {
       const res: any = await retryRequest(() => createTutorChat({
-        max_tokens: 4000, temperature: 0.1,
+        max_tokens: opts.think ? 12000 : 4000, temperature: 0.1,
         messages: [
           { role: "system", content: SOLVER_PROMPT },
-          { role: "user", content: `${subject ? `Subject: ${subject}\n` : ""}Problem: ${statement}${attempt ? "\n\nYour previous final_answer did not match your own check expression. Recompute carefully, step by step." : ""}` },
+          { role: "user", content: `${subject ? `Subject: ${subject}\n` : ""}Problem: ${statement}${opts.hunt ? "\n\nAssume the obvious reading is a trap. Re-derive the answer from first principles and definitions, and say why the most tempting option or approach fails." : ""}${attempt ? "\n\nYour previous final_answer did not match your own check expression. Recompute carefully, step by step." : ""}` },
         ],
-      }, true), 2, 400); // bounded per attempt (createTutorChat's fast mode) — a stalled provider never holds the turn
+      }, !opts.think, opts.think ? { deepseekOnly: true } : undefined), 2, 400); // bounded per attempt (createTutorChat's fast mode) — a stalled provider never holds the turn
       const u = usageOf(res); tokens.in += u.in; tokens.out += u.out; tokens.cachedIn += u.cachedIn;
       const sol = toSolution(statement, firstJson(res?.choices?.[0]?.message?.content || ""));
       if (sol) best = sol;

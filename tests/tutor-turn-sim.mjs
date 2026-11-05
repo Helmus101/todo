@@ -2,7 +2,9 @@
 // and returns whatever JSON each test scripts, so the REAL engine (prompt, one call, board ops) runs with no network or key.
 process.env.DEEPSEEK_API_KEY ||= "sim-key";
 delete process.env.GEMINI_API_KEY;
+process.env.TUTOR_SOLVE = "off"; // the independent reference solve has its own check below; every other test counts model calls
 process.env.TUTOR_GATE = "off"; // the gate has its own test below; every other test counts model calls
+process.env.TUTOR_SOLVE = "off"; // the reference solve is a separate model call (own behaviour, checked live); these tests count the turn's own calls
 
 export async function runTutorTurnSim(check, section) {
   let script = () => ({});
@@ -29,6 +31,8 @@ export async function runTutorTurnSim(check, section) {
     check("no speech → no turn", normalizeTurn({ speech: [] }) === null && normalizeTurn("x") === null);
     { const eng = (await import("node:fs")).readFileSync(new URL("../server/tutorTurn/engine.ts", import.meta.url), "utf8");
       check("no fixed replacement text: the old guard that swapped sentences for canned lines is gone, and a flagged reply goes back to the model to be written again (gateTurn)", !/enforceSocraticTurn/.test(eng) && /gateTurn\(first/.test(eng) && /spokenCheckNote\(flags, \{ rewrite: true \}\)/.test(eng)); }
+    { const eng = (await import("node:fs")).readFileSync(new URL("../server/tutorTurn/engine.ts", import.meta.url), "utf8");
+      check("the tutor gets an independent reference solution (solved twice with thinking on, the second pass hunting for the trap) and is told to trust a derivation from the definition over it; disagreement means it must not confirm any option", /solveProblem\(statement, input\.context\.subject, \{ think: true \}\)/.test(eng) && /hunt: true, think: true/.test(eng) && /NOT the truth/.test(eng) && /DISAGREED, so you do NOT know the answer/.test(eng) && /TUTOR_SOLVE/.test(eng)); }
     check("single-backslash LaTeX inside the JSON survives (\\theta, \\times, \\text)", (() => { const t = normalizeTurn(extractJsonObject('{"speech":["ok."],"board":[{"op":"step","text":"$a \\times b \\theta \\text{N}$"}]}')); return t && /\\times/.test(t.board[0].text) && /\\theta/.test(t.board[0].text) && /\\text/.test(t.board[0].text); })());
     { const { TUTOR_PROMPT } = await import("../shared/tutorPrompt.ts");
       check("the typed turn prompt is a short human persona (not the rulebook) plus the board ops: explains the why, adapts, one question at a time, the last step left to the student", !TURN_PROMPT.startsWith(TUTOR_PROMPT) && TURN_PROMPT.length < 20000 && /Explain the why/.test(TURN_PROMPT) && /Adapt constantly/.test(TURN_PROMPT) && /at most one question/i.test(TURN_PROMPT) && /final step/.test(TURN_PROMPT) && /THE BOARD/.test(TURN_PROMPT) && /regions/.test(DRAW_REFERENCE)); }
