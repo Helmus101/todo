@@ -1,7 +1,9 @@
 import { OttoAvatar } from "./OttoAvatar.tsx";
 import { useState } from "react";
 import { useRef } from "react";
-import { ArrowUp, History, Keyboard, Mic, MicOff, Paperclip, PhoneOff, Play } from "lucide-react";
+import { ArrowUp, Camera, History, Keyboard, Mic, MicOff, Paperclip, PhoneOff, Play } from "lucide-react";
+import { useEffect } from "react";
+import { CameraCapture } from "./CameraCapture.tsx";
 import type { LiveStatus } from "./live/useGeminiLive.ts";
 import { MathText } from "../study/artifacts/BoardArtifact.tsx";
 
@@ -30,6 +32,8 @@ export function LiveBar(p: {
 }) {
   const fileRef = useRef<HTMLInputElement>(null);
   const [typing, setTyping] = useState(false);
+  const [camera, setCamera] = useState(false);
+  useEffect(() => { const open = () => setCamera(true); window.addEventListener("otto-open-camera", open); return () => window.removeEventListener("otto-open-camera", open); }, []);
   const [text, setText] = useState("");
   const live = p.status === "live";
   const connecting = p.status === "connecting";
@@ -67,6 +71,8 @@ export function LiveBar(p: {
           <>
             <input ref={fileRef} type="file" multiple hidden accept="application/pdf,image/*,.txt,.md,.csv" onChange={(e) => { const f = Array.from(e.target.files || []); if (f.length) p.onAttach!(f); e.target.value = ""; }} />
             <button type="button" className="live-icon-btn" disabled={p.attaching} onClick={() => fileRef.current?.click()} aria-label="Share a document or photo" title="Share a document or photo"><Paperclip size={18} aria-hidden="true" /></button>
+            <button type="button" className="live-icon-btn" disabled={p.attaching} onClick={() => setCamera(true)} aria-label="Show Otto your work with the camera" title="Show Otto your work with the camera"><Camera size={18} aria-hidden="true" /></button>
+            {camera ? <CameraCapture onCapture={(f) => p.onAttach!([f])} onClose={() => setCamera(false)} /> : null}
           </>
         ) : null}
         <button type="button" className="live-icon-btn" onClick={() => setTyping((t) => !t)} aria-pressed={typing} aria-label="Type instead" title="Type instead"><Keyboard size={18} aria-hidden="true" /></button>

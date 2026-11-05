@@ -5118,3 +5118,11 @@ html[data-i18n="loading"] body { opacity: 0; }
   input, select, textarea { font-size: 16px; }
   .live-bar { padding-bottom: calc(var(--space-3) + env(safe-area-inset-bottom)); }
 }
+
+.camera-overlay { position: fixed; inset: 0; z-index: 80; display: grid; place-items: center; background: rgba(0, 0, 0, 0.55); padding: var(--space-4); }
+.camera-card { position: relative; width: min(520px, 100%); background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: var(--space-5); display: grid; gap: var(--space-3); }
+.camera-card h3 { margin: 0; }
+.camera-close { position: absolute; top: var(--space-2); right: var(--space-2); }
+.camera-video { width: 100%; max-height: 60vh; border-radius: var(--radius); background: #000; object-fit: cover; }
+.camera-actions { display: flex; gap: var(--space-2); justify-content: flex-end; flex-wrap: wrap; }
+

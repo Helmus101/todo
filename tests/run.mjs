@@ -867,6 +867,8 @@ check("structured settings survive merge", pm.responseStyle === "concise");
       let lock = null; try { lock = JSON.parse(readFileSync(new URL("../prompt.lock.json", import.meta.url), "utf8")); } catch { /* no lock yet */ }
       const now = promptFingerprint();
       check("the frozen pieces (charter, situation cards, judge rubric) match prompt.lock.json (docs/prompt-freeze.md; PROMPT_UNLOCK=1 skips while editing)", process.env.PROMPT_UNLOCK === "1" || (!!lock && lock.charter === now.charter && lock.cards === now.cards && lock.rubric === now.rubric)); }
+    { const cam = readFileSync(new URL("../client/tutor/CameraCapture.tsx", import.meta.url), "utf8"), bar = readFileSync(new URL("../client/tutor/LiveBar.tsx", import.meta.url), "utf8"), pol = readFileSync(new URL("../vercel.json", import.meta.url), "utf8");
+      check("camera: a button asks for the camera only when tapped, shows a preview, handles denied / missing, stops the stream on close, and hands the photo to the existing share path", /getUserMedia\(\{ video:/.test(cam) && /NotAllowedError/.test(cam) && /getTracks\(\)\.forEach\(\(t\) => t\.stop\(\)\)/.test(cam) && /onCapture\(new File\(/.test(cam) && /<CameraCapture onCapture=\{\(f\) => p\.onAttach!\(\[f\]\)\}/.test(bar) && /camera=\(self\)/.test(pol)); }
     { const { parseSpokenFlags, spokenCheckNote } = await import("../server/tutorTurn/spokenCheck.ts");
       const turn = "So, solving that gives x squared equals one quarter, meaning x could be a half or minus a half.";
       const good = JSON.stringify({ flags: [{ kind: "gaveResult", quote: "solving that gives x squared equals one quarter", fix: "Ask what is left once the 3x⁴ cancel." }] });
