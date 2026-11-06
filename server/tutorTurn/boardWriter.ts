@@ -170,6 +170,17 @@ export function problemOnBoard(question: string, board: { kind?: string; text?: 
   });
 }
 
+/** Is the student's confirmed step already on the board? Judged by its numbers, on any line that is not the posed problem; not by whether the pen wrote something this exchange. Pure. */
+export function stepOnBoard(step: string, board: { kind?: string; text?: string }[]): boolean {
+  const said = [...numbersSaid(step)];
+  if (!said.length) return false;
+  return board.some((e) => {
+    if (e.kind === "given" || typeof e.text !== "string") return false;
+    const onBoard = new Set([...e.text.matchAll(/\d+(?:\.\d+)?/g)].map((m) => Number(m[0])));
+    return said.filter((n) => onBoard.has(n)).length / said.length >= 0.75;
+  });
+}
+
 /** Does this board line already carry the answer to the question just asked? The question names its numbers ("what is 0.0500 times 22.7?"); a line that uses all of them and
  *  ends in "= <a number nobody has said>" is the answer. Pure. */
 export function answersOpenQuestion(line: string, question: string, known: Set<number>): boolean {
@@ -292,7 +303,8 @@ export async function writeBoard(input: { exchange: string; board: BoardEntry[];
     // a misconception as a result (seen in simulation). It keeps only drawings and a posed problem the pen left off.
     // The one exception: when the pen wrote nothing this exchange, the student's own working (result lines) is still recorded, so a confirmed step never goes missing.
     const WORKING = new Set(["result", "gap", "insight"]);
-    const finalBoard = input.toolMode ? unitFixed.filter((e) => { const keep = DRAWN.has(String(e.kind)) || (String(e.kind) === "given" && posedMissing) || (!input.penWrote && WORKING.has(String(e.kind))); if (!keep) applied.dropped.push(`${e.kind}: the tutor writes that itself`); return keep; }) : unitFixed;
+    const stepAlready = stepOnBoard(confirmedStudentStep(input.exchange), input.board.slice(-12));
+    const finalBoard = input.toolMode ? unitFixed.filter((e) => { const keep = DRAWN.has(String(e.kind)) || (String(e.kind) === "given" && posedMissing) || (!stepAlready && WORKING.has(String(e.kind))); if (!keep) applied.dropped.push(`${e.kind}: the tutor writes that itself`); return keep; }) : unitFixed;
     return { board: finalBoard, dropped: applied.dropped, concepts };
   };
   let out = await once();
@@ -305,7 +317,7 @@ export async function writeBoard(input: { exchange: string; board: BoardEntry[];
   const tutorLines = input.exchange.split("\n").filter((l) => /^Tutor:/i.test(l)).join(" ");
   const needPromised = !input.toolMode && !input.early && !out.board.length && !needProblem && promisesBoard(tutorLines);
   const stepSaid = confirmedStudentStep(input.exchange);
-  const needStep = !(input.toolMode && input.penWrote) && !input.early && !!stepSaid && !out.board.some((e) => ["gap", "result", "formula", "insight"].includes(String(e.kind)));
+  const needStep = !input.early && !!stepSaid && !stepOnBoard(stepSaid, input.board.slice(-12)) && !out.board.some((e) => ["gap", "result", "formula", "insight"].includes(String(e.kind)));
   const needPicture = !input.early && canDraw && wantsPicture(input.exchange) && !out.board.some((e) => ["graph", "svg", "diagram", "geometry", "flow", "table", "numberline"].includes(String(e.kind)));
   if (needExplain || needProblem || needPicture || needStep || needPromised) {
     const why = out.dropped.length ? ` The app rejected these ops: ${out.dropped.slice(0, 3).join("; ")}.` : "";

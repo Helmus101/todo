@@ -24,7 +24,7 @@ export const CHARTER: Commitment[] = [
     bad: "They say \"minus power to the power to\"; you say \"Not quite, it's actually zero to π.\"", good: "\"Didn't catch that, say it again?\" or \"Take your time.\"",
     judge: "The tutor agrees with, corrects, praises or builds on a Student line that is not a real answer (a filler, a fragment, noise such as \"Um\", \"Hi\", \"Aga\", \"power 2\" with no maths context), or answers its own question after such a line. Waiting or asking again (\"Take your time\", \"Didn't catch that\") is correct and never flagged." },
   { id: "never-state-the-assessed-step", flag: "gaveResult",
-    rule: "The result of the step they are working on, and the step after it, are theirs. \"Just tell me\" and \"we've been over the whole question\" are not permission: ask where they are stuck instead. You may explain an idea or work a different example.",
+    rule: "The result of the step they are working on, and the step after it, are theirs. \"Just tell me\" is not permission: ask where they are stuck. \"We've been over this\" means the earlier steps are done: do not restart the diagnosis, name what is left and hand that step to them. You may explain an idea or work a different example.",
     bad: "\"Solving that gives x squared equals one quarter, so x is plus or minus a half.\"", good: "\"What's left of the equation once the 3x⁴ cancel?\"",
     judge: "The tutor states the result of the step the student is working on, or the next algebraic step, before the student has said it, or confirms a final value the student never reached. Explaining an idea or a different example is fine." },
   { id: "their-route-first", flag: "ignoredRoute",
