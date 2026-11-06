@@ -67,6 +67,8 @@ function writePronoteOptimistic(value: boolean | null): void {
 /** Language toggle — shared between Settings and Onboarding so the same question/UI isn't built twice.
  *  Renders bare rows (no wrapping section) so it drops into either container's own `.set-list`/step
  *  markup. `onChanged` receives the fresh profile after each save. */
+const COMMON_SUBJECTS = ["Maths", "Physics", "Chemistry", "Biology", "English", "History", "Geography", "Economics", "Computer Science", "Spanish"];
+
 function PreferencesFields({ profile, onChanged }: { profile: Profile | null; onChanged?: (p: Profile) => void }) {
   const L = useLang();
   const notify = useNotify();
@@ -127,29 +129,53 @@ function PreferencesFields({ profile, onChanged }: { profile: Profile | null; on
     try { onChanged?.(await api.setProfilePreference("yearLevel", v)); }
     catch (e: any) { notify(e?.message || "That didn't save — give it another try.", "error"); }
   };
+  const isIb = profile?.track !== "other";
+  const saveCommon = async (name: string) => {
+    const cur = profile?.subjects || [];
+    const next = cur.includes(name) ? cur.filter((x) => x !== name) : [...cur, name];
+    try { await api.setSubjects(next); onChanged?.({ ...(profile as Profile), subjects: next }); }
+    catch (e: any) { notify(e?.message || "That didn't save — give it another try.", "error"); }
+  };
   return (
     <>
-      <div className="set-row" style={{ display: "block" }}>
-        <span className="set-text"><b>{"Your IB subjects"}</b><span className="settings-hint">{"Otto is built for the IB Diploma. Your subjects and levels decide the papers, command terms and mark schemes it teaches to."}</span></span>
-        <IbSubjectPicker value={ibSubs} onChange={saveIbSubjects} />
+      <div className="set-row">
+        <span className="set-text"><b>{"Curriculum"}</b></span>
+        <span className="seg" role="group" aria-label="Curriculum">
+          {([["ib", "IB"], ["other", "Regular school"]] as const).map(([v, label]) => (
+            <button key={v} type="button" className={`btn xs ${isIb === (v === "ib") ? "" : "ghost"}`} aria-pressed={isIb === (v === "ib")}
+              onClick={() => { if (isIb === (v === "ib")) return; void api.setProfilePreference("track", v).then((np) => onChanged?.({ ...(profile as Profile), track: np.track })).catch((err) => notify(err?.message || "That didn't save — give it another try.", "error")); }}>{label}</button>
+          ))}
+        </span>
       </div>
-      {profile?.track !== "other" && (
-        <label className="set-row">
-          <span className="set-text"><b>{"Your exam session"}</b><span className="settings-hint">{"Otto paces your revision by how long you have: understanding first, then past papers under time, then the weakest marks. Approximate; your school's timetable decides."}</span></span>
-          <select className="addinput" style={{ maxWidth: 180 }} value={profile?.examSession || ""} onChange={(e) => { void api.setProfilePreference("examSession", e.target.value).then((np) => onChanged?.({ ...(profile as Profile), examSession: np.examSession })).catch((err) => notify(err?.message || "That didn't save — give it another try.", "error")); }}>
-            <option value="">{"Not set"}</option>
-            {examSessionOptions().map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
-          </select>
-        </label>
+      {isIb ? (
+        <>
+          <div className="set-row" style={{ display: "block" }}>
+            <span className="set-text"><b>{"Subjects"}</b></span>
+            <IbSubjectPicker value={ibSubs} onChange={saveIbSubjects} />
+          </div>
+          <label className="set-row">
+            <span className="set-text"><b>{"Exam session"}</b></span>
+            <select className="addinput" style={{ maxWidth: 180 }} value={profile?.examSession || ""} onChange={(e) => { void api.setProfilePreference("examSession", e.target.value).then((np) => onChanged?.({ ...(profile as Profile), examSession: np.examSession })).catch((err) => notify(err?.message || "That didn't save — give it another try.", "error")); }}>
+              <option value="">{"Not set"}</option>
+              {examSessionOptions().map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+            </select>
+          </label>
+        </>
+      ) : (
+        <div className="set-row" style={{ display: "block" }}>
+          <span className="set-text"><b>{"Subjects"}</b></span>
+          <div className="onboard-chips" style={{ marginTop: 8 }}>
+            {COMMON_SUBJECTS.map((name) => {
+              const on = (profile?.subjects || []).includes(name);
+              return <button key={name} type="button" className={`btn xs ${on ? "" : "ghost"}`} aria-pressed={on} onClick={() => saveCommon(name)}>{name}</button>;
+            })}
+          </div>
+        </div>
       )}
       <label className="set-row">
-        <span className="set-text"><b>{"I'm not in the IB"}</b><span className="settings-hint">{"Otto is built for the IB, but it also works for any other curriculum. Turn this on and it teaches your own courses and exams."}</span></span>
-        <input type="checkbox" checked={profile?.track === "other"} onChange={(e) => { const v = e.target.checked ? "other" : "ib"; void api.setProfilePreference("track", v).then((np) => onChanged?.({ ...(profile as Profile), track: np.track })).catch((err) => notify(err?.message || "That didn't save — give it another try.", "error")); }} />
-      </label>
-      <label className="set-row">
-        <span className="set-text"><b>{"Your year/grade"}</b><span className="settings-hint">{"Otto pitches every question at your level."}</span></span>
+        <span className="set-text"><b>{"Year"}</b></span>
         <input className="addinput" style={{ maxWidth: 160 }} maxLength={40}
-          placeholder={"e.g. IB DP1"}
+          placeholder={isIb ? "e.g. DP1" : "e.g. Year 10"}
           value={yearLevel} onChange={(e) => setYearLevelState(e.target.value)}
           onBlur={() => void saveYearLevel()} onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }} />
       </label>
