@@ -42,7 +42,7 @@ const LATIN_SCRIPT_LANGS = /^(?:en|fr|es|de|it|pt|nl|pl|sv|da|no|nb|fi|ro|cs|sk|
 /** Speech recognition heard noise as words of another script ("뚜루뚜루 뚜루" in an English session), or nothing but symbols: not something the
  *  student said. Only for languages written in Latin script; a stray Greek letter (θ, π) inside a sentence is fine. Pure. */
 const FILLER_WORDS = new Set(["um", "uh", "uhm", "umm", "er", "erm", "hmm", "hm", "mm", "mmm", "mhm", "ah", "oh", "so", "well", "like", "hi", "hey", "hello", "ahora", "viceversa", "gracias", "obrigado", "nee", "amai", "aga"]);
-const FOREIGN_NOISE = /\b(?:ahora|viceversa|gracias|entonces|pues|bueno|porque|pero|obrigad[oa]|n[aã]o|tamb[eé]m|nee|amai|alstublieft|bedankt|danke|bitte|nicht|tschüss|oui|merci|d'accord)\b/i;
+const FOREIGN_NOISE = /(?<![A-Za-z])(?:ahora|viceversa|gracias|entonces|pues|bueno|porque|pero|obrigad[oa]|n[aã]o|tamb[eé]m|nee|amai|alstublieft|bedankt|danke|bitte|nicht|tschüss|oui|merci|d'accord|qu[eé]|siete|siento|s[ií]|c[oó]mo|d[oó]nde|est[aá]|estoy|muy|vale|hola|adi[oó]s|perd[oó]n|sono|perch[eé]|ciao|grazie|prego|che|nein|ich|und)(?![A-Za-z])|[¿¡ñ]/i;
 export function unclearSpeech(text: string, lang = "en"): boolean {
   const t = String(text || "").trim();
   if (!t) return false;

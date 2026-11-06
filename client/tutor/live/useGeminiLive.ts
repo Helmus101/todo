@@ -1,4 +1,3 @@
-import { getLanguage } from "../../language.ts";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "../../api.ts";
 import { startMic, Player, type Mic } from "./audio.ts";
@@ -128,7 +127,7 @@ export function useGeminiLive(opts: LiveOptions) {
     };
     try {
       const o = optsRef.current;
-      const [{ GoogleGenAI, Modality }, tok] = await Promise.all([import("@google/genai"), api.liveToken({ lang: getLanguage(), subject: o.subject, pastSessions: o.pastSessions, resuming: o.resuming, resumeTail: o.resumeTail, noteTag: sessionNoteTag })]);
+      const [{ GoogleGenAI, Modality }, tok] = await Promise.all([import("@google/genai"), api.liveToken({ lang: "en", subject: o.subject, pastSessions: o.pastSessions, resuming: o.resuming, resumeTail: o.resumeTail, noteTag: sessionNoteTag })]);
       if (!aliveRef.current) return;
       // Each provider is a function that either gets a live call going or throws (cleaning up after itself); they are tried in order below.
       type Cred = { token: string; model: string; models?: string[]; instructions: string };
@@ -196,7 +195,7 @@ export function useGeminiLive(opts: LiveOptions) {
         systemInstruction: tok.instructions,
         inputAudioTranscription: {},
         outputAudioTranscription: {},
-        speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: "Charon" } } },
+        speechConfig: { languageCode: "en-US", voiceConfig: { prebuiltVoiceConfig: { voiceName: "Charon" } } },
       } as any;
       // Try the model ids in order: Google renames its live models often, so one that is refused (not found / not supported) just moves on.
       // Each model is tried with Otto's pen (the write_board tool) first; a model that refuses tools is tried again without, and the board writer then writes everything.

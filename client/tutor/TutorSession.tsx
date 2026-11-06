@@ -1,6 +1,9 @@
 import { extractPdfTextLimited } from "../study/pdfText.ts";
 import { COURSEWORK_MAX_CHARS, COURSEWORK_MAX_PAGES } from "../../shared/coursework.ts";
 import { getLanguage } from "../language.ts";
+
+/** Voice is English only for now: the browser's language setting must never make the microphone listen in Spanish, French... and hear English as noise. */
+const VOICE_LANG = "en-US";
 import { useSpeechRecognition } from "../voice/useSpeechRecognition.ts";
 import { useCallback, useContext, useEffect, useRef, useState } from "react";
 import { ChevronRight, ChevronDown, Maximize2, Minimize2, MessageSquare, Mic } from "lucide-react";
@@ -520,7 +523,7 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
     if (!t || !rawText.trim()) return;
     // Speech recognition sometimes hears noise as another language ("뚜루뚜루", "Amai, ah nee"): that is not something the student said. It is
     // shown as not caught and never reaches the board writer; the voice heard the audio itself and asks again.
-    const text = who === "you" && unclearSpeech(rawText, getLanguage()) ? "(didn't catch that)" : rawText;
+    const text = who === "you" && unclearSpeech(rawText, VOICE_LANG) ? "(didn't catch that)" : rawText;
     if (text === "(didn't catch that)") {
       const chat = setLocalChat(t.id, [...(t.chat || []), { role: "user", text, at: new Date().toISOString() } as any], userId);
       taskRef.current = { ...t, chat };
@@ -699,7 +702,7 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
   const setVoiceEngine = (v: "careful" | "live") => { setVoiceEngineState(v); try { localStorage.setItem("otto-voice-engine", v); } catch { /* best-effort */ } };
   const [carefulOn, setCarefulOn] = useState(false);
   const carefulOnRef = useRef(false); carefulOnRef.current = carefulOn;
-  const synth = useSpeechSynthesis(getLanguage());
+  const synth = useSpeechSynthesis("en");
   const echoRef = useRef(createEchoFilter());
   const heardRef = useRef<string[]>([]);
   const heardTimerRef = useRef<number | undefined>(undefined);
@@ -712,9 +715,9 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
     if (out?.reply && carefulOnRef.current) speakReply(out.reply);
   }, [speakReply]);
   const carefulMic = useSpeechRecognition({
-    lang: getLanguage(),
+    lang: VOICE_LANG,
     onResult: (text) => {
-      if (!carefulOnRef.current || sendingRef.current || echoRef.current.isEcho(text) || unclearSpeech(text, getLanguage())) return;
+      if (!carefulOnRef.current || sendingRef.current || echoRef.current.isEcho(text) || unclearSpeech(text, VOICE_LANG)) return;
       // A student thinking aloud pauses mid-thought: keep gathering until about two seconds of quiet, then send it as ONE message.
       heardRef.current.push(text); setCaption({ who: "you", text: heardRef.current.join(" ") });
       window.clearTimeout(heardTimerRef.current);
@@ -800,7 +803,7 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
     heardByBrowserRef.current = Date.now();
     setCaption({ who: "you", text: t });
   }, []);
-  const browserCaptions = useSpeechRecognition({ lang: getLanguage(), onResult: showWords, onInterim: showWords });
+  const browserCaptions = useSpeechRecognition({ lang: VOICE_LANG, onResult: showWords, onInterim: showWords });
   const captionsOn = liveStatus === "live" && !live.speaking && !live.muted && browserCaptions.supported && !/^((?!chrome|android).)*safari/i.test(navigator.userAgent);
   useEffect(() => {
     if (captionsOn) browserCaptions.start(); else browserCaptions.abort();
