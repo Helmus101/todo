@@ -7372,7 +7372,7 @@ section("Tutor-only mode — Settings shows only Pronote, no 'how Otto teaches y
 { const st = readFileSync(new URL("../client/pages/Settings.tsx", import.meta.url), "utf8");
   const app = readFileSync(new URL("../client/App.tsx", import.meta.url), "utf8");
   const rec = readFileSync(new URL("../server/schoolRecord.ts", import.meta.url), "utf8");
-  check("Settings no longer has 'How Otto teaches you' or the learning-style slider; Google and other app connections are for full accounts only, Pronote is always offered", !/<TutorPolicyRow \/>/.test(st) && !/hint-density-slider/.test(st) && /\{status\.fullApp \? <GoogleTiles/.test(st) && /<PronoteTile status=\{status\}/.test(st));
+  check("Settings no longer has 'How Otto teaches you' or the learning-style slider; Settings no longer shows the Pronote/Sources, Feedback or Help-improve sections", !/<TutorPolicyRow \/>/.test(st) && !/hint-density-slider/.test(st) && !/<PronoteTile status=\{status\}/.test(st) && !/<FeedbackForm/.test(st));
 
   check("the tutor's memory carries the Pronote cahier de texte (homework) and the lesson content (contenu des cours)", /PRONOTE CAHIER DE TEXTE/.test(rec) && /PRONOTE CONTENU DES COURS/.test(rec)); }
 

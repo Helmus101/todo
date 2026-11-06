@@ -3,7 +3,6 @@ import { masteryState, MASTERY_LABEL } from "../../shared/masteryState.ts";
 import { IbSubjectPicker } from "./IbSubjectPicker.tsx";
 import { examSessionOptions } from "../../shared/ibExamDates.ts";
 import type { IbSubject } from "../../shared/ibSubjectList.ts";
-import { FeedbackForm } from "./FeedbackForm.tsx";
 import { StudyStatsSection } from "./StudyStats.tsx";
 import { AdminTools } from "./AdminTools.tsx";
 import { useEffect, useState, useCallback, useRef } from "react";
@@ -386,17 +385,6 @@ export function SettingsPage({ status, tasks, onSignOut, onChanged, onTasksChang
         </details>
       </section>
 
-      <section className="settings-sec reveal" style={{ ["--d" as any]: "0.07s" }}>
-        <button className="sec-toggle" aria-expanded={showSources} onClick={() => setShowSources((v) => !v)}>
-          <h3>{status.fullApp ? "Sources" : "School"}</h3>
-          <span className={`caret ${showSources ? "open" : ""}`} aria-hidden="true">›</span>
-        </button>
-        {showSources ? <div className="settings-reveal">
-        <p className="settings-hint">{status.fullApp ? "Otto reads these sources and preps the work — " : "Connect Pronote so Otto knows what you are studying: your homework (cahier de texte) and the lesson content your teachers publish. "}<b>{"It never sends or hands anything in for you"}</b>.</p>
-        <PronoteTile status={status} onStatusUpdate={onStatusUpdate} />
-        {status.fullApp ? <GoogleTiles onChanged={onChanged} restricted={false} /> : null}
-        </div> : null}
-      </section>
 
       <section className="settings-sec reveal" style={{ ["--d" as any]: "0.09s" }}>
         <h3>{"About you"}</h3>
@@ -437,13 +425,6 @@ export function SettingsPage({ status, tasks, onSignOut, onChanged, onTasksChang
 
       <ConceptsPanel profile={profile} />
 
-      <section className="settings-sec reveal" style={{ ["--d" as any]: "0.13s" }}>
-        <button className="sec-toggle" aria-expanded={showKnows} onClick={() => setShowKnows((v) => !v)}>
-          <h3>{"What Otto knows about you"}</h3>
-          <span className={`caret ${showKnows ? "open" : ""}`} aria-hidden="true">›</span>
-        </button>
-        {showKnows && <div className="settings-reveal"><p className="settings-hint">{"Otto fills this in over time, and the tutor adds to it when a session ends. The tutor reads it to teach you better. You can edit anything."}</p><ProfileEditor /></div>}
-      </section>
 
       <section className="settings-sec reveal" style={{ ["--d" as any]: "0.18s" }}>
         <button className="sec-toggle" aria-expanded={showStudentModel} onClick={() => setShowStudentModel((v) => !v)}>
@@ -469,18 +450,10 @@ export function SettingsPage({ status, tasks, onSignOut, onChanged, onTasksChang
 
       <KnownPanel profile={profile} onProfile={(p) => { setProfile(p); }} />
 
-      <section className="settings-sec reveal">
-        <h3>{"Where your data goes"}</h3>
-        <p className="settings-hint">{"Your tutoring sessions, boards and drawings are saved only in this browser, unless you switch on Help improve Otto below. Your account keeps your profile, the learning notes above and short notes about how you learn (goals, what works, how your sittings go), all visible and deletable here. What leaves your device:"}</p>
-        <ul className="settings-hint" style={{ paddingLeft: 18, margin: "4px 0 8px" }}>
-          <li>{"Your voice goes from the browser straight to Google (Gemini Live), or to OpenAI (Realtime) as a backup, which send back a transcript."}</li>
-          <li>{"To show your words on screen as you speak, Chrome's built-in speech recognition also listens during a call. Chrome sends that audio to Google; Otto never stores it."}</li>
-          <li>{"What you type, and the lines Otto writes on the board, are handled by Google first. If Google is unavailable, DeepSeek answers instead, and DeepSeek processes data outside the EU."}</li>
-          <li>{"Task preparation and interface translation use DeepSeek. Drawings and photos go to the voice provider and, when you ask Otto to look, to Google's image reading."}</li>
-          <li>{"Your Pronote login is stored encrypted and deleted when you disconnect. Otto only reads from Pronote."}</li>
-        </ul>
-        <p className="settings-hint">{"Those providers keep data under their own terms, which Otto does not control. Deleting your account erases your profile, learning notes and connections from Otto; it cannot erase what a provider holds. To have the tutor restricted to Google only, or for anything about your data, write to "}<a href={`mailto:${LEGAL_EMAIL}`}>{LEGAL_EMAIL}</a>{". Full details: "}<a href="/privacy">{"privacy policy"}</a>{" and "}<a href="/terms">{"terms"}</a>{"."}</p>
-      </section>
+      <details className="settings-sec reveal">
+        <summary>{"Where your data goes"}</summary>
+        <p className="settings-hint">{"Sessions and boards stay in this browser. Voice and typing are processed by Google (Gemini), with OpenAI or DeepSeek as backups, under their own terms. Deleting your account erases your profile and notes from Otto."}</p>
+      </details>
 
       {status.isAdmin ? <AdminTools /> : null}
 
@@ -495,27 +468,7 @@ export function SettingsPage({ status, tasks, onSignOut, onChanged, onTasksChang
         </section>
       ) : null}
 
-      <section className="settings-sec reveal">
-        <h3>{"Feedback"}</h3>
-        <FeedbackForm />
-      </section>
 
-      <section className="settings-sec reveal">
-        <h3>{"Help improve Otto"}</h3>
-        <div className="set-list">
-          <label className="set-row">
-            <span className="set-text"><b>{"Keep my tutor sessions to improve Otto"}</b><span className="settings-hint">{"Off by default. If you turn it on, the transcript and board of each finished tutor session are kept, tied to a scrambled ID instead of your email, and used only to improve Otto. Turn it off and everything kept is deleted."}</span></span>
-            <span className="switch"><input type="checkbox" checked={trainOptimistic ?? !!status.trainingShare} onChange={(e) => {
-              const on = e.target.checked;
-              setTrainOptimistic(on);
-              void api.setTrainingShare(on)
-                .then(() => { try { const s = JSON.parse(localStorage.getItem("weave-status") || "null"); if (s) localStorage.setItem("weave-status", JSON.stringify({ ...s, trainingShare: on })); } catch { /* ignore */ } onStatusUpdate?.(); })
-                .catch((err: any) => notify(err?.message || "That didn't save — give it another try.", "error"))
-                .finally(() => setTrainOptimistic(null));
-            }} /><span className="switch-track" /></span>
-          </label>
-        </div>
-      </section>
 
       <section className="settings-sec reveal">
         <h3>{"Full mode"}</h3>
