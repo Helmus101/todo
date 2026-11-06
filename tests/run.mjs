@@ -2493,7 +2493,7 @@ section("The voice tutor is Socratic: the rule is in the prompt, nothing contrad
   check("it says something is correct only after the student said it", /only say that something is correct AFTER they have said it/.test(p));
   check("questions are a tool, not the default ending (never two at once)", /Questions are a tool, not the default ending/.test(p) && /Never ask two questions at once/.test(p));
   check("multiple choice: the options are never read out (the board shows them) and the right one is never said first", !/read every option/i.test(p) && /never read the options out/.test(p) && /Do NOT read the whole problem or the options out loud/.test(p) && /Don't say which option is right before they answer/.test(p));
-  check("explaining never solves their exact problem", /never solve their exact problem for them/.test(p));
+  check("explaining never solves their exact problem", /do not replace the student.s work/.test(p) && /ANSWER POLICY/.test(p));
   check("no instruction tells the tutor to hand over the answer", !/\b(?:give|tell|state) (?:them|the student) the (?:final )?answer\b/i.test(p) && !/\bshow (?:them )?the (?:full )?solution\b/i.test(p));
   const bw = readFileSync(new URL("../server/tutorTurn/boardWriter.ts", import.meta.url), "utf8");
   check("the board writer never writes the answer to the tutor's open question and never marks the right option", /THE ANSWER TO THE QUESTION THE TUTOR ASKS AT THE END OF THE EXCHANGE/.test(bw) && /never marking the right one/.test(bw));

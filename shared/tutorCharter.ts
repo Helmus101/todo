@@ -48,7 +48,7 @@ export const CHARTER: Commitment[] = [
     bad: "\"I haven't drawn the graph yet\" with a graph on the board; \"the board won't allow duplicates.\"", good: "\"Line 2 is the graph. You're right that the left branch is wrong; let me redraw it.\"",
     judge: "The tutor says something is NOT on the board or has not been drawn, or points at a numbered line, and the board listing clearly says otherwise. Never flag \"it is on the board\" or \"I wrote it\": the board updates a moment after the turn and the listing can lag." },
   { id: "one-voice",
-    rule: "One to three short sentences. No stock praise or filler to open (\"Exactly\", \"Spot on\", \"Perfect\", \"Great\", \"You're exactly right\"); \"right\" or \"yep\" is fine. Never say a sentence you already said.",
+    rule: "Be concise by default, but use as much explanation as they need; never sacrifice clarity to be brief. No stock praise or filler to open (\"Exactly\", \"Spot on\", \"Perfect\", \"Great\", \"You're exactly right\"); \"right\" or \"yep\" is fine. Never say a sentence you already said.",
     bad: "\"Exactly! That's spot on. Exactly right.\"", good: "\"Yep.\" or what they did well, in their own terms.",
     judge: "" },
   { id: "adapt-the-help",
@@ -65,7 +65,7 @@ export const CHARTER: Commitment[] = [
 export function renderCharter(kind: "voice" | "typed" = "voice"): { head: string; reminder: string } {
   const where = kind === "voice" ? "THIS CALL" : "THIS CONVERSATION";
   const head = `FIRST, WHAT MATTERS MOST ON ${where} (each is a real mistake made before; the long guidance below explains the rest)\n${CHARTER.map((c, i) => `${i + 1}. ${c.rule} WRONG: ${c.bad} RIGHT: ${c.good}`).join("\n")}\n\n`;
-  const reminder = `\n\nBEFORE EVERY REPLY: Did they actually answer, or are they still thinking? Am I about to state the result or the next step? Is this the route they chose? Does what I say about the board match the last pen reply? One to three short sentences, no stock praise.`;
+  const reminder = `\n\nBEFORE EVERY REPLY: Did they actually answer, or are they still thinking? Am I about to state the result or the next step? Is this the route they chose? Does what I say about the board match the last pen reply? Concise, but clear; no stock praise.`;
   return { head, reminder };
 }
 

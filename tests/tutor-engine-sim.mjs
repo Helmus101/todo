@@ -43,7 +43,7 @@ export async function runTutorEngineSim(check, section) {
   check("leakedValue: open problem answers count, solved ones don't", leakedValue("so it comes out at 0.25", "hm", [], probs) !== null && leakedValue("so it comes out at 0.25", "hm", [], [{ ...probs[0], solved: true }]) === null);
   check("no student data at all → no empty BACKGROUND header (the IB knowledge is still given, with no student block)", !/BACKGROUND/.test(backgroundBlock({})) && /IB DIPLOMA/.test(backgroundBlock({})) && backgroundBlock({ skipIb: true }) === "");
 
-  check("the prompt is Socratic and subject-agnostic", /Never give the answer/.test(TUTOR_PROMPT) && /ANY SUBJECT/.test(TUTOR_PROMPT) && /another way/.test(TUTOR_PROMPT) && /independent thinker/.test(TUTOR_PROMPT));
+  check("the prompt is Socratic and subject-agnostic", /do not replace the student.s work/.test(TUTOR_PROMPT) && /ANY SUBJECT/.test(TUTOR_PROMPT) && /another way/.test(TUTOR_PROMPT) && /independent thinker/.test(TUTOR_PROMPT));
   check("subject detection: explicit words win, keywords decide otherwise, nothing → undefined",
     detectSubject("j'ai un exo de physique sur les forces") === "Physics" && detectSubject("solve x² − 5x + 6 = 0") === "Math" &&
     detectSubject("why did the cold war start") === "History" && detectSubject("help me plan my essay on Shakespeare") === "English" && detectSubject("hi") === undefined);
