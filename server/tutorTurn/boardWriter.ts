@@ -7,7 +7,7 @@ import { extractJsonObject, normalizeTurn, salvageTurn } from "../../shared/tuto
 import { boardSurfaceBlock } from "../boardEvents.ts";
 import { createTutorChat, usageOf } from "../claude.ts";
 import { applyOps } from "./apply.ts";
-import { numbersSaid, claimIsGrounded, plainDigits } from "./numbers.ts";
+import { numbersSaid, claimIsGrounded, plainDigits, keepSymbols } from "./numbers.ts";
 import { verifyConfirmedStep } from "./verifier.ts";
 export { numbersSaid, claimIsGrounded };
 import { boardLineIsWrong, stripUnaskedUnit } from "../boardMath.ts";
@@ -307,6 +307,9 @@ export async function writeBoard(input: { exchange: string; board: BoardEntry[];
     // The one exception: when the pen wrote nothing this exchange, the student's own working (result lines) is still recorded, so a confirmed step never goes missing.
     const WORKING = new Set(["result", "gap", "insight"]);
     const stepAlready = stepOnBoard(confirmedStudentStep(input.exchange), input.board.slice(-12));
+    // The problem's own symbols (M, R, T) are never swapped for lower-case ones.
+    const symSource = `${input.history || ""}\n${input.exchange}\n${input.board.map((e) => (e.kind === "given" ? e.text : "")).join("\n")}`;
+    for (let i = 0; i < unitFixed.length; i++) { const e: any = unitFixed[i]; if (typeof e.text === "string") unitFixed[i] = { ...e, text: keepSymbols(e.text, symSource) }; }
     const finalBoard = input.toolMode ? unitFixed.filter((e) => { const keep = DRAWN.has(String(e.kind)) || (String(e.kind) === "given" && posedMissing) || (!stepAlready && WORKING.has(String(e.kind))); if (!keep) applied.dropped.push(`${e.kind}: the tutor writes that itself`); return keep; }) : unitFixed;
     return { board: finalBoard, dropped: applied.dropped, concepts };
   };

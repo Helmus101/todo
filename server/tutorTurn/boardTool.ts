@@ -8,7 +8,7 @@ import { boardLineNumbers } from "../../shared/boardLines.ts";
 import { applyOps } from "./apply.ts";
 import { boardLineIsWrong } from "../boardMath.ts";
 import { answersOpenQuestion, hintedRuleHeld, splitOpenQuestion } from "./boardWriter.ts";
-import { numbersSaid, plainDigits } from "./numbers.ts";
+import { numbersSaid, plainDigits, keepSymbols } from "./numbers.ts";
 
 const FUNCS = /\\?(?:log|ln|sin|cos|tan|sqrt|frac|int|sum|lim|exp)\b|\be\^|\bderivative|\bintegral|\bpower|\bexponent|\bproduct|\bquotient|\bchain|\bmoles?\b|\bforce|\benergy|\bvelocity|\bacceleration/gi;
 const funcsOf = (t: string) => new Set([...String(t || "").toLowerCase().matchAll(FUNCS)].map((m) => m[0].replace(/^\\/, "")));
@@ -45,7 +45,7 @@ export function applyBoardTool(input: { lines: BoardToolLine[]; board: BoardEntr
   const ops: any[] = [];
   for (const raw of (Array.isArray(input.lines) ? input.lines : []).slice(0, 8)) {
     const kind = (BOARD_TOOL_KINDS as readonly string[]).includes(String(raw?.kind)) ? String(raw.kind) : "note";
-    const text = String(raw?.latex || "").trim().slice(0, 400);
+    const text = keepSymbols(String(raw?.latex || "").trim().slice(0, 400), `${recent}\n${input.board.map((e: any) => (e && e.kind === "given" ? e.text : "")).join("\n")}`);
     if (!text) continue;
     const refuse = (reason: string) => refused.push({ line: text.slice(0, 160), reason });
     // Each $...$ part is checked on its own as well: words before the maths ("Example: $3 \times 4 = 13$") hide it from the whole-line check.
