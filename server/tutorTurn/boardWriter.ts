@@ -174,8 +174,11 @@ export function problemOnBoard(question: string, board: { kind?: string; text?: 
 export function stepOnBoard(step: string, board: { kind?: string; text?: string }[]): boolean {
   const said = [...numbersSaid(step)];
   if (!said.length) return false;
+  // A step about x is not recorded by a line about y that happens to share a number.
+  const vars = [...step.matchAll(/(?<![A-Za-z])([xyztnkr])(?![A-Za-z])/g)].map((m) => m[1]);
   return board.some((e) => {
     if (e.kind === "given" || typeof e.text !== "string") return false;
+    if (vars.length && !vars.some((v) => new RegExp(`(?<![A-Za-z])${v}(?![A-Za-z])`).test(e.text as string))) return false;
     const onBoard = new Set([...e.text.matchAll(/\d+(?:\.\d+)?/g)].map((m) => Number(m[0])));
     return said.filter((n) => onBoard.has(n)).length / said.length >= 0.75;
   });
@@ -228,7 +231,7 @@ export async function writeBoard(input: { exchange: string; board: BoardEntry[];
   const { finished, openQuestion } = splitOpenQuestion(input.exchange.slice(-4000));
   // toolMode: the tutor writes the board itself (write_board). This pass then records only what the tutor may have missed: the student's own
   // working, and pictures. Problems, rules, explanations and corrections are the tutor's.
-  const toolNote = input.toolMode ? "\n\nTHE TUTOR WRITES THE BOARD ITSELF in this session. You only add (a) a drawing the exchange needs (graph, diagram, number line, table, multiple-choice options), (b) a step or result the STUDENT said and the tutor confirmed that is not on the board yet (the tutor wrote nothing this time), and (c) a NEW problem the tutor just posed out loud that is not on the board (as a task line, kind \"given\", without its answer). Never write a heading, rule, formula, definition or explanation, and never a step the student has not said yet: those are the tutor's." : "";
+  const toolNote = input.toolMode ? "\n\nTHE TUTOR WRITES THE BOARD ITSELF in this session. You only add (a) a drawing the exchange needs (graph, diagram, number line, table, multiple-choice options), (b) a step or result the STUDENT said and the tutor confirmed that is not on the board yet (not already on the board), and (c) a NEW problem the tutor just posed out loud that is not on the board (as a task line, kind \"given\", without its answer). Never write a heading, rule, formula, definition or explanation, and never a step the student has not said yet: those are the tutor's." : "";
   const user = `${input.subject ? `Subject: ${input.subject}\n` : ""}${input.history ? `EARLIER IN THIS SESSION (context only: it tells you what a short answer like "two, right?" refers to; do NOT rewrite what is already on the board):\n${input.history.slice(-2500)}\n\n` : ""}LATEST EXCHANGE (what has been said and settled):\n${finished}${openQuestion ? `\n\nTHE TUTOR THEN ASKED THE STUDENT (still unanswered: never write its answer or its working; if it poses a NEW problem, WRITE that problem now as a task line in LaTeX, without its answer; if it is only the next step or sub-question of the problem already on the board, write NO task line for it: the problem line already carries it):\n${openQuestion}` : ""}${toolNote}`;
   const studentWords = input.exchange.split("\n").filter((l) => /^Student:/i.test(l)).map((l) => l.replace(/^Student:\s*/i, ""));
   // A new problem may be posed in a sentence before the closing question ("Now the trap: try e^{2x} - 3e^x - 4 = 0. What happens to y?"): look
