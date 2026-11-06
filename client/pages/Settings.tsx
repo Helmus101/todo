@@ -165,11 +165,12 @@ function PreferencesFields({ profile, onChanged }: { profile: Profile | null; on
         <div className="set-row" style={{ display: "block" }}>
           <span className="set-text"><b>{"Subjects"}</b></span>
           <div className="onboard-chips" style={{ marginTop: 8 }}>
-            {COMMON_SUBJECTS.map((name) => {
+            {[...COMMON_SUBJECTS, ...(profile?.subjects || []).filter((x) => !COMMON_SUBJECTS.includes(x))].map((name) => {
               const on = (profile?.subjects || []).includes(name);
               return <button key={name} type="button" className={`btn xs ${on ? "" : "ghost"}`} aria-pressed={on} onClick={() => saveCommon(name)}>{name}</button>;
             })}
           </div>
+          <AddRow placeholder={"Add another subject"} onAdd={async (v) => { const name = v.trim().slice(0, 60); if (name && !(profile?.subjects || []).includes(name)) await saveCommon(name); }} />
         </div>
       )}
       <label className="set-row">
