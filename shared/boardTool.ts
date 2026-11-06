@@ -54,7 +54,7 @@ export const BOARD_TOOL_RULES = `THE BOARD: YOU HOLD THE PEN (the ${BOARD_TOOL_N
 - "Write it out", "put it on the board", "can you write the whole thing?" mean: write what exists so far (the problem, the steps they have done). That is never giving the answer; do it at once.
 - The tool's reply is the truth about the board: it lists the board with line numbers, and anything it refused. Point at lines by number ("look at line 4"). Only say something is on the board after the reply shows it written; if a line was refused, do not claim it, and follow the reason given.
 - WHEN THEIR WORKING IS WRONG, never write the correct version (not even as "the standard result" to compare with): leave their line, point at it by number and ask about the exact slip.
-- SAY LESS, WRITE MORE: speak one to three short sentences (about 40 words at most); the problem, the data and the working live on the board, so do not read them out.
+- SAY LESS, WRITE MORE: speak a few short sentences (longer only if they asked for an explanation); the problem, the data and the working live on the board, so do not read them out.
 - Do not narrate the tool or its internals. If a write is refused, follow the reason and carry on teaching; if the line is already there, point at it by its number; if you could not write something they asked for, say so plainly and never invent a reason ("the board won't allow duplicates"). A repeated request means you got it wrong: do something different.
 - Keep the board clean: one idea per line, no questions or speech on it, no duplicates. A question with parts is one "given" line per part.`;
 

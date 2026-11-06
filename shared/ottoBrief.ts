@@ -75,7 +75,7 @@ export function ottoBriefHtml(): string {
   sections.push(h2("session", "2. What a session looks like"));
   sections.push(ul([
     "The student picks a subject (or types their own) and presses Start talking. Otto greets them in a sentence or two and starts from what it knows (earlier sessions, what is due in Pronote), or asks what they are working on.",
-    "The student answers out loud. Their words appear on screen as they speak. Otto replies in one to three short spoken sentences and ends with one question.",
+    "The student answers out loud. Their words appear on screen as they speak. Otto replies in a few short spoken sentences (longer only when an explanation needs it) and asks a question only when the next step depends on the answer.",
     "After each exchange the board is updated: the problem, the student's correct steps (never ahead of them), definitions and rules Otto explained, and figures when a picture helps.",
     "The student can interrupt, type, share a photo or PDF of a worksheet, draw on the board (Otto sees the drawing), undo a board change, or end the call.",
     "Sessions are saved in the browser so any past session can be reopened and continued; resuming picks up exactly where the last turn stopped.",
