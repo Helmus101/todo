@@ -529,6 +529,11 @@ function formatMath(text: string): string {
   // single-char pass ran again afterward, it would match THAT literal underscore+paren and mangle it into
   // "₍x → 0)" (reproduced live on `\lim_{x \to 0}`). Running single-char only once, before, avoids ever
   // reprocessing text this function itself produced.
+  // A parenthesised exponent or index, "r^(n - 1)" / "a_(n+1)": the whole group is the script (the single-char pass below would take just the "(").
+  // Spaces and en dashes inside it are dropped ("n – 1" → "n-1"); a group that still cannot be written as small characters is left for the passes below.
+  const grouped = (re: RegExp, map: Record<string, string>, marker: string) => { s = s.replace(re, (all, g) => { const t = String(g).replace(/\s+/g, "").replace(/[–—−]/g, "-"); return [...t].every((c) => map[c]) ? scriptify(t, map, marker) : all; }); };
+  grouped(/\^\(([^()]+)\)/g, SUPERSCRIPT, "^");
+  grouped(/_\(([^()]+)\)/g, SUBSCRIPT, "_");
   s = s.replace(/\^(?!\{)(\S)/g, (_, g) => scriptify(g, SUPERSCRIPT, "^"));
   s = s.replace(/_(?!\{)(\S)/g, (_, g) => scriptify(g, SUBSCRIPT, "_"));
   s = s.replace(/\^\{([^{}]*)\}/g, (_, g) => scriptify(g, SUPERSCRIPT, "^"));

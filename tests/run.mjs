@@ -3051,6 +3051,7 @@ section("fractions always typeset — pseudo-fractions and bare \\tfrac lines ne
   const React = await import("react");
   const ui = await import("../client/ui.tsx");
   const render = (s) => renderToStaticMarkup(React.createElement(React.Fragment, null, ui.renderNoteBody(s)));
+  check("formatMath: a parenthesised exponent r^(n - 1) becomes a real superscript, not a dangling bracket", ui.formatMath("a_1 × r^(n - 1)") === "a₁ × rⁿ⁻¹" && ui.formatMath("x^(n+1)") === "xⁿ⁺¹" && ui.formatMath("x^2") === "x²");
   check("formatMath converts \\tfrac (braced AND bare-12) and never prints a raw backslash",
     render("E = \\tfrac12(250)(0.12)^2 = 1.8\\ J").includes("(1)/(2)") &&
     !render("E = \\tfrac12(250)(0.12)^2 = 1.8\\ J").includes("\\") &&
