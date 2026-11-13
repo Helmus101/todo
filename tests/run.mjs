@@ -2874,7 +2874,7 @@ section("Tutor Session — sessions never auto-start, and past boards read at a 
     const peekBody = tutorSrc.slice(peekStart, tutorSrc.indexOf("}, []);", peekStart) + 6);
     return /peekForActiveSession/.test(tutorSrc) && /api\.tasks\(\)\.then/.test(peekBody) && !/setTask\(/.test(peekBody) && /setPendingActiveSession\(t \|\| null\)/.test(peekBody) && !/api\.studyFreeSession\(\)\.then/.test(tutorSrc);
   })());
-  check("Start is the only create path and always passes fresh (a new lesson starts clean)", /api\.studyFreeSession\(true, chosenSubject\)/.test(tutorSrc));
+  check("Start is the only create path and always passes fresh (a new lesson starts clean)", /api\.studyFreeSession\(true, startSubject\)/.test(tutorSrc));
   check("voice stays manual (no startInVoiceMode on the panel — the mic toggle is the student's)", !/startInVoiceMode=/.test(tutorSrc));
   // Report-live: "for summary there should be ONE title — what was the main thing — and then a bit of
   // description", NOT a wall of board lines (the example: Spring compression → energy transfer…, E = kx²…,
@@ -3224,7 +3224,7 @@ section("/api/study/free — resumes an active freestudy session by default, onl
   // subject. Start must require a picked subject and pass fresh:true (plus that subject) — a NEW lesson is
   // always a BLANK session, never a resume of an old one; resuming an in-progress session is only the
   // landing's explicit "Reprendre" click (resumeActiveSession).
-  check("Start requires a subject and creates a BLANK fresh session (never resumes an old thread)", /api\.studyFreeSession\(true, chosenSubject\)/.test(tutorSrc) && /if \(!chosenSubject \|\| startingSession\) return;/.test(tutorSrc));
+  check("Start needs no subject (the tutor names it from what the student says, then gets that subject's knowledge as a private note) and creates a BLANK fresh session (never resumes an old thread)", /api\.studyFreeSession\(true, startSubject\)/.test(tutorSrc) && /if \(startingSession\) return;/.test(tutorSrc) && /api\.liveSubject\(/.test(tutorSrc) && /\/api\/tutor\/live\/subject/.test(readFileSync(new URL("../server/routes/tutor.ts", import.meta.url), "utf8")));
   // Reported live twice: "Reprendre" silently loaded an EMPTY chat/board despite real prior conversation.
   // Root cause both times was the same class of bug — guessing at raw localStorage keys
   // (`otto-chat-${id}-${userId}` etc.) that client/localChatBoard.ts has never written (it keeps ONE
@@ -5320,7 +5320,7 @@ section("Answer box keys follow the answer; typed maths previews live; chat show
   check("a power key says 'to the power of'", /to the power of/.test(mi));
   check("typed maths gets a live typeset preview", /sm-math-preview/.test(mi) && /<MathText text=\{props\.value\}/.test(mi));
   check("all three answer inputs pass the answer context", (readFileSync("client/study/InlineProblem.tsx", "utf8").match(/context=\{/g) || []).length === 1 && (readFileSync("client/study/artifacts/BoardArtifact.tsx", "utf8").match(/context=\{/g) || []).length === 2);
-  check("the app's '[Exercise] I answered …' message is shown as 'My answer: …' with the maths typeset, in both chat views", /export function friendlyExerciseText/.test(ts) && (ts.match(/friendlyExerciseText\(msg\.text/g) || []).length === 2);
+  check("the app's '[Exercise] I answered …' message is shown as 'My answer: …' with the maths typeset, in every chat view (drawer, live transcript, review)", /export function friendlyExerciseText/.test(ts) && (ts.match(/friendlyExerciseText\(msg\.text/g) || []).length === 3);
 }
 
 section("Multiple choice without indirect answers");

@@ -4606,6 +4606,22 @@ label.set-row.disabled { cursor: default; opacity: 0.5; }
 .tc-error { position: absolute; top: 64px; left: 50%; transform: translateX(-50%); padding: var(--space-2) var(--space-4); border-radius: var(--radius); background: var(--surface); border: 1px solid var(--vermilion); color: var(--vermilion); font-size: 13px; }
 
 /* Otto's dock — avatar + ONLY the latest answer + the input */
+/* The live transcript (the board is off, shared/features.ts): the conversation is the page. */
+.ts-transcript { position: relative; flex: 1; min-height: 0; overflow-y: auto; background: var(--bg); scroll-behavior: smooth; }
+.ts-transcript-col { max-width: 720px; margin: 0 auto; padding: var(--space-6) var(--space-4) 0; display: flex; flex-direction: column; gap: var(--space-5); }
+.ts-transcript-pad { height: 190px; flex: none; }
+.ts-transcript-empty { margin: 18vh 0 0; text-align: center; color: var(--ink-3); font-size: 1rem; line-height: 1.6; }
+.ts-line { display: flex; flex-direction: column; gap: 3px; max-width: 88%; animation: ts-line-in .18s ease-out; }
+.ts-line.you { align-self: flex-end; align-items: flex-end; }
+.ts-line.otto { align-self: flex-start; }
+.ts-line-who { font-size: 0.72rem; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; color: var(--ink-3); }
+.ts-line-text { font-size: 1.05rem; line-height: 1.55; color: var(--ink); white-space: pre-wrap; overflow-wrap: anywhere; }
+.ts-line.you .ts-line-text { color: var(--ink-2, var(--ink)); text-align: right; }
+.ts-line.live .ts-line-text { color: var(--ink-2, var(--ink)); }
+.ts-caret { display: inline-block; width: 2px; height: 1.05em; margin-left: 3px; vertical-align: text-bottom; background: var(--accent); animation: ts-caret 1s steps(2, start) infinite; }
+@keyframes ts-caret { to { visibility: hidden; } }
+@keyframes ts-line-in { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
+@media (prefers-reduced-motion: reduce) { .ts-line { animation: none; } .ts-caret { animation: none; } .ts-transcript { scroll-behavior: auto; } }
 .ts-dock { position: absolute; z-index: 4; left: 50%; bottom: 14px; transform: translateX(-50%); width: min(760px, calc(100% - 24px)); }
 .otto-dock { display: flex; flex-direction: column; gap: var(--space-2); padding: var(--space-3); background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-xl); box-shadow: 0 10px 40px rgba(0,0,0,.14), 0 2px 6px rgba(0,0,0,.06); }
 .otto-dock-row { display: flex; align-items: flex-start; gap: var(--space-3); }

@@ -121,7 +121,7 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
   const [chatDrawer, setChatDrawer] = useState(false);
   // End-of-session reflection (IB "reflective"): before a real session closes, one optional question.
   const chatEndRef = useRef<HTMLDivElement>(null);
-  useEffect(() => { if (chatDrawer) chatEndRef.current?.scrollIntoView({ block: "end" }); }, [chatDrawer, task?.chat?.length]);
+  const transcriptEndRef = useRef<HTMLDivElement>(null);
   // The landing screen asks WHAT to study before starting — the subject is stamped onto the session
   // (sourceSubject, visible to the tutor prompt) and carried into history as the session's label.
   // The student's own subjects (set in onboarding) come first; the shared common list follows.
@@ -138,6 +138,10 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
   const [selectedSubject, setSelectedSubject] = useState("");
   // Only used when the subject is "Other": the student names it here. Every other subject starts with one tap, no extra question.
   const OTHER = "__other__";
+  const ANY_SUBJECT = "Anything";
+  const startSubject0 = ANY_SUBJECT;
+  const subjectKnownRef = useRef(false); // the session's subject has been worked out and the tutor has been told what to know about it
+  const subjectTriesRef = useRef(0);
   const [topic, setTopic] = useState("");
   const chosenSubject = selectedSubject === OTHER ? topic.trim() : selectedSubject;
   const [startingSession, setStartingSession] = useState(false);
@@ -494,6 +498,9 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
   const [safetyCard, setSafetyCard] = useState<string | null>(null);
   const lastSafetyAtRef = useRef(0);
   const [caption, setCaption] = useState<{ who: "you" | "otto"; text: string } | null>(null);
+  useEffect(() => { if (chatDrawer) chatEndRef.current?.scrollIntoView({ block: "end" }); }, [chatDrawer, task?.chat?.length]);
+  // The live transcript (board off): follow the conversation as words arrive.
+  useEffect(() => { if (!BOARD_ENABLED) transcriptEndRef.current?.scrollIntoView({ block: "end", behavior: "smooth" }); }, [task?.chat?.length, caption?.text]);
   // The call's conversation is kept on this device like every other turn: the transcript lands in the chat history as it is said.
   const taskRef = useRef(task);
   taskRef.current = task;
@@ -570,6 +577,21 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
           .then((r) => { if (r?.note && liveRef.current.status === "live") { spokenCheckNoteAtRef.current = Date.now(); liveRef.current.sendText(`[${sessionNoteTag}] (${r.note})`, false); } })
           .catch(() => {})
           .finally(() => { spokenCheckBusyRef.current = false; });
+      }
+      // No subject was asked for: from what they have said, name it once (a few tries), and hand the tutor that subject's knowledge privately.
+      if (liveRef.current.status === "live" && !subjectKnownRef.current && subjectTriesRef.current < 5 && (!taskRef.current?.sourceSubject || taskRef.current.sourceSubject === ANY_SUBJECT)) {
+        const said = (taskRef.current?.chat || []).filter((m) => m.role === "user").map((m) => String(m.text || "")).join(" ") + " " + turnsRef.current.filter((x) => x.who === "you").map((x) => x.text).join(" ");
+        if (said.trim().length >= 12) {
+          subjectTriesRef.current += 1;
+          void api.liveSubject(said, startChips.map((c) => c.subject))
+            .then((r) => {
+              if (!r?.subject || liveRef.current.status !== "live") return;
+              subjectKnownRef.current = true;
+              setTask((t) => (t ? ({ ...t, sourceSubject: r.subject, title: `${r.subject} session` } as WebTask) : t));
+              if (r.note) liveRef.current.sendText(`[${sessionNoteTag}] (${r.note})`, false);
+            })
+            .catch(() => {});
+        }
       }
       // "I don't know" twice, or "just explain it" once: if the reply is still only a guiding question, nudge it (privately) to explain.
       const wants = wantsExplainRef.current; wantsExplainRef.current = false;
@@ -961,8 +983,9 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [talkRequest, task?.id, liveStatus]);
   const startNewSession = useCallback(async (talk = false) => {
-    if (!chosenSubject || startingSession) return;
-    try { localStorage.setItem("otto-last-subject", chosenSubject); } catch { /* best-effort */ }
+    if (startingSession) return;
+    const startSubject = chosenSubject || ANY_SUBJECT; // no subject is asked for: the tutor works it out from what they say (detectSubject)
+    subjectKnownRef.current = false;
     if (talk) setTalkRequest((n) => n + 1); // "Start talking" is the student's own tap: voice mode turns on once the panel mounts
     enterFullscreen(); // tutor mode is full screen (this click is the user gesture the browser requires)
     setError(null);
@@ -982,7 +1005,7 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
       // the same subject label ("Math" comes up again and again), so a plain .find() from the front could
       // grab a stale, already-ended session instead of the one just created — the source of "a supposedly
       // empty new session shows old content." Search from the end, and require it not be dismissed/done.
-      const list = await api.studyFreeSession(true, chosenSubject);
+      const list = await api.studyFreeSession(true, startSubject);
       const t = Array.isArray(list)
         ? [...list].reverse().find((x) => x.source === "freestudy" && x.status !== "dismissed" && x.status !== "done")
         : undefined;
@@ -1015,7 +1038,7 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
     } finally {
       setStartingSession(false);
     }
-  }, [chosenSubject, startingSession, pendingActiveSession, sessionStart, saveAndClose, userId, L]);
+  }, [chosenSubject, startingSession, pendingActiveSession, sessionStart, saveAndClose, userId, L, startSubject0]);
   // The device's button: press = tutor on (session if there isn't one, then the voice call); press again = call off.
   // Needs the page to have had one click since it loaded (the browser only lets sound play after that) and the
   // mic already allowed for this site; if the sound is blocked the usual play button appears on screen.
@@ -1025,19 +1048,8 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
     if (liveStatus === "live" || liveStatus === "connecting") { live.stop(); return; }
     if (task) { setTalkRequest((n) => n + 1); return; }
     if (startingSession) return;
-    if (chosenSubject) { void startNewSession(true); return; }
-    let last = "";
-    try { last = localStorage.getItem("otto-last-subject") || ""; } catch { /* no storage */ }
-    // Nothing picked and nothing remembered: start in the student's first subject (or Math) rather than do nothing.
-    if (!last) last = startChips[0]?.subject || "Math AA";
-    setSelectedSubject(last);
-    setDeviceStartFor(last);
+    void startNewSession(true); // no subject needed
   };
-  useEffect(() => {
-    if (!deviceStartFor || chosenSubject !== deviceStartFor || startingSession) return;
-    setDeviceStartFor("");
-    void startNewSession(true);
-  }, [deviceStartFor, chosenSubject, startingSession, startNewSession]);
 
 
   // FULL-PAGE review of a past session (/tutor/session/<id>/board|chat) — one whole page with exactly two
@@ -1129,7 +1141,7 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
               design system allows, reused on the landing and the session screens. */}
           <div className="tutor-face" aria-hidden><span className="tutor-face-eye" /><span className="tutor-face-eye" /></div>
           <h2 className="tutor-landing-title">{"Your answers. Your thinking. Your win."}</h2>
-          <p className="tutor-landing-sub">{"Pick a subject. I won't give you the answer. You'll find it."}</p>
+          <p className="tutor-landing-sub">{"Just start talking. Tell me what you're working on. I won't give you the answer. You'll find it."}</p>
 
           {/* Always show subject selector so you can create a new session even when one is active —
               rendered as the prototype's single wide pill: subject select left, orange "Start a session"
@@ -1152,8 +1164,8 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
             </div>
           </div>
           <div className="tutor-start-actions">
-            <button className="btn primary tutor-start-btn" onClick={() => void startNewSession(true)} disabled={startingSession || !chosenSubject}>
-              <Mic size={18} aria-hidden="true" />{startingSession ? "Starting…" : chosenSubject ? `Start talking · ${chosenSubject}` : "Pick a subject to start"}
+            <button className="btn primary tutor-start-btn" onClick={() => void startNewSession(true)} disabled={startingSession}>
+              <Mic size={18} aria-hidden="true" />{startingSession ? "Starting…" : "Start talking"}
             </button>
           </div>
           {device.status !== "unsupported" ? (
@@ -1331,6 +1343,26 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
           </>
         );
       })()}
+      {!BOARD_ENABLED ? (
+        <section className="ts-transcript" aria-label={"Conversation"} aria-live="polite">
+          <div className="ts-transcript-col">
+            {!task.chat?.length && !(liveStatus === "live" && caption?.text) ? <p className="ts-transcript-empty">{liveStatus === "live" ? "Listening. Say what you're working on." : "Tap the mic below and start talking. Your conversation appears here as you speak."}</p> : null}
+            {(task.chat || []).map((msg, i) => (
+              <div key={i} className={`ts-line ${msg.role === "user" ? "you" : "otto"}`}>
+                <div className="ts-line-who">{msg.role === "user" ? "You" : "Otto"}</div>
+                <div className="ts-line-text"><MathText text={friendlyExerciseText(msg.text, "en" === "en")} /></div>
+              </div>
+            ))}
+            {liveStatus === "live" && caption?.text && !(task.chat || []).some((m) => String(m.text || "").endsWith(caption.text.slice(-40))) ? (
+              <div className={`ts-line live ${caption.who === "you" ? "you" : "otto"}`}>
+                <div className="ts-line-who">{caption.who === "you" ? "You" : "Otto"}</div>
+                <div className="ts-line-text"><MathText text={caption.text} /><span className="ts-caret" aria-hidden="true" /></div>
+              </div>
+            ) : null}
+            <div className="ts-transcript-pad" ref={transcriptEndRef} />
+          </div>
+        </section>
+      ) : null}
       {BOARD_ENABLED ? <section className="ts-canvas" aria-label={"Board"}>
         <div className="tutor-board-body ts-board-body" ref={setSurfaceEl} style={{ display: desmosOpen ? "none" : undefined }}>
           <BoardArtifact paper onChoice={onChoice} task={task} onUndo={undoCount > 0 ? undoBoard : undefined} writing={sending || boardPending > 0 || boardPromised} onProblemResult={onProblemResult} onCheckProblem={(p, given) => api.checkProblem(task.id, p, given)} onWidgetResult={onWidgetResult} sheetSignal={sheetSignal} onGapCheck={onGapCheck} />
@@ -1357,7 +1389,7 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
             separate "chat" entry point (report-live: it isn't a dedicated chat button, just an expand
             button on the island where the answers already show). No past-sessions section either:
             in-session shows the CURRENT transcript only. */}
-        {chatDrawer && (
+        {BOARD_ENABLED && chatDrawer && (
           <div className="tutor-dock-chat" id="tutor-history-drawer">
             <div className="tutor-dock-chat-head">
               <span>{task.chat?.length || 0} {"messages"}</span>
