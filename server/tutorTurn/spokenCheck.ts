@@ -49,7 +49,9 @@ export function spokenCheckNote(flags: SpokenFlag[], opts?: { rewrite?: boolean 
     return `You said "${f.quote}": ${what}.${f.fix ? ` ${f.fix}` : ""}`;
   });
   if (opts?.rewrite) return `Private note for you, not from the student: your reply was checked before they heard it. ${lines.join(" ")} They have not heard it yet: write the reply again without that problem, hand the question back to them, and do not mention this note.`;
-  return `Private note for you, not from the student: ${lines.join(" ")} Own it in one short sentence at your next turn, in your own words, then hand the question back to them. Do not mention this note.`;
+  // No "own it" speech: asked to own each note, the tutor opened turn after turn with an apology about itself ("I've been treating your
+  // half-sentences as answers…") and the lesson stopped. A wrong fact is corrected in a few words; everything else is simply not done again.
+  return `Private note for you, not from the student: ${lines.join(" ")} If you stated something false, correct it in a few words at your next turn; otherwise say nothing about it and simply do not do it again. No apology, no talk about your own mistakes, and do not mention this note: carry on with the lesson and hand the question back to them.`;
 }
 
 export async function checkSpokenTurn(input: { exchange: string; listing: string }, tokens: { in: number; out: number; cachedIn: number }): Promise<SpokenFlag[]> {
@@ -67,8 +69,19 @@ export async function checkSpokenTurn(input: { exchange: string; listing: string
       ],
     }, true);
     const u = usageOf(res); tokens.in += u.in; tokens.out += u.out; tokens.cachedIn += u.cachedIn;
-    return withStockPraise(parseSpokenFlags(String(res?.choices?.[0]?.message?.content || ""), turn), turn);
+    const lastStudent = ([...lines].reverse().find((l) => /^Student:/i.test(l)) || "").replace(/^Student:\s*/i, "");
+    return withStockPraise(parseSpokenFlags(String(res?.choices?.[0]?.message?.content || ""), turn).filter((f) => f.kind !== "confirmedUnclear" || !isRealAnswer(lastStudent)), turn);
   } catch { return withStockPraise([], turn); }
+}
+
+const MATHS_IN_SPEECH = /\d|[=+\-*/^√]|\b(?:over|minus|plus|times|squared?|cubed?|root|equals?|divided|half|double[sd]?|quadruples?|twice|zero|one|two|three|four|five|six|seven|eight|nine|ten)\b|\b[b-df-hj-np-xz]\b/i; // a lone letter is a variable (not a, e, i, o, y: words in English or Spanish)
+/** Pure: the student's line is a real turn, not microphone noise: it carries maths ("2L over T2", "L minus X") or is a whole sentence (six words
+ *  or more). The judge called such terse spoken answers "not a real answer" turn after turn, and each false note derailed the tutor. Only a short
+ *  line with no maths in it ("most valuable", "lleva", "um") can be agreed-to noise. */
+export function isRealAnswer(studentLine: string): boolean {
+  const t = String(studentLine || "").trim();
+  if (!t) return false;
+  return t.split(/\s+/).length >= 6 || MATHS_IN_SPEECH.test(t);
 }
 
 /** The deterministic flag (stock praise opener) joins whatever the judge found. Pure. */

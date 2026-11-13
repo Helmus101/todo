@@ -19,9 +19,13 @@ import { validNoteTag } from "../../shared/noteTag.ts";
 import { liveInstructions } from "../../shared/liveTutor.ts";
 import { isLangCode, languageName } from "../../shared/languages.ts";
 import { createTutorChat, usageOf, synthesizeStudentModel } from "../claude.ts";
+import { sanitizeForPrompt } from "../../shared/promptSafe.ts";
 import { shouldRefreshStudentModel } from "../jobs.ts";
 import { cleanSessionNote, addSessionNote, recordSession, noteItems, bumpCause } from "../../shared/tutorMemory.ts";
 import { classifySafety } from "../../shared/safety.ts";
+import { BOARD_ENABLED } from "../../shared/features.ts";
+import { REPORT_SYSTEM, parseSessionReport } from "../../shared/sessionReport.ts";
+import { extractJsonObject } from "../../shared/tutorTurn.ts";
 
 // Interface translations: fixed UI strings only (never anything the student wrote), cached per language so each string is translated once.
 // Public (the landing's language picker runs before login), so it is bounded two ways: the Map is capped
@@ -176,7 +180,7 @@ export function registerTutorRoutes(app: express.Express): void {
           for (const model of candidates) {
             for (const full of [true, false]) {
               // The full session also carries Otto's pen (write_board); the bare fallback has neither, and the board writer then writes everything.
-              const session: any = { type: "realtime", model, instructions, output_modalities: ["audio"], audio: { output: { voice: "cedar" }, ...(full ? { input: { transcription: { model: "gpt-4o-mini-transcribe" }, turn_detection: { type: "semantic_vad", eagerness: "low" } } } : {}) }, ...(full ? { tools: [BOARD_TOOL_REALTIME], tool_choice: "auto" } : {}) };
+              const session: any = { type: "realtime", model, instructions, output_modalities: ["audio"], audio: { output: { voice: "cedar" }, ...(full ? { input: { transcription: { model: "gpt-4o-mini-transcribe" }, turn_detection: { type: "semantic_vad", eagerness: "low" } } } : {}) }, ...(full ? { ...(BOARD_ENABLED ? { tools: [BOARD_TOOL_REALTIME], tool_choice: "auto" } : {}) } : {}) };
               const r = await fetch("https://api.openai.com/v1/realtime/client_secrets", { method: "POST", headers: { Authorization: `Bearer ${openaiKey}`, "Content-Type": "application/json" }, body: JSON.stringify({ session }), signal: AbortSignal.timeout(6000) });
               if (r.ok) {
                 const j: any = await r.json();
@@ -228,6 +232,27 @@ export function registerTutorRoutes(app: express.Express): void {
     addUsage(profile, tokens, "chat");
     await commit(req);
     res.json({ note: spokenCheckNote(flags), flags: flags.map((f) => f.kind) });
+  }));
+
+  // THE END-OF-SESSION REPORT: one model call over the transcript, when the student ends the session. Best effort: null when there is too little to
+  // report on or the AI is unavailable (the client then saves the session without one).
+  app.post("/api/tutor/live/report", requireAuth, rateLimit(10, 60_000), dailyCap("live-report", Number(process.env.TUTOR_DAILY_LIVE_REPORT) || 60), ah(async (req, res) => {
+    if (isTutorBlocked(req) || overWeeklyCap(req) || !aiReady()) { res.json({ report: null }); return; }
+    const chat = (Array.isArray(req.body?.chat) ? req.body.chat : []).filter((m: any) => m && (m.role === "user" || m.role === "assistant") && typeof m.text === "string" && m.text.trim()).slice(-120);
+    if (chat.filter((m: any) => m.role === "user").length < 2) { res.json({ report: null }); return; }
+    const subject = typeof req.body?.subject === "string" ? sanitizeForPrompt(req.body.subject, 80) : "";
+    const transcript = chat.map((m: any) => `${m.role === "user" ? "Student" : "Otto"}: ${m.text.replace(/\s+/g, " ").slice(0, 700)}`).join("\n").slice(-14000);
+    const tokens = { in: 0, out: 0, cachedIn: 0 };
+    let report = null;
+    try {
+      const r: any = await createTutorChat({ max_tokens: 1200, temperature: 0.2, response_format: { type: "json_object" }, messages: [{ role: "system", content: REPORT_SYSTEM }, { role: "user", content: `Subject: ${subject || "not given"}\n\nTRANSCRIPT:\n${transcript}` }] }, true);
+      const u = usageOf(r); tokens.in += u.in; tokens.out += u.out; tokens.cachedIn += u.cachedIn;
+      report = parseSessionReport(extractJsonObject(String(r?.choices?.[0]?.message?.content || "")));
+    } catch { /* no report */ }
+    const profile = req.session.profile || emptyProfile();
+    addUsage(profile, tokens, "chat");
+    await commit(req);
+    res.json({ report });
   }));
 
   app.post("/api/tutor/live/board", requireAuth, rateLimit(30, 60_000), dailyCap("live-board", Number(process.env.TUTOR_DAILY_LIVE_BOARD) || 900), ah(async (req, res) => {

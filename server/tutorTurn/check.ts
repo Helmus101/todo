@@ -5,10 +5,14 @@ import { createTutorChat, usageOf } from "../claude.ts";
 
 const MATH_WORD = /\b(?:squared?|cubed?|over|plus|minus|times|divided|equals?|root|sqrt|sine?|cos(?:ine)?|tan|log|ln|derivative|integral|factor|expand|bracket)\b/gi;
 
-/** Worth a second look: long enough to hold working, and at least three maths signals (digits, "=", operators in words). */
+const POSES_PROBLEM = /^\s*(?:solve|find|calculate|compute|simplify|differentiate|integrate|factor(?:i[sz]e)?|expand|evaluate|what(?:'s| is)|how)\b/i;
+
+/** Worth a second look: at least three maths signals (digits, "=", operators in words). A short result counts ("so its 6x(x^2+1)^2 ?"):
+ *  the fast model told students a correct one-line answer was "almost" right; only a bare value ("x = 3") is too small to recompute. */
 export function carriesWorking(message: string): boolean {
   const m = String(message || "");
-  if (m.length < 25 || /^\s*\[/.test(m)) return false;
+  if (m.length < 10 || /^\s*\[/.test(m)) return false;
+  if (m.length < 25 && POSES_PROBLEM.test(m)) return false; // a short problem they are asking about is not working to recompute
   const signals = (m.match(/\d|[=+\-*/^√]/g) || []).length + (m.match(MATH_WORD) || []).length;
   return signals >= 3;
 }

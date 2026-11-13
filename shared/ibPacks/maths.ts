@@ -158,7 +158,7 @@ EX5 (HL, Markov chain, 4 marks). Each month 20 percent of app A users move to B 
 const AA_TEXT = [AA_HEAD, MARKS.replace("HOW MARKS ARE EARNED", "3. HOW MARKS ARE EARNED"), AA_ERRORS, AA_TECH, AA_EXAMPLES, "7. " + MOVES].join("\n\n");
 const AI_TEXT = [AI_HEAD, MARKS.replace("HOW MARKS ARE EARNED", "3. HOW MARKS ARE EARNED"), AI_ERRORS, AI_TECH, AI_EXAMPLES, "7. " + MOVES].join("\n\n");
 
-const UNKNOWN_NOTE = `The student said only "maths", so their course is UNKNOWN. Before teaching anything, ask once which course they take: Analysis and Approaches (AA) or Applications and Interpretation (AI), and SL or HL, and remember the answer. If it turns out to be AI, use the AI differences: both papers use the graphic display calculator and the syllabus is about modelling, statistics tests and finance rather than proof and calculus technique. The notes below describe AA.
+const UNKNOWN_NOTE = `The student said only "maths", so their course is UNKNOWN. Help with what they asked first. Ask ONCE which course they take (Analysis and Approaches (AA) or Applications and Interpretation (AI), and SL or HL), in passing, the first time the answer would change what you teach or how hard you pitch it, never as the opening of a session or in reply to a greeting, and remember the answer. If it turns out to be AI, use the AI differences: both papers use the graphic display calculator and the syllabus is about modelling, statistics tests and finance rather than proof and calculus technique. The notes below describe AA.
 
 `;
 

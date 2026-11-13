@@ -35,7 +35,7 @@ export async function runTutorTurnSim(check, section) {
       check("the tutor gets an independent reference solution (solved twice with thinking on, the second pass hunting for the trap) and is told to trust a derivation from the definition over it; disagreement means it must not confirm any option", /solveProblem\(statement, input\.context\.subject, \{ think: true \}\)/.test(eng) && /hunt: true, think: true/.test(eng) && /NOT the truth/.test(eng) && /DISAGREED, so you do NOT know the answer/.test(eng) && /TUTOR_SOLVE/.test(eng)); }
     check("single-backslash LaTeX inside the JSON survives (\\theta, \\times, \\text)", (() => { const t = normalizeTurn(extractJsonObject('{"speech":["ok."],"board":[{"op":"step","text":"$a \\times b \\theta \\text{N}$"}]}')); return t && /\\times/.test(t.board[0].text) && /\\theta/.test(t.board[0].text) && /\\text/.test(t.board[0].text); })());
     { const { TUTOR_PROMPT } = await import("../shared/tutorPrompt.ts");
-      check("the typed turn prompt is a short human persona (not the rulebook) plus the board ops: explains the why, adapts, one question at a time, the last step left to the student", !TURN_PROMPT.startsWith(TUTOR_PROMPT) && TURN_PROMPT.length < 20000 && /Explain the why/.test(TURN_PROMPT) && /Adapt constantly/.test(TURN_PROMPT) && /at most one question/i.test(TURN_PROMPT) && /final step/.test(TURN_PROMPT) && /THE BOARD/.test(TURN_PROMPT) && /regions/.test(DRAW_REFERENCE)); }
+      check("the typed turn prompt is a short human persona (not the rulebook) plus the board ops: explains the why, adapts, one question at a time, the last step left to the student", !TURN_PROMPT.startsWith(TUTOR_PROMPT) && TURN_PROMPT.length < 20000 && /THE PERSON FIRST/.test(TURN_PROMPT) && /Small talk gets small talk/.test(TURN_PROMPT) && /Not every reply ends on a question/.test(TURN_PROMPT) && /Explain the why/.test(TURN_PROMPT) && /Adapt constantly/.test(TURN_PROMPT) && /at most one question/i.test(TURN_PROMPT) && /final step/.test(TURN_PROMPT) && /THE BOARD/.test(TURN_PROMPT) && /regions/.test(DRAW_REFERENCE)); }
     { const r = applyOps([{ op: "topic", cue: 0, text: "Quadratics" }, { op: "step", cue: 1, text: "$x^2 - 5x + 6 = 0$", kind: "given" }, { op: "step", cue: 1, text: "$x^2 - 5x + 6 = 0$", kind: "given" }, { op: "mark", cue: 1, target: "#9", note: "here" }], { board: [], problems: [], theirWords: [] });
       check("topic and step ops become board entries; a duplicate line and a mark on a missing line are dropped", r.board.length === 2 && r.board[0].kind === "focus" && r.board[1].cue === 1 && r.dropped.length === 2); }
 
@@ -53,6 +53,11 @@ export async function runTutorTurnSim(check, section) {
       script = (body, i) => i === 0 ? { speech: ["What's left once the 3x⁴ cancel?"], board: [] } : { flags: [] };
       const ok = await runTutorTurn({ ...base, message: "so we expand it" });
       check("a clean reply costs one check and is spoken as the model wrote it", calls.length === 2 && ok.reply === "What's left once the 3x⁴ cancel?");
+      calls.length = 0;
+      const plain = "Each government had promised to defend the next, so a local quarrel pulled them all in.";
+      script = (body, i) => i === 0 ? { speech: [plain], board: [] } : { flags: [{ kind: "gaveResult", quote: "Each government had promised", fix: "Ask them." }] };
+      const told = await runTutorTurn({ ...base, message: "i don't get why that led to a whole war" });
+      check("a 'gave the result' flag on a reply that names no value, equation or option is the judge misreading an explanation: no rewrite, the explanation they asked for is spoken", calls.length === 2 && told.reply === plain);
       process.env.TUTOR_GATE = "off"; }
 
     section("Tutor turn — one call, speech and board together");
@@ -81,7 +86,7 @@ export async function runTutorTurnSim(check, section) {
     { const r = await runTutorTurn({ ...base, message: "please write that on the board" });
       check("ops the app rejects (a mark on a line that does not exist) do not count as writing: the model is told what was rejected and tries again", calls.length === 2 && /rejected/.test(calls[1].messages.at(-1).content) && r.board.length === 1); }
     { const { carriesWorking } = await import("../server/tutorTurn/check.ts");
-      check("working worth a second look is long, mathematical spoken working; a short answer, small talk and an exercise result are not", carriesWorking("I get one minus three x squared plus three minus three x squared equals one over x squared") && !carriesWorking("x = 3") && !carriesWorking("ok thanks that makes sense now") && !carriesWorking("[Exercise] I answered 4 — marked right")); }
+      check("working worth a second look is mathematical working or a one-line result; a bare value, small talk and an exercise result are not", carriesWorking("I get one minus three x squared plus three minus three x squared equals one over x squared") && carriesWorking("so its 6x(x^2+1)^2 ?") && !carriesWorking("solve x^2 - 5x + 6 = 0") && !carriesWorking("x = 3") && !carriesWorking("ok thanks that makes sense now") && !carriesWorking("[Exercise] I answered 4 — marked right")); }
     calls.length = 0;
     script = (b, i) => (i === 0 ? { steps: [{ said: "squared both sides", ok: true }, { said: "expanded with the cross term", ok: true }], first_error: null, already_done: "squared the left side and expanded it", unclear: false } : { speech: ["That expansion is right, cross term and all.", "What does the cross term still contain that stops us solving for x?"], board: [{ op: "step", cue: 0, text: "$1 - 3x^2 + 3 - 3x^2 + 2\\sqrt{(1-3x^2)(3-3x^2)} = \\frac{1}{x^2}$", kind: "result" }] });
     { const r = await runTutorTurn({ ...base, message: "so I squared both sides and I get one minus three x squared plus three minus three x squared plus two times the root of those equals one over x squared" });

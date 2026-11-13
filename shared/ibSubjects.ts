@@ -84,9 +84,14 @@ export function ibSubjectPack(subject?: string): string {
   return p ? `\n\nTHIS SUBJECT IN THE IB: ${p.title}${level}\n${p.text}${schoolAddendum(s)}` : level ? `\n\nTHIS SUBJECT IN THE IB: ${s}${level}` : "";
 }
 
+const IB_BRIEF = `WHAT YOU KNOW ABOUT THIS SUBJECT IN THE IB (knowledge to draw on when the moment calls for it, never a routine to run: no questions about their course or level before helping, no marks or command-term talk unless they are practising for marks or ask)
+- Every student here is in the IB Diploma Programme. Final answers are exact or to 3 significant figures; "show that" means every step forwards from what is given, never backwards from the result. If you are not sure of a syllabus, weighting or mark-scheme detail, say so and tell them to check their subject guide; never invent one. Never write their IA, EE, TOK essay or CAS reflection.`;
+
 /** Everything the tutor knows about the IB, for a student who said they are in the IB: the general programme knowledge plus
  *  the pack for the subject they are working on. The rest of the app never includes it. */
-export function ibBlock(subject?: string, opts?: { check?: boolean }): string {
+export function ibBlock(subject?: string, opts?: { check?: boolean; brief?: boolean }): string {
   const bank = bankBlock(subject);
-  return `${IB_KNOWLEDGE}${ibSubjectPack(subject)}${bank ? `\n\n${bank}` : ""}${opts?.check === false ? "" : `\n\n${IB_REPLY_CHECK}`}`;
+  // `brief` (the live voice): the subject pack and the verified questions only. The general programme notes are 12 KB the voice model has to
+  // carry on every turn, and what it needs from them in a lesson fits in the two lines of IB_BRIEF.
+  return `${opts?.brief ? IB_BRIEF : IB_KNOWLEDGE}${ibSubjectPack(subject)}${bank ? `\n\n${bank}` : ""}${opts?.check === false ? "" : `\n\n${IB_REPLY_CHECK}`}`;
 }

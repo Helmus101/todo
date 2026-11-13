@@ -51,7 +51,7 @@ async function gateTurn(first: TurnOutput, args: { input: TutorTurnInput; messag
     const recent = input.history.slice(-6).filter((h) => h.text?.trim()).map((h) => `${h.role === "user" ? "Student" : "Tutor"}: ${h.text.replace(/\s+/g, " ").slice(0, 400)}`);
     const exchange = [...recent, `Student: ${input.message.replace(/\s+/g, " ").slice(0, 500)}`, `Tutor: ${first.speech.join(" ")}`].join("\n");
     // Only a substantive slip is worth a second full model call (which adds seconds and a stiffer reply); cosmetic ones are let through.
-    const flags = (await checkSpokenTurn({ exchange, listing: boardListing(input.board) }, tokens)).filter((f) => f.kind === "falseMath" || f.kind === "gaveResult");
+    const flags = (await checkSpokenTurn({ exchange, listing: boardListing(input.board) }, tokens)).filter((f) => f.kind === "falseMath" || (f.kind === "gaveResult" && NAMES_A_RESULT.test(first.speech.join(" "))));
     if (!flags.length || !soft()) return first;
     const note = spokenCheckNote(flags, { rewrite: true });
     const again = await callTurn([...messages, { role: "assistant" as const, content: JSON.stringify(first) }, { role: "user" as const, content: `(${note} Send the turn again as ONLY the JSON object. The board ops must not contain what you were told not to say.)` }], tokens, deadline);
@@ -118,6 +118,12 @@ function referenceBlock(ref: { sol: TutorSolution | null; agree: boolean }): str
   const steps = sol.steps.map((x, i) => `  ${i + 1}. ${x.idea}${x.result ? ` → ${x.result}` : ""}`).join("\n");
   return `\n\nREFERENCE SOLUTION OF THEIR PROBLEM (two independent reasoning attempts agreed${sol.verified ? "; numbers checked by code" : "; not fully verified"}; for YOUR accuracy). Answer: ${sol.finalAnswer}\n${steps ? `Steps:\n${steps}\n` : ""}${sol.keyIdea ? `Key idea: ${sol.keyIdea}\n` : ""}${sol.mistakes?.length ? `Traps and common mistakes: ${sol.mistakes.join(" | ")}\n` : ""}This is a strong lead from an independent solver, NOT the truth: solvers fall for trick questions. Before you assert or confirm any conclusion, test it against the DEFINITION of the exact quantity asked (done by which force or agent, on what, over what displacement of its own point of application; net versus one part). If your own derivation from the definition disagrees with this reference, trust the derivation, say you are double-checking, and work it through with the student. Their reasoning can be right while the answer they head to is wrong, or the reverse. The reference is for your accuracy, not for announcing: until the student has reasoned their own way to the answer, never name the option letter, the final value or the decisive step; steer them there with explanation and one good question, and confirm only after they have said it.`;
 }
+/** The last thing the model reads. The reference blocks above (the IB pack with its own "before every reply" checklist, the solver notes) are long and
+ *  written as rules; left as the final word they turned replies into exam drills ("hi" was answered with "AA or AI, SL or HL?"). */
+const LAST_WORD = `\n\nLAST, AND ABOVE EVERY CHECKLIST ABOVE: answer THIS message the way a good human tutor beside them would. What did they just say, and how are they? Respond to that first (a hello, thanks, a joke, "I'm tired" get a human answer, not maths). Do not ask for their course or level before helping; ask in passing only when the answer would change what you teach. No marks, command terms or mark-scheme talk unless they are practising for marks or asked. If they ask for a quick practice question, give ONE short single-part question on exactly the idea you were just discussing (whatever the notes above say about exam-style parts; a bank question only if it is about that very idea). Say something you have not said yet, the size the moment needs, and stop when you have said it: a question at the end only when it helps them. When they are right, the word is "yep" or "right": never open with "Spot on", "Exactly" or "You nailed it".`;
+/** "Gave the result" needs a result in the reply: a value (in digits or spoken words), an equation or a named option. Without one the flag is the judge misreading a plain
+ *  explanation, and the rewrite turned "i don't get why that led to a war" into a question back instead of the explanation they asked for. */
+const NAMES_A_RESULT = /[\d=$]|\b(?:option|answer is|it(?:'s| is) [A-E]|zero|one|two|three|four|five|six|seven|eight|nine|ten|half|third|quarter|squared|cubed|root|minus|plus|times|over|equals?)\b/;
 type Msg = { role: "system" | "user" | "assistant"; content: string };
 
 /** Everything the model is told before the conversation: who Otto is, the student, the board as it stands, research, earlier context. */
@@ -135,6 +141,7 @@ function buildSystemPrompt(input: TutorTurnInput, checked: string | null, refere
     + earlierInSitting(history)
     + (checked ? `\n\nCHECKED BY CODE-LIKE RECOMPUTATION (trust this over your own quick reading of their message): ${checked}` : "")
     + (input.spoken && spokenRepair ? voiceInputBlock(message, input.spoken.alternatives, spokenRepair) : "")
+    + LAST_WORD
     + `\n\nReply in English unless the student writes in another language. Return ONLY the JSON object.`;
 }
 

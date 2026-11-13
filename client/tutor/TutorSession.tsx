@@ -15,6 +15,8 @@ import { useLang, LangContext } from "../ui.tsx";
 import { AskOttoPanel } from "../study/AskOttoPanel.tsx";
 import { autoMathLine } from "../../shared/mathText.ts";
 import { buildSessionRecap } from "../../shared/sessionRecap.ts";
+import { BOARD_ENABLED } from "../../shared/features.ts";
+import type { SessionReport } from "../../shared/sessionReport.ts";
 import { BoardArtifact, MathText } from "../study/artifacts/BoardArtifact.tsx";
 import { TutorDesmos } from "./TutorDesmos.tsx";
 import { enterFullscreen, exitFullscreen, inFullscreen } from "./fullscreen.ts";
@@ -218,7 +220,7 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
     }
   }, [task, goRoute]);
 
-  const saveAndClose = useCallback((task: WebTask, startedAt: string, reflection?: string) => {
+  const saveAndClose = useCallback((task: WebTask, startedAt: string, reflection?: string, report?: SessionReport | null) => {
     const chat = task.chat || [];
     const board = task.board || [];
     const userMsgCount = chat.filter((m) => m.role === "user").length;
@@ -243,6 +245,7 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
       objectivesCompleted: task.objectives?.length ? task.objectives.filter((o) => o.done).length : undefined,
       objectivesTotal: task.objectives?.length || undefined,
       ...(reflection?.trim() ? { reflection: reflection.trim().slice(0, 500) } : {}),
+      ...(report ? { report } : {}),
     };
     saveTutorSession(sessionSummary, userId);
     setPastSessions(getTutorSessions(userId));
@@ -588,7 +591,7 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
   const boardPassRef = useRef(100), lastFlagPassRef = useRef(0), boardBackoffRef = useRef(0);
   const penWroteRef = useRef(false); // Otto's pen wrote during the current exchange
   const queueBoard = useCallback((turns: { who: "you" | "otto"; text: string }[], early: boolean) => {
-    if (!turns.length) return;
+    if (!turns.length || !BOARD_ENABLED) return; // the board is off (shared/features.ts): nothing is written during a call
     const penWrote = penWroteRef.current;
     if (!early) penWroteRef.current = false;
     const inChat = early ? turnsRef.current.length : turns.length;
@@ -679,7 +682,7 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
   const lastChatAt = Date.parse(String((task?.chat || []).at(-1)?.at || ""));
   const live = useGeminiLive({
     subject: task?.sourceSubject,
-    onWriteBoard,
+    onWriteBoard: BOARD_ENABLED ? onWriteBoard : undefined, // no pen tool while the board is off
     quietResume: Number.isFinite(lastChatAt) && Date.now() - lastChatAt < 30 * 60_000,
     pastSessions: task ? sessionMemoryForPrompt(pastSessions, task.sourceSubject, Date.now(), openerLang) : undefined,
     resuming: (task?.chat?.length || 0) > 0,
@@ -893,6 +896,7 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
     return () => clearTimeout(t);
   }, [resultTick, sending, voiceState.speaking, task?.id]);
 
+  const reportOpenRef = useRef<string | null>(null);
   const endSession = useCallback(async (reflection?: string) => {
     if (!task || endingSession) return;
     setEndingSession(true);
@@ -905,7 +909,11 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
       const latest = taskRef.current || endedTaskRef.current || task;
       reportSitting(latest, sessionStart || latest.createdAt, "ended");
       if (statusRef_trainingShare()) void api.archiveTutor(latest.id, latest.sourceSubject, latest.chat || [], latest.board || []).catch(() => {});
-      try { saveAndClose(latest, sessionStart || latest.createdAt || new Date().toISOString(), reflection); } catch (e) { console.warn("[tutor] couldn't save the session summary:", e); }
+      // The report is written from the transcript (a few seconds); the session is saved without one if it is slow or fails: ending always ends.
+      let report: SessionReport | null = null;
+      try { report = (await Promise.race([api.liveReport(latest.sourceSubject, (latest.chat || []).map((m) => ({ role: m.role, text: String(m.text || "") }))), new Promise<{ report: null }>((r) => setTimeout(() => r({ report: null }), 20_000))])).report; } catch { /* no report */ }
+      if (report) reportOpenRef.current = latest.id;
+      try { saveAndClose(latest, sessionStart || latest.createdAt || new Date().toISOString(), reflection, report); } catch (e) { console.warn("[tutor] couldn't save the session summary:", e); }
     } finally {
       setTask(null);
       setSessionStart(null);
@@ -917,6 +925,8 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
       setEndingSession(false);
       // Closing the session on the server happens after the student is already gone (it marks the session ended on this device first).
       void dismissWithRetry(task.id).catch(() => { /* ghost-cleanup in peekForActiveSession covers it */ });
+      // The report is the end of the session: open it (same-page navigation, App's popstate listener picks the route up).
+      if (reportOpenRef.current) { const p = `/tutor/session/${reportOpenRef.current}/report`; reportOpenRef.current = null; try { window.history.pushState({}, "", p); window.dispatchEvent(new PopStateEvent("popstate")); } catch { /* the history list still has it */ } }
     }
   }, [task, sessionStart, endingSession, saveAndClose, reportSitting]);
 
@@ -1040,8 +1050,9 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
   // something to keep, so without `!task` the first message flipped the live page into this read-only board/chat viewer.
   const reviewSession = !task && sessionId && userId ? getTutorSessions(userId).find((s) => s.id === sessionId) : undefined;
   if (reviewSession) {
-    const view: "board" | "chat" = reviewView === "chat" ? "chat" : "board";
-    const hasBoard = !!reviewSession.board?.length;
+    const hasBoard = BOARD_ENABLED && !!reviewSession.board?.length;
+    const report = reviewSession.report;
+    const view: "board" | "chat" | "report" = reviewView === "chat" ? "chat" : reviewView === "board" && hasBoard ? "board" : reviewView === "report" || report ? (report ? "report" : "chat") : "chat";
     const hasChat = !!reviewSession.chat?.length;
     const base = `/tutor/session/${reviewSession.id}`;
     const dateStr = new Date(reviewSession.endTime).toLocaleDateString("en-US", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
@@ -1054,6 +1065,9 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
           <span className="tutor-review-meta">{dateStr} · {reviewSession.messageCount} {"messages"}</span>
         </div>
         <div className="tutor-review-tabs">
+          {report && (
+            <a className={`tutor-review-tab${view === "report" ? " on" : ""}`} href={`${base}/report`} aria-current={view === "report" ? "page" : undefined}>{"Report"}</a>
+          )}
           {hasBoard && (
             <a className={`tutor-review-tab${view === "board" ? " on" : ""}`} href={`${base}/board`} aria-current={view === "board" ? "page" : undefined}>
               {"See the board"}
@@ -1066,7 +1080,15 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
           )}
         </div>
         <div className="tutor-review-body">
-          {!hasBoard && !hasChat ? (
+          {view === "report" && report ? (
+            <div className="tutor-report">
+              <p className="tutor-report-summary">{report.summary}</p>
+              {([["Worked on", report.covered], ["Did well", report.didWell], ["Struggled with", report.struggled], ["Mix-ups to fix", report.misconceptions], ["Next", report.nextSteps]] as [string, string[]][]).filter(([, l]) => l.length).map(([h, l]) => (
+                <section key={h}><h3>{h}</h3><ul>{l.map((x, i) => <li key={i}>{x}</li>)}</ul></section>
+              ))}
+              {report.practice ? <section><h3>{"Try alone next time"}</h3><p>{report.practice}</p></section> : null}
+            </div>
+          ) : !hasBoard && !hasChat ? (
             <p className="tutor-review-empty">{"Nothing to review — this session has no saved board or chat."}</p>
           ) : view === "board" ? (
             hasBoard ? <BoardArtifact task={{ board: reviewSession.board } as unknown as WebTask} /> : <p className="tutor-review-empty">{"No board for this session."}</p>
@@ -1309,7 +1331,7 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
           </>
         );
       })()}
-      <section className="ts-canvas" aria-label={"Board"}>
+      {BOARD_ENABLED ? <section className="ts-canvas" aria-label={"Board"}>
         <div className="tutor-board-body ts-board-body" ref={setSurfaceEl} style={{ display: desmosOpen ? "none" : undefined }}>
           <BoardArtifact paper onChoice={onChoice} task={task} onUndo={undoCount > 0 ? undoBoard : undefined} writing={sending || boardPending > 0 || boardPromised} onProblemResult={onProblemResult} onCheckProblem={(p, given) => api.checkProblem(task.id, p, given)} onWidgetResult={onWidgetResult} sheetSignal={sheetSignal} onGapCheck={onGapCheck} />
         </div>
@@ -1329,7 +1351,7 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
           surface={surfaceEl}
           onDesmos={() => setDesmosOpen((o) => !o)}
         />
-      </section>
+      </section> : null}
       <div className="ts-dock" ref={dockRef}>
         {/* The dock IS the chat (the floating island) — this is just its expand/collapse control, not a
             separate "chat" entry point (report-live: it isn't a dedicated chat button, just an expand
@@ -1376,7 +1398,7 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
               <button type="button" className="btn ghost xs" onClick={() => setSafetyCard(null)}>{"Close"}</button>
             </div>
           ) : null}
-          <p className="live-disclaimer">{"Otto can be wrong, even when the board looks tidy. Check anything important against your course."}</p>
+          <p className="live-disclaimer">{"Otto can be wrong. Check anything important against your course."}</p>
       </div>
     </main>
   );

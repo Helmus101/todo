@@ -33,6 +33,8 @@ export interface TutorSessionSummary {
   // a session with no objectives set at all (not every session gets them), not a fabricated 0/0.
   objectivesCompleted?: number;
   objectivesTotal?: number;
+  /** The end-of-session report (shared/sessionReport.ts), written when the session ended; absent for older sessions or when the AI was unavailable. */
+  report?: import("../../shared/sessionReport.ts").SessionReport;
 }
 
 const BASE_KEY = "otto-tutor-sessions";
