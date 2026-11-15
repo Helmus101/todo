@@ -243,7 +243,7 @@ h1 { font-family: var(--display); font-weight: 400; letter-spacing: -0.025em; }
 @media (max-width: 520px) { .onboard-everything li { grid-template-columns: 1fr; gap: 2px; } }
 
 /* Landing: Pronote + "the hard parts answered". Bold editorial rules, same voice as the blog. */
-.landing-detail { margin-top: var(--space-8); padding-top: var(--space-5); border-top: 3px solid var(--ink); }
+.landing-detail { margin-top: var(--space-8); padding-top: var(--space-2); }
 .landing-detail h2 { font-family: var(--display); font-weight: 400; font-size: clamp(1.7rem, 4vw, 2.3rem); letter-spacing: -0.02em; line-height: 1.1; margin: 0 0 var(--space-3); }
 .landing-detail p { color: var(--ink-2); line-height: 1.65; max-width: 60ch; margin: 0 0 var(--space-3); }
 .landing-detail-list { margin: var(--space-4) 0 0; display: grid; gap: 0; }
