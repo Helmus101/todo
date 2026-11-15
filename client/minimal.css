@@ -369,3 +369,12 @@ button.topnav-link:hover { color: var(--ink); }
   .live-controls { flex-wrap: wrap; justify-content: center; max-width: calc(100vw - 24px); border-radius: var(--radius-xl); row-gap: var(--space-1); }
   .live-main-btn { min-width: 0; padding: 0 var(--space-4); }
 }
+
+/* Past-session cards: the subject is already on the date line and the heading label restates the card, so each card carries date, counts, title and summary once. */
+.tutor-history-summary-heading > span:first-child, .tutor-history-subject-pill { display: none; }
+.tutor-history-summary-heading { justify-content: flex-start; }
+.tutor-history-message-count { font-size: var(--text-sm); color: var(--ink-2); font-weight: var(--weight-regular); }
+.tutor-history-title { font-size: var(--text-lg); font-weight: var(--weight-semibold); }
+.tutor-history-actions { display: flex; align-items: center; gap: var(--space-2); }
+.tutor-history-actions { justify-content: flex-start; }
+.tutor-history-resume { background: var(--ink) !important; color: #fff !important; border-radius: var(--radius); min-height: 36px; padding: 0 var(--space-4); }
