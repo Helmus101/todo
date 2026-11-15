@@ -362,3 +362,10 @@ button.topnav-link:hover { color: var(--ink); }
 .deck-popup:has(.deck-card-3d) .deck-acts .btn { border: 1px solid var(--line) !important; min-height: 44px; padding: 0 var(--space-5); background: transparent !important; color: var(--ink) !important; }
 .deck-popup:has(.deck-card-3d):not(:has(.deck-card-3d.flipped)) .deck-acts > .btn:nth-child(2),
 .deck-popup:has(.deck-card-3d.flipped) .deck-acts .deck-btn-right { background: var(--ink) !important; color: #fff !important; border-color: var(--ink) !important; }
+
+/* Voice bar on a phone: five controls do not fit one row, so they wrap inside the screen instead of running off both edges. */
+.live-main-btn { white-space: nowrap; }
+@media (max-width: 640px) {
+  .live-controls { flex-wrap: wrap; justify-content: center; max-width: calc(100vw - 24px); border-radius: var(--radius-xl); row-gap: var(--space-1); }
+  .live-main-btn { min-width: 0; padding: 0 var(--space-4); }
+}
