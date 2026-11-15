@@ -38,7 +38,7 @@ button, .btn { border-radius: var(--radius); }
   background: #26221f !important; color: #fff !important; border: 1px solid #26221f !important; border-radius: var(--radius) !important;
 }
 .btn.ghost, .btn.xs, .sm-btn:not(.sm-btn-primary), .btn:not(.primary) { background: transparent !important; color: var(--ink) !important; border: 0 !important; text-decoration: none; padding-left: var(--space-3); padding-right: var(--space-3); border-radius: var(--radius) !important; }
-.btn.ghost:hover, .btn.xs:hover, .sm-btn:not(.sm-btn-primary):hover, .btn:not(.primary):hover { background: var(--accent-soft) !important; }
+@media (hover: hover) and (pointer: fine) { .btn.ghost:hover, .btn.xs:hover, .sm-btn:not(.sm-btn-primary):hover, .btn:not(.primary):hover { background: var(--accent-soft) !important; } }
 /* Text boxes and text areas: one look everywhere. Zero specificity (:where) and no !important, so a component
    class (.addinput, .field input, .chat-input) can still set its own size or colour. Dropdowns: see below. */
 :where(input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="file"]), textarea) {
@@ -122,7 +122,7 @@ hr { border: 0; border-top: 1px solid var(--line-soft); }
 
 /* ── Human touches (not decoration): clear check-offs, a handwritten board, markers in real colours, a face that smiles ── */
 .card-check, .step-mark { width: 24px !important; height: 24px !important; min-width: 24px; flex: none; border: 2px solid var(--ink) !important; border-radius: 50% !important; background: #fff !important; position: relative; padding: 0; cursor: pointer; }
-.card-check:hover, .step-mark:hover { background: #ececec !important; }
+@media (hover: hover) and (pointer: fine) { .card-check:hover, .step-mark:hover { background: #ececec !important; } }
 .card-check.checked, .step-mark.done, .step-mark.checked { background: var(--ink) !important; }
 .card-check.checked::before, .step-mark.done::before, .step-mark.checked::before { content: "✓"; position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; color: #fff; font-size: 15px; font-weight: 700; line-height: 1; }
 .card-check::after { display: none !important; }
@@ -136,7 +136,7 @@ hr { border: 0; border-top: 1px solid var(--line-soft); }
 
 /* warmth: rows respond to the pointer, panels breathe, the page isn't a grid of hard lines */
 .card { border-radius: var(--radius-xl); transition: background .15s; }
-.card:hover { background: var(--bg-2) !important; }
+@media (hover: hover) and (pointer: fine) { .card:hover { background: var(--bg-2) !important; } }
 .card { border-bottom-color: var(--line-soft) !important; }
 .settings-sec { border-bottom-color: var(--line-soft) !important; }
 .sm-ai-input-row, .ts-dock { border-radius: var(--radius-xl); }
@@ -217,7 +217,7 @@ hr { border: 0; border-top: 1px solid var(--line-soft); }
 @media (max-width: 640px) { .task-modal .task-focus { padding: var(--space-4) 0 var(--space-6); gap: var(--space-4); } }
 .tf-meta, .tf-meta .when { font-size: 14px !important; }
 .btn.primary.tf-ask-otto { background: var(--accent) !important; color: #fff !important; border-radius: var(--radius) !important; }
-.btn.primary.tf-ask-otto:hover { background: var(--accent-hover) !important; }
+@media (hover: hover) and (pointer: fine) { .btn.primary.tf-ask-otto:hover { background: var(--accent-hover) !important; } }
 .task-readonly { display: flex; flex-direction: column; gap: var(--space-3); padding-top: var(--space-4); }
 .task-readonly > * { margin-top: 0 !important; margin-bottom: 0 !important; }
 .task-readonly-meta { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-3); font-size: 14px; }
@@ -284,11 +284,11 @@ select option { color: var(--ink); background: var(--surface, #fff); }
    3. Calm: no layout-jumping scrollbars, smooth anchor scroll, no rubber-band chaining out of inner scrollers.
    4. prefers-contrast: stronger edges. (No translucency to solidify: the flat design has no glass.) */
 button:not(:disabled), .btn:not(:disabled), [role="button"], .card-main, .topnav-link, .seg-btn {
-  transition: background-color .15s var(--ease-out), color .15s var(--ease-out), transform .3s var(--ease-spring), opacity .15s var(--ease-out);
+  transition: background-color .15s ease, color .15s ease, transform 160ms var(--ease-out), opacity .15s ease;
 }
 button:not(:disabled):active, .btn:not(:disabled):active, [role="button"]:active, .card-main:active, .seg-btn:active {
   transform: scale(0.97);
-  transition-duration: .1s, .1s, .1s, .1s;   /* instant on press; the longer spring above carries the release */
+  transition-duration: .1s, .1s, .1s, .1s;   /* press is instant; release (160ms ease-out) stays snappy */
 }
 .card-check:active, .step-mark:active { transform: scale(0.9); }
 /* Pressed rows keep their size (a whole row shrinking reads as broken), they just dim. */
