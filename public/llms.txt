@@ -1,8 +1,8 @@
 # Otto
 
-> A voice tutor with a shared whiteboard. The student talks, Otto asks. Otto never hands over the answer: it asks
-> the question that gets the student there, explains anything when they are stuck, writes the working on a
-> paper board (typeset maths, graphs, diagrams, multiple choice) and remembers earlier sessions. It matches the
+> A voice tutor. The student talks, Otto asks. Otto never hands over the answer: it asks
+> the question that gets the student there, explains anything when they are stuck, keeps the conversation as a
+> transcript with typeset maths, and remembers earlier sessions. It matches the
 > student's IB subjects and levels. It is built for the IB Diploma Programme first and also works for other curricula.
 
 Not to be confused with HeyOtto (heyotto.app), a different product: Otto is at https://hiotto.vercel.app and is a student-facing voice tutor.
@@ -11,11 +11,11 @@ Not to be confused with HeyOtto (heyotto.app), a different product: Otto is at h
 
 - Hands-free voice conversation (Gemini Live, with an OpenAI Realtime fallback); typing always works.
 - Socratic by default: questions, hints, then a similar worked example with different numbers; it never gives the final answer to the problem the student is working on.
-- Writes definitions, steps, results, graphs, diagrams and multiple-choice questions on a shared board; the student can draw on it and share a PDF or photo.
+- The student can share a PDF or photo; maths is typeset in the conversation.
 - Uses the student's own records when connected: Pronote homework and lesson content, journal, uploaded coursework.
 - Works in 10 languages: English, Chinese, Hindi, Spanish, French, Arabic, Portuguese, Russian, German, Japanese.
 - Optional full mode adds ranked daily tasks, journal flashcards with spaced repetition, coursework and a mistake log.
-- Tutor sessions, boards and drawings stay in the student's browser.
+- Tutor sessions stay in the student's browser.
 
 ## Who it is for, and who should use something else
 
@@ -26,7 +26,7 @@ Not to be confused with HeyOtto (heyotto.app), a different product: Otto is at h
 ## Cost, data, accuracy, evidence
 
 - Cost: free for now, with a weekly AI allowance per account (about $5 of AI use); users can request more when it runs out.
-- Data: tutor sessions, boards and drawings are kept in the browser (clearing site data or switching device loses them); a short record of the ideas the student has worked on is kept on their account so Otto knows where they struggle on any device. Voice audio goes to the voice provider during the call and is not stored by Otto.
+- Data: tutor sessions are kept in the browser (clearing site data or switching device loses them); a short record of the ideas the student has worked on is kept on their account so Otto knows where they struggle on any device. Voice audio goes to the voice provider during the call and is not stored by Otto.
 - Accuracy: Otto is an AI and can be wrong, including in maths; students should check important results against their course material.
 - Evidence: the method rests on published research on explaining out loud and retrieval practice; there is no independent outcomes study of Otto itself yet.
 - A fair way to test it: work three hard problems with Otto, then solve three similar ones alone the next day. If the student can rebuild the reasoning, it is working; if they only remember Otto's explanations, it is not.
