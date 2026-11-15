@@ -1276,7 +1276,7 @@ input:focus, textarea:focus {
   background: var(--surface); color: var(--ink-2); font-size: var(--text-xs); font-weight: var(--weight-medium);
   cursor: pointer; 
   /* Apple Design §1 — instant feedback on interaction */
-  transition: all var(--duration-instant) var(--ease-spring);
+  transition: background-color var(--duration-instant) var(--ease-out), border-color var(--duration-instant) var(--ease-out), color var(--duration-instant) var(--ease-out), transform var(--duration-instant) var(--ease-out);
 }
 .tf-study-btn:hover { background: var(--accent-soft); color: var(--accent); border-color: var(--accent); }
 .tf-study-btn:active { transform: scale(0.97); }
@@ -1872,7 +1872,7 @@ label.set-row.disabled { cursor: default; opacity: 0.5; }
   border-radius: var(--radius-pill);
   cursor: pointer;
   /* Apple Design §1 — instant feedback on interaction */
-  transition: all var(--duration-instant) var(--ease-spring);
+  transition: background-color var(--duration-instant) var(--ease-out), border-color var(--duration-instant) var(--ease-out), color var(--duration-instant) var(--ease-out), transform var(--duration-instant) var(--ease-out);
 }
 .seg-btn:hover { color: var(--ink); }
 .seg-btn.on {
@@ -2100,7 +2100,7 @@ label.set-row.disabled { cursor: default; opacity: 0.5; }
   border-radius: var(--radius-pill);
   cursor: pointer;
   /* Apple Design §1 — instant feedback on interaction */
-  transition: all var(--duration-instant) var(--ease-spring);
+  transition: background-color var(--duration-instant) var(--ease-out), border-color var(--duration-instant) var(--ease-out), color var(--duration-instant) var(--ease-out), transform var(--duration-instant) var(--ease-out);
   backdrop-filter: blur(var(--blur-sm));
 }
 @media (hover: hover) {
@@ -2472,7 +2472,7 @@ label.set-row.disabled { cursor: default; opacity: 0.5; }
   align-items: center;
   justify-content: center;
   cursor: pointer;
-  transition: all var(--duration-fast) var(--ease);
+  transition: background-color var(--duration-fast) var(--ease), border-color var(--duration-fast) var(--ease), color var(--duration-fast) var(--ease), transform var(--duration-fast) var(--ease);
   z-index: 2;
 }
 

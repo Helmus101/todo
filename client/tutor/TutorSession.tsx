@@ -17,6 +17,7 @@ import { autoMathLine } from "../../shared/mathText.ts";
 import { buildSessionRecap } from "../../shared/sessionRecap.ts";
 import { BOARD_ENABLED } from "../../shared/features.ts";
 import type { SessionReport } from "../../shared/sessionReport.ts";
+import { emptyLearningMemory, learningContext, type LearningMemory } from "../../shared/learningNotes.ts";
 import { BoardArtifact, MathText } from "../study/artifacts/BoardArtifact.tsx";
 import { TutorDesmos } from "./TutorDesmos.tsx";
 import { enterFullscreen, exitFullscreen, inFullscreen } from "./fullscreen.ts";
@@ -250,6 +251,7 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
       objectivesTotal: task.objectives?.length || undefined,
       ...(reflection?.trim() ? { reflection: reflection.trim().slice(0, 500) } : {}),
       ...(report ? { report } : {}),
+      ...(notesRef.current.summary ? { memory: notesRef.current } : {}),
     };
     saveTutorSession(sessionSummary, userId);
     setPastSessions(getTutorSessions(userId));
@@ -656,7 +658,32 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
       } catch (e: any) { if (e?.status === 502 || e?.status === 503) boardBackoffRef.current = Date.now() + 45_000; setBoardNote(e?.status === 429 ? "Today's board limit is reached — the voice still works." : "The board couldn't be updated just now."); }
     }).finally(() => { setBoardPending((n) => Math.max(0, n - 1)); setBoardPromised(false); });
   }, [userId]);
-  const onLiveTurnComplete = useCallback(() => { queueBoard(turnsRef.current.splice(0), false); earlyRef.current = { len: 0, at: 0, turn: earlyRef.current.turn + 1 }; }, [queueBoard]);
+  // LEARNING NOTES: after each finished tutor turn a small call writes notes grounded in the student's own words; they are kept with the session and
+  // handed to the tutor as a silent private update. One call at a time (the latest transcript waits its turn), best effort, never blocks the call.
+  const notesRef = useRef<LearningMemory>(emptyLearningMemory());
+  const notesBusyRef = useRef<Promise<void> | null>(null);
+  const notesDirtyRef = useRef(false);
+  const updateNotes = useCallback((): Promise<void> => {
+    notesDirtyRef.current = true;
+    if (notesBusyRef.current) return notesBusyRef.current;
+    const run = (async () => {
+      while (notesDirtyRef.current) {
+        notesDirtyRef.current = false;
+        const chat = taskRef.current?.chat || [];
+        if (!chat.some((m) => m.role === "user")) break;
+        const transcript = chat.map((m) => `${m.role === "user" ? "Student" : "Tutor"}: ${String(m.text || "").replace(/\n/g, " ")}`).join("\n");
+        try {
+          const r = await api.liveNotes(transcript, JSON.stringify(notesRef.current));
+          if (!r?.memory) continue;
+          notesRef.current = r.memory;
+          if (liveRef.current.status === "live") liveRef.current.sendText(`[${sessionNoteTag}] (Observed learning notes, not a new student message. Use quietly for your next reply; do not speak now.\n${JSON.stringify(r.memory)})`, false);
+        } catch { /* the conversation is still saved; notes try again after the next turn */ }
+      }
+    })().finally(() => { notesBusyRef.current = null; });
+    notesBusyRef.current = run;
+    return run;
+  }, []);
+  const onLiveTurnComplete = useCallback(() => { void updateNotes(); queueBoard(turnsRef.current.splice(0), false); earlyRef.current = { len: 0, at: 0, turn: earlyRef.current.turn + 1 }; }, [queueBoard, updateNotes]);
   // While Otto talks: once enough whole sentences have been said since the last pass (and not more often than every 3.5 s), the board writer runs on them.
   const earlyRef = useRef({ len: 0, at: 0, turn: 0 });
   const earlyBoard = useCallback((you: string, otto: string) => {
@@ -707,6 +734,7 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
     onWriteBoard: BOARD_ENABLED ? onWriteBoard : undefined, // no pen tool while the board is off
     quietResume: Number.isFinite(lastChatAt) && Date.now() - lastChatAt < 30 * 60_000,
     pastSessions: task ? sessionMemoryForPrompt(pastSessions, task.sourceSubject, Date.now(), openerLang) : undefined,
+    learningHistory: pastSessions.filter((s) => s.memory?.summary && s.id !== task?.id).slice(0, 6).map((s) => `${s.subject || "Session"} (${relativeWhen(s.endTime, "en")}): ${learningContext(s.memory)}`).join("\n").slice(0, 6000),
     resuming: (task?.chat?.length || 0) > 0,
     resumeTail: (task?.chat || []).slice(-8).map((m) => `${m.role === "user" ? "Student" : "Otto"}: ${String(m.text || "")}`),
     onTurn: onLiveTurn,
@@ -931,6 +959,7 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
       const latest = taskRef.current || endedTaskRef.current || task;
       reportSitting(latest, sessionStart || latest.createdAt, "ended");
       if (statusRef_trainingShare()) void api.archiveTutor(latest.id, latest.sourceSubject, latest.chat || [], latest.board || []).catch(() => {});
+      try { await Promise.race([updateNotes(), new Promise((r) => setTimeout(r, 8000))]); } catch { /* best effort */ }
       // The report is written from the transcript (a few seconds); the session is saved without one if it is slow or fails: ending always ends.
       let report: SessionReport | null = null;
       try { report = (await Promise.race([api.liveReport(latest.sourceSubject, (latest.chat || []).map((m) => ({ role: m.role, text: String(m.text || "") }))), new Promise<{ report: null }>((r) => setTimeout(() => r({ report: null }), 20_000))])).report; } catch { /* no report */ }
@@ -969,6 +998,7 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
       context: "", steps: [], links: [], flashcards: [], quizzes: [], artifacts: [],
     } as unknown as WebTask);
     setSessionStart(now);
+    notesRef.current = s.memory || emptyLearningMemory();
     setDesmosOpen(false);
     desmosEverOpenedRef.current = false;
   }, [userId]);
@@ -986,6 +1016,7 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
     if (startingSession) return;
     const startSubject = chosenSubject || ANY_SUBJECT; // no subject is asked for: the tutor works it out from what they say (detectSubject)
     subjectKnownRef.current = false;
+    notesRef.current = emptyLearningMemory();
     if (talk) setTalkRequest((n) => n + 1); // "Start talking" is the student's own tap: voice mode turns on once the panel mounts
     enterFullscreen(); // tutor mode is full screen (this click is the user gesture the browser requires)
     setError(null);

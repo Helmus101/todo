@@ -276,3 +276,38 @@ select option { color: var(--ink); background: var(--surface, #fff); }
 /* Settings: rows are a label and a control; the long explanations stay out of the way. */
 .set-row .settings-hint { display: none; }
 .set-row .seg { display: inline-flex; gap: 6px; }
+
+/* ── Apple pass (loaded last). Response, typography, spatial calm, accessibility. ──────────────────────────────
+   1. Response: every control reacts on press-DOWN (not on release), instantly; release springs back a touch slower.
+   2. Type: tracking is size-specific — tight on display sizes, neutral on body (the global reset above forced
+      `normal` everywhere, which is wrong at both ends). Balanced headings, no orphans in paragraphs.
+   3. Calm: no layout-jumping scrollbars, smooth anchor scroll, no rubber-band chaining out of inner scrollers.
+   4. prefers-contrast: stronger edges. (No translucency to solidify: the flat design has no glass.) */
+button:not(:disabled), .btn:not(:disabled), [role="button"], .card-main, .topnav-link, .seg-btn {
+  transition: background-color .15s var(--ease-out), color .15s var(--ease-out), transform .3s var(--ease-spring), opacity .15s var(--ease-out);
+}
+button:not(:disabled):active, .btn:not(:disabled):active, [role="button"]:active, .card-main:active, .seg-btn:active {
+  transform: scale(0.97);
+  transition-duration: .1s, .1s, .1s, .1s;   /* instant on press; the longer spring above carries the release */
+}
+.card-check:active, .step-mark:active { transform: scale(0.9); }
+/* Pressed rows keep their size (a whole row shrinking reads as broken), they just dim. */
+.card:active { background: var(--bg-3) !important; }
+
+h1, h2, h3, h4, .list-head { letter-spacing: -0.022em !important; text-wrap: balance; }
+h1, .list-head { letter-spacing: -0.03em !important; line-height: 1.15 !important; }
+h2 { line-height: 1.25 !important; }
+p, li, .settings-hint { text-wrap: pretty; }
+small, .text-xs, [class*="hint"], [class*="caption"] { letter-spacing: 0.005em !important; }
+html { scrollbar-gutter: stable; scroll-behavior: smooth; }
+.tutor-transcript, .ts-transcript, .sm-board-body, .sm-drawer, .task-modal { overscroll-behavior: contain; }
+:where(h1, h2, h3, h4, p, li, label, button) { -webkit-font-smoothing: antialiased; text-rendering: optimizeLegibility; }
+
+@media (prefers-reduced-motion: reduce) {
+  html { scroll-behavior: auto; }
+  .card-check:active, .step-mark:active { transform: none; }
+}
+@media (prefers-contrast: more) {
+  :root { --line: #8a847c; --line-soft: #b9b3ab; --ink-2: #26221f; --ink-3: #4a453f; }
+  .btn:not(.primary), button:not(.primary) { outline: 1px solid var(--ink); outline-offset: -1px; }
+}

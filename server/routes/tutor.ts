@@ -19,12 +19,13 @@ import { validNoteTag } from "../../shared/noteTag.ts";
 import { liveInstructions } from "../../shared/liveTutor.ts";
 import { isLangCode, languageName } from "../../shared/languages.ts";
 import { createTutorChat, usageOf, synthesizeStudentModel } from "../claude.ts";
-import { sanitizeForPrompt } from "../../shared/promptSafe.ts";
+import { sanitizeForPrompt, neutralizeBlock } from "../../shared/promptSafe.ts";
 import { shouldRefreshStudentModel } from "../jobs.ts";
 import { cleanSessionNote, addSessionNote, recordSession, noteItems, bumpCause } from "../../shared/tutorMemory.ts";
 import { classifySafety } from "../../shared/safety.ts";
 import { BOARD_ENABLED } from "../../shared/features.ts";
 import { ibSubjectKnowledge } from "../../shared/ibSubjects.ts";
+import { NOTES_SYSTEM, groundedLearningMemory } from "../../shared/learningNotes.ts";
 import { REPORT_SYSTEM, parseSessionReport } from "../../shared/sessionReport.ts";
 import { extractJsonObject } from "../../shared/tutorTurn.ts";
 
@@ -144,6 +145,9 @@ export function registerTutorRoutes(app: express.Express): void {
           }
         } catch { /* the stored record below is enough */ }
         background = backgroundBlock({ profile, subject, journal: journal.entries, journalMeta: { total: journal.total, subjects: journal.subjects }, schoolRecord: schoolRecordLine(req.session.tasks, profile, subject, live), memory, skipIb: true } as any);
+        // The notes of the last sessions (grounded in the student's own words, kept on their device and sent by the browser), used quietly.
+        const history = typeof req.body?.learningHistory === "string" ? neutralizeBlock(req.body.learningHistory, 6000) : "";
+        if (history.trim()) background += `\n\nPRIVATE LEARNING HISTORY from earlier sessions (use quietly; evidence about specific work, never labels about the student; do not assume an old topic is today's task; do not recite it):\n${history}`;
       } catch { /* memory is a bonus: the voice works without it */ }
       // Their level, from Settings: the year or grade, plus the programme (IB / AP / Bac), so every question is pitched at it.
       const trackName = ({ ib: "IB", ap: "AP", bac: "French Bac", other: "" } as Record<string, string>)[String(profile.track || "")] || "";
@@ -233,6 +237,26 @@ export function registerTutorRoutes(app: express.Express): void {
     addUsage(profile, tokens, "chat");
     await commit(req);
     res.json({ note: spokenCheckNote(flags), flags: flags.map((f) => f.kind) });
+  }));
+
+  // LEARNING NOTES after a tutor turn (shared/learningNotes.ts): every observation must quote the student; code drops any that do not. Best effort.
+  app.post("/api/tutor/live/notes", requireAuth, rateLimit(30, 60_000), dailyCap("live-notes", Number(process.env.TUTOR_DAILY_LIVE_NOTES) || 600), ah(async (req, res) => {
+    if (isTutorBlocked(req) || overWeeklyCap(req) || !aiReady()) { res.json({ memory: null }); return; }
+    const transcript = typeof req.body?.transcript === "string" ? req.body.transcript.slice(-16000) : "";
+    const prior = typeof req.body?.memory === "string" ? req.body.memory.slice(0, 6000) : "";
+    if (!/^Student:/m.test(transcript)) { res.json({ memory: null }); return; }
+    const tokens = { in: 0, out: 0, cachedIn: 0 };
+    let memory = null;
+    try {
+      const r: any = await createTutorChat({ max_tokens: 1800, temperature: 0.2, response_format: { type: "json_object" }, messages: [{ role: "system", content: NOTES_SYSTEM }, { role: "user", content: `PRIOR NOTES:\n${prior || "(none)"}\nCONVERSATION:\n${transcript}` }] }, true);
+      const u = usageOf(r); tokens.in += u.in; tokens.out += u.out; tokens.cachedIn += u.cachedIn;
+      const studentText = transcript.split("\n").filter((l) => l.startsWith("Student:")).map((l) => l.slice(8)).join("\n");
+      memory = groundedLearningMemory(extractJsonObject(String(r?.choices?.[0]?.message?.content || "")), studentText);
+    } catch { /* no notes this turn */ }
+    const profile = req.session.profile || emptyProfile();
+    addUsage(profile, tokens, "chat");
+    await commit(req);
+    res.json({ memory });
   }));
 
   // WHAT SUBJECT IS THIS? A session starts with no subject; from what the student has said so far one small call names it (preferring one of their own

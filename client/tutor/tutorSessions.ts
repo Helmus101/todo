@@ -35,6 +35,8 @@ export interface TutorSessionSummary {
   objectivesTotal?: number;
   /** The end-of-session report (shared/sessionReport.ts), written when the session ended; absent for older sessions or when the AI was unavailable. */
   report?: import("../../shared/sessionReport.ts").SessionReport;
+  /** Learning notes about this session, each grounded in the student's own words (shared/learningNotes.ts); the next sessions open with them. */
+  memory?: import("../../shared/learningNotes.ts").LearningMemory;
 }
 
 const BASE_KEY = "otto-tutor-sessions";
