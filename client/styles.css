@@ -5093,10 +5093,10 @@ html[data-i18n="loading"] body { opacity: 0; }
 .tutor-subject-picker { gap: 10px !important; width: min(100%, 420px); }
 .tutor-subject-input { width: 100%; font: inherit; font-size: 1.1rem; text-align: center; padding: 12px 4px; border: 0 !important; border-bottom: 1px solid var(--ink-3) !important; border-radius: 0 !important; background: transparent !important; color: var(--ink); outline: none; }
 .tutor-subject-input:focus { border-bottom-color: var(--ink) !important; }
-.tutor-subject-suggest { display: flex; flex-wrap: wrap; justify-content: center; gap: 4px 16px; }
-.tutor-subject-suggest button { font: inherit; font-size: .9rem; padding: 2px 0; border: 0; background: none !important; color: var(--ink-3) !important; cursor: pointer; text-decoration: none; }
-@media (hover: hover) and (pointer: fine) { .tutor-subject-suggest button:hover { color: var(--ink) !important; text-decoration: underline; text-underline-offset: 3px; } }
-.tutor-subject-suggest button.on { color: var(--ink) !important; font-weight: 700; }
+.tutor-subject-suggest { display: flex; flex-wrap: wrap; justify-content: center; gap: var(--space-2); }
+.tutor-subject-suggest button { font: inherit; font-size: var(--text-sm); min-height: 36px; padding: 0 var(--space-4); border: 1px solid var(--line); border-radius: var(--radius-pill); background: none !important; color: var(--ink-2) !important; cursor: pointer; text-decoration: none; transition: border-color var(--duration-fast) var(--ease-out), background-color var(--duration-fast) var(--ease-out), color var(--duration-fast) var(--ease-out); }
+@media (hover: hover) and (pointer: fine) { .tutor-subject-suggest button:hover { border-color: var(--ink-3); color: var(--ink) !important; } }
+.tutor-subject-suggest button.on { background: var(--ink) !important; color: #fff !important; border-color: var(--ink); font-weight: var(--weight-medium); }
 
 .landing-ask-logo { flex: none; }
 /* Journal, minimal: plain text days, one writing area, summaries folded away. */

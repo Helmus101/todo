@@ -325,3 +325,7 @@ html { scrollbar-gutter: stable; scroll-behavior: smooth; }
 .tutor-chip, .onboard-chips .btn { border: 1px solid var(--line) !important; border-radius: var(--radius-pill) !important; background: transparent !important; color: var(--ink) !important; padding: var(--space-2) var(--space-4) !important; min-height: 36px; }
 @media (hover: hover) and (pointer: fine) { .tutor-chip:hover, .onboard-chips .btn:hover { border-color: var(--ink-3) !important; } }
 .tutor-chip.on, .onboard-chips .btn[aria-pressed="true"] { background: var(--ink) !important; color: #fff !important; border-color: var(--ink) !important; }
+
+/* Nav buttons (Sign out) carry only the underline, never the browser's default button border. */
+button.topnav-link { border-width: 0 0 1px; border-style: solid; border-color: transparent; background: none; font: inherit; font-size: 14px; font-weight: 500; }
+button.topnav-link:hover { color: var(--ink); }
