@@ -1,7 +1,7 @@
 {
   "name": "Otto — the voice tutor",
   "short_name": "Otto",
-  "description": "A voice tutor with a shared whiteboard. It asks instead of telling.",
+  "description": "A voice tutor for the IB Diploma. It asks instead of telling.",
   "lang": "en",
   "start_url": "/",
   "display": "standalone",

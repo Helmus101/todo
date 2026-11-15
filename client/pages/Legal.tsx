@@ -9,7 +9,7 @@ export function PrivacyBody() {
   return (
     <>
       <h1>{"Privacy Policy"}</h1>
-      <p>{`Otto ("we", "us") is a voice tutor with a shared whiteboard: you talk through a problem, Otto asks questions, explains when you need it, and writes the working on paper as you go. This policy explains what we access, why, and your choices. Otto is operated by ${LEGAL_ENTITY}.`}</p>
+      <p>{`Otto ("we", "us") is a voice tutor with a shared page: you talk through a problem, Otto asks questions, explains when you need it, and writes the working on paper as you go. This policy explains what we access, why, and your choices. Otto is operated by ${LEGAL_ENTITY}.`}</p>
 
       <h2>{"Who is responsible for your data"}</h2>
       <p>{`The controller is ${LEGAL_ENTITY}, based in ${LEGAL_JURISDICTION}. For anything about your data, write to ${LEGAL_EMAIL}. We are a small team and do not have a data protection officer; that address reaches the person responsible.`}</p>
@@ -24,13 +24,13 @@ export function PrivacyBody() {
       <h2>{"What happens when you talk to Otto"}</h2>
       <ul>
         <li><b>{"Your voice."}</b> {"The microphone is only used after you tap to start a call. During the call your browser streams your audio directly to the live-voice provider (Google Gemini Live, or OpenAI Realtime as a fallback) with a short-lived credential our server creates for you. Our servers do not receive or store your audio."}</li>
-        <li><b>{"Transcripts."}</b> {"The provider returns a transcript of what you and Otto said. We send short pieces of that conversation, and the lines already on your board, to an AI model (DeepSeek or Google) so it can write the board for you and answer anything you type."}</li>
-        <li><b>{"Your drawings."}</b> {"If you draw on the board, a picture of it is sent to the voice provider so Otto can see it, and, when you ask Otto to look, to Google's image-reading service."}</li>
+        <li><b>{"Transcripts."}</b> {"The provider returns a transcript of what you and Otto said. We send short pieces of that conversation, and the lines already on your page, to an AI model (DeepSeek or Google) so it can write the page for you and answer anything you type."}</li>
+        <li><b>{"Your drawings."}</b> {"If you draw on the page, a picture of it is sent to the voice provider so Otto can see it, and, when you ask Otto to look, to Google's image-reading service."}</li>
         <li><b>{"Memory."}</b> {"To start where you left off, short notes from your earlier sessions, and (for accounts that use the rest of the app) your tasks, journal and coursework, are included in what Otto is told about you. Nothing is added that you did not provide."}</li>
       </ul>
 
       <h2>{"What stays on your device"}</h2>
-      <p>{"Your tutoring sessions — the conversation, the board, your drawings and the session summaries — are saved only in this browser (local storage). They are not copied to our servers, unless you switch on Help improve Otto in Settings (off by default, and not available to under-16 accounts): then the transcript and board of each finished session are kept under a coded ID instead of your email, for at most 90 days, and are deleted when you switch it off or delete your account. Otherwise they do not follow you to another device. Clearing this site's data, or using private browsing, erases them. You can delete any past session from the sessions list at any time."}</p>
+      <p>{"Your tutoring sessions — the conversation, the page, your drawings and the session summaries — are saved only in this browser (local storage). They are not copied to our servers, unless you switch on Help improve Otto in Settings (off by default, and not available to under-16 accounts): then the transcript and page of each finished session are kept under a coded ID instead of your email, for at most 90 days, and are deleted when you switch it off or delete your account. Otherwise they do not follow you to another device. Clearing this site's data, or using private browsing, erases them. You can delete any past session from the sessions list at any time."}</p>
 
       <h2>{"What we store on our servers"}</h2>
       <ul>
@@ -56,9 +56,9 @@ export function PrivacyBody() {
       <h2>{"Service providers"}</h2>
       <p>{"Otto shares data with the processors needed to run the service. What you send them is handled under their own terms:"}</p>
       <ul>
-        <li><b>Google</b> — {"Gemini Live (voice), the model that answers the tutor's typed messages and writes the board (first choice), image reading, and, if you connect them, the Google apps above."}</li>
+        <li><b>Google</b> — {"Gemini Live (voice), the model that answers the tutor's typed messages and writes the page (first choice), image reading, and, if you connect them, the Google apps above."}</li>
         <li><b>OpenAI</b> — {"Realtime voice, used as a fallback when the first voice service is unavailable."}</li>
-        <li><b>DeepSeek</b> — {"the AI model that prepares tasks and homework help and translates the interface, and the fallback that answers typed tutor messages and writes the board when Google is unavailable. DeepSeek processes data outside the EU."}</li>
+        <li><b>DeepSeek</b> — {"the AI model that prepares tasks and homework help and translates the interface, and the fallback that answers typed tutor messages and writes the page when Google is unavailable. DeepSeek processes data outside the EU."}</li>
         <li><b>Supabase</b> — {"stores your account and profile."}</li>
         <li><b>Composio</b> — {"brokers the connections to the optional integrations."}</li>
         <li><b>Vercel</b> — {"hosts the app and measures anonymous page views (no advertising, no cross-site tracking)."}</li>
@@ -68,7 +68,7 @@ export function PrivacyBody() {
       </ul>
 
       <h2>{"Cookies and similar storage"}</h2>
-      <p>{"Otto sets one session cookie (to keep you logged in) and a security token that protects your requests. Both are strictly necessary, so there is no cookie banner. Your browser's local storage keeps your tutor sessions, boards and preferences on your device. We do not use advertising or tracking cookies, and we do not load fonts or scripts from advertising networks; the fonts are served from Otto's own address."}</p>
+      <p>{"Otto sets one session cookie (to keep you logged in) and a security token that protects your requests. Both are strictly necessary, so there is no cookie banner. Your browser's local storage keeps your tutor sessions, pages and preferences on your device. We do not use advertising or tracking cookies, and we do not load fonts or scripts from advertising networks; the fonts are served from Otto's own address."}</p>
 
       <h2>{"Feedback you choose to send"}</h2>
       <p>{"In Settings you can tell us whether Otto helped. That is private by default. Separately, you can tick a box to let us quote your words on the website under a first name or initial that you type; we review each quote before it appears and never show your email. You can see everything you sent in Settings and withdraw any of it at any time, which removes it from the website. Deleting your account removes it too."}</p>
@@ -92,7 +92,7 @@ export function PrivacyBody() {
       <p>{"If a security incident puts your data at risk, we will tell the CNIL within 72 hours where the law requires it, and tell you without undue delay if the risk to you is high."}</p>
 
       <h2>{"International transfers"}</h2>
-      <p>{`Your data is processed by providers based outside ${LEGAL_JURISDICTION}: Google, OpenAI, Supabase, Vercel, Sentry, Composio and Exa mainly in the US, and DeepSeek in China. For the US providers we rely on their standard data processing terms and the EU-US Data Privacy Framework or standard contractual clauses where they apply. We want to be straightforward about DeepSeek: it writes the board and answers typed messages, so it receives the text of what you type to Otto and the tasks it works on. We do not currently have a bespoke data processing agreement or an EU-hosted option with DeepSeek, so please do not type sensitive information (health, religion, family details, passwords) into Otto. We will update this page if that changes.`}</p>
+      <p>{`Your data is processed by providers based outside ${LEGAL_JURISDICTION}: Google, OpenAI, Supabase, Vercel, Sentry, Composio and Exa mainly in the US, and DeepSeek in China. For the US providers we rely on their standard data processing terms and the EU-US Data Privacy Framework or standard contractual clauses where they apply. We want to be straightforward about DeepSeek: it writes the page and answers typed messages, so it receives the text of what you type to Otto and the tasks it works on. We do not currently have a bespoke data processing agreement or an EU-hosted option with DeepSeek, so please do not type sensitive information (health, religion, family details, passwords) into Otto. We will update this page if that changes.`}</p>
 
       <h2>{"Age"}</h2>
       <p>{`Otto is built with students in mind, but opening an account requires being old enough to consent to data processing on your own (15 in ${LEGAL_JURISDICTION}); younger than that, a parent or guardian should set it up and stay involved. Because Otto uses your voice, please make sure anyone using it has agreed to the microphone being used.`}</p>
@@ -111,7 +111,7 @@ export function TermsBody() {
       <p>{`By using Otto, operated by ${LEGAL_ENTITY}, you agree to these terms.`}</p>
 
       <h2>{"The service"}</h2>
-      <p>{"Otto is a voice tutor with a shared whiteboard. It asks questions, explains ideas, and writes working and diagrams on the board while you talk. It is a learning aid: it is built to guide you to answers, not to do your graded work for you. Some accounts also have access to a wider set of tools (tasks, journal, coursework, optional app connections); for those, anything irreversible is only done with your confirmation, and you are responsible for reviewing anything Otto prepares before you act on it."}</p>
+      <p>{"Otto is a voice tutor with a shared page. It asks questions, explains ideas, and writes working and diagrams on the page while you talk. It is a learning aid: it is built to guide you to answers, not to do your graded work for you. Some accounts also have access to a wider set of tools (tasks, journal, coursework, optional app connections); for those, anything irreversible is only done with your confirmation, and you are responsible for reviewing anything Otto prepares before you act on it."}</p>
 
       <h2>{"Your responsibilities"}</h2>
       <ul>
@@ -123,7 +123,7 @@ export function TermsBody() {
       </ul>
 
       <h2>{"AI-generated content — check it"}</h2>
-      <p>{"Otto uses AI, which can be inaccurate, incomplete, or wrong — including in maths and science. Explanations, board lines, diagrams and spoken answers are a starting point that "}<b>{"you must check"}</b>{" against your course material, your teacher, or a reliable source before relying on them, especially for exams and graded work. If something doesn't add up, say so and Otto will go back over it with you."}</p>
+      <p>{"Otto uses AI, which can be inaccurate, incomplete, or wrong — including in maths and science. Explanations, page lines, diagrams and spoken answers are a starting point that "}<b>{"you must check"}</b>{" against your course material, your teacher, or a reliable source before relying on them, especially for exams and graded work. If something doesn't add up, say so and Otto will go back over it with you."}</p>
 
       <h2>{"No warranty"}</h2>
       <p>{"The service is provided \"as is\" and \"as available\", without warranties of any kind, whether express, implied, or statutory — including any implied warranties of merchantability, fitness for a particular purpose, accuracy, or non-infringement. We do not warrant that Otto will be uninterrupted, error-free, secure, or that the voice will always be available."}</p>
@@ -151,7 +151,7 @@ export function ResearchPageBody() {
   return (
     <div className="landing research-page">
       <header className="landing-nav-framer">
-        <a className="brand-framer" href="/"><Logo size={20} /> <span className="brand-name-framer">otto</span></a>
+        <a className="brand-lockup" href="/"><Logo size={20} /><span>otto</span></a>
         <nav className="landing-navlinks-framer">
           <a className="btn ghost-framer" href="/">{"Home"}</a>
         </nav>
@@ -203,9 +203,9 @@ export function ResearchPageBody() {
 
         <section className="research-sec">
           <p className="research-sec-kicker" aria-hidden>04</p>
-          <h2 className="research-sec-title">{"A shared board and a memory"}</h2>
+          <h2 className="research-sec-title">{"A shared page and a memory"}</h2>
         <p className="research-sec-body">
-          {"Otto writes the problem, your correct steps and the pictures on a shared whiteboard, so the working stays in front of you while you talk. It remembers your past sessions, tasks and workbooks, so each session starts where you left off."}
+          {"Otto writes the problem, your correct steps and the pictures on a shared page, so the working stays in front of you while you talk. It remembers your past sessions, tasks and workbooks, so each session starts where you left off."}
         </p>
         </section>
 

@@ -5,7 +5,7 @@
 .cw-num { width: 20px; height: 20px; border-radius: 50%; display: grid; place-items: center; background: var(--ink); color: var(--bg); font-size: 11px; letter-spacing: 0; }
 .cw-chips { display: flex; flex-wrap: wrap; gap: var(--space-2); }
 .cw-chip { font: inherit; font-size: var(--text-sm); padding: var(--space-2) var(--space-4); border-radius: var(--radius-pill); border: 1px solid var(--line); background: var(--bg); color: var(--ink); cursor: pointer; transition: border-color .12s, background .12s; }
-.cw-chip:hover { border-color: var(--ink-3); }
+@media (hover: hover) and (pointer: fine) { .cw-chip:hover { border-color: var(--ink-3); } }
 .cw-chip.on { background: var(--ink); color: var(--bg); border-color: var(--ink); }
 .cw-chip:focus-visible, .cw-del:focus-visible, .cw-ask:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
 .cw-custom { padding: var(--space-3) var(--space-3); border: 1px solid var(--line); border-radius: var(--radius); background: var(--bg); font: inherit; max-width: 320px; }
@@ -31,7 +31,7 @@
 .cw-doc[open] summary::before { transform: rotate(90deg); }
 .cw-doc h4 { margin: 0; font-size: var(--text-md); font-weight: 600; flex: 1; min-width: 0; }
 .cw-del { border: 0; background: transparent; color: var(--ink-3); cursor: pointer; font-size: 14px; padding: 2px var(--space-2); border-radius: var(--radius-xs); }
-.cw-del:hover { color: var(--vermilion); background: var(--bg-2); }
+@media (hover: hover) and (pointer: fine) { .cw-del:hover { color: var(--vermilion); background: var(--bg-2); } }
 .cw-doc summary .cw-meta { margin: 0; font-size: 12px; color: var(--ink-3); font-family: var(--mono); flex: none; white-space: nowrap; }
 .cw-summary { margin: var(--space-3) 0 var(--space-2); color: var(--ink); line-height: 1.55; font-size: var(--text-base); }
 .cw-points { margin: 0 0 var(--space-2); padding-left: var(--space-4); color: var(--ink-2); font-size: var(--text-sm); }
@@ -44,6 +44,6 @@
 .cw-read[open] summary::before { content: "▾ "; }
 .cw-excerpt { margin: var(--space-2) 0 0; padding: var(--space-3) var(--space-3); background: var(--bg-2); border-radius: var(--radius-md); color: var(--ink-2); font-size: 13px; line-height: 1.6; white-space: pre-wrap; max-height: 260px; overflow: auto; }
 .cw-ask { font-size: var(--text-sm); color: var(--ink); text-decoration: underline; text-decoration-color: var(--line); text-underline-offset: 3px; }
-.cw-ask:hover { text-decoration-color: var(--ink); }
+@media (hover: hover) and (pointer: fine) { .cw-ask:hover { text-decoration-color: var(--ink); } }
 .cw-empty, .cw-muted { color: var(--ink-2); }
 @media (max-width: 640px) { .cw-upload { padding: var(--space-4); } }

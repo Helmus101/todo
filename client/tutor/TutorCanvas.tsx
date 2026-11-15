@@ -357,8 +357,8 @@ export const TutorCanvas = forwardRef<TutorCanvasHandle, { visionReady: boolean;
             board, a long scrolled lesson or Desmos is showing (drawing tools just dim while Desmos is up). */}
         {!toolsOpen ? (
           <div className="tc-toolbar tc-toolbar-folded" style={{ pointerEvents: "auto" }}>
-            <button type="button" className="tc-btn tc-draw-open" onClick={() => { setToolsOpen(true); setTool("pen"); }} aria-label={"Draw on the board"} title={"Draw"}><Pencil size={16} /><span>{"Draw"}</span></button>
-            <button type="button" className={`tc-btn tc-fn${hidden ? " on" : ""}`} onClick={onDesmos} title={hidden ? "Back to the board" : "Desmos"} aria-label="Desmos" aria-pressed={hidden}>ƒ</button>
+            <button type="button" className="tc-btn tc-draw-open" onClick={() => { setToolsOpen(true); setTool("pen"); }} aria-label={"Draw on the page"} title={"Draw"}><Pencil size={16} /><span>{"Draw"}</span></button>
+            <button type="button" className={`tc-btn tc-fn${hidden ? " on" : ""}`} onClick={onDesmos} title={hidden ? "Back to the page" : "Desmos"} aria-label="Desmos" aria-pressed={hidden}>ƒ</button>
           </div>
         ) : (
         <div className={`tc-toolbar${hidden ? " dim" : ""}`} role="toolbar" aria-label={"Whiteboard tools"} style={{ pointerEvents: "auto" }}>
@@ -366,7 +366,7 @@ export const TutorCanvas = forwardRef<TutorCanvasHandle, { visionReady: boolean;
           {btn("highlighter", <Highlighter size={18} />, "Highlighter", "tc-highlighter")}
           {btn("eraser", <Eraser size={18} />, "Eraser")}
           {btn("text", <Type size={18} />, "Text")}
-          {btn("pan", <Hand size={18} />, "Scroll the board")}
+          {btn("pan", <Hand size={18} />, "Scroll the page")}
           <span className="tc-sep" aria-hidden />
           {COLORS.map((c) => (
             <button key={c} type="button" className={`tc-swatch${color === c && tool !== "eraser" ? " on" : ""}`} style={{ background: c }} onClick={() => { setColor(c); if (tool === "eraser" || tool === "pan") setTool("pen"); }} aria-label={c} />
@@ -376,7 +376,7 @@ export const TutorCanvas = forwardRef<TutorCanvasHandle, { visionReady: boolean;
           <button type="button" className="tc-btn" onClick={redoFn} disabled={!redo.current.length} title={"Redo"} aria-label={"Redo"}><Redo2 size={18} /></button>
           <button type="button" className="tc-btn" onClick={clear} disabled={!items.current.length} title={"Clear all"} aria-label={"Clear all"}><Trash2 size={18} /></button>
           <span className="tc-sep" aria-hidden />
-          <button type="button" className={`tc-btn tc-fn${hidden ? " on" : ""}`} onClick={onDesmos} title={hidden ? "Back to the board" : "Desmos"} aria-label="Desmos" aria-pressed={hidden}>ƒ</button>
+          <button type="button" className={`tc-btn tc-fn${hidden ? " on" : ""}`} onClick={onDesmos} title={hidden ? "Back to the page" : "Desmos"} aria-label="Desmos" aria-pressed={hidden}>ƒ</button>
           <span className="tc-sep" aria-hidden />
           <button type="button" className="tc-btn" onClick={() => { if (typing) commitText(); setTool("pan"); setToolsOpen(false); }} title={"Close the tools"} aria-label={"Close the tools"}>✕</button>
         </div>

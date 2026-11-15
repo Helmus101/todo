@@ -829,7 +829,7 @@ export function BoardArtifact({ task, onUndo, writing, onProblemResult, onWidget
   const hint = (
     <FirstTimeHint
       id="board"
-      title={"Otto's board"}
+      title={"Otto's page"}
       body={"Otto builds a session document here, entry by entry: today's focus, key definitions and formulas, your own insights, a summary of your reasoning — and problems to solve. Always accessible, no need to reopen it each time."}
     />
   );
@@ -1011,7 +1011,7 @@ export function BoardArtifact({ task, onUndo, writing, onProblemResult, onWidget
         </span>
         {task.sourceSubject ? <span className="sm-board-header-subject" translate="yes">{task.sourceSubject}</span> : null}
         {onUndo ? (
-          <button type="button" className="sm-board-undo" onClick={onUndo} title={"Undo the last board change"}>
+          <button type="button" className="sm-board-undo" onClick={onUndo} title={"Undo the last page change"}>
             ↶ {"Undo"}
           </button>
         ) : null}

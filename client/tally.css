@@ -12,14 +12,14 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 a { color: var(--accent); }
-a:hover { color: var(--accent-hover); }
+@media (hover: hover) and (pointer: fine) { a:hover { color: var(--accent-hover); } }
 
 ::selection { background: rgba(17, 17, 17, 0.14); }
 
 /* Focus rings — Tally uses a soft blue ring */
 :focus-visible {
   outline: none;
-  box-shadow: 0 0 0 3px var(--focus-ring);
+  box-shadow: 0 0 0 3px var(--focus-halo);
   border-radius: var(--radius-xs);
 }
 
@@ -36,7 +36,7 @@ a:hover { color: var(--accent-hover); }
     color var(--duration-fast) ease, transform var(--duration-fast) ease,
     box-shadow var(--duration-fast) ease;
 }
-.btn:hover { background: var(--bg-2); border-color: #D5D5D5; }
+@media (hover: hover) and (pointer: fine) { .btn:hover { background: var(--bg-2); border-color: #D5D5D5; } }
 .btn:active { transform: scale(0.98); }
 .btn.primary {
   background: var(--accent);
@@ -101,7 +101,7 @@ input::placeholder, textarea::placeholder { color: var(--ink-3); }
   background: transparent;
   transition: background var(--duration-fast) ease, color var(--duration-fast) ease;
 }
-.segmented-control button:hover { color: var(--ink); }
+@media (hover: hover) and (pointer: fine) { .segmented-control button:hover { color: var(--ink); } }
 .segmented-control button.active {
   background: #FFFFFF;
   color: var(--ink);
@@ -156,7 +156,7 @@ input::placeholder, textarea::placeholder { color: var(--ink-3); }
   background: #FFFFFF;
   color: var(--ink-2);
 }
-.lang-toggle:hover { background: var(--bg-2); }
+@media (hover: hover) and (pointer: fine) { .lang-toggle:hover { background: var(--bg-2); } }
 
 /* ═══════════════════════════════════════════════════════════════════════════
    MAIN APP — app shell, dashboard, tasks, settings, journal, study
@@ -313,7 +313,7 @@ input::placeholder, textarea::placeholder { color: var(--ink-3); }
   background: #FFFFFF;
   transition: border-color var(--duration-fast) ease, background var(--duration-fast) ease;
 }
-.card-check:hover { border-color: var(--accent); }
+@media (hover: hover) and (pointer: fine) { .card-check:hover { border-color: var(--accent); } }
 .card-check.checked {
   background: var(--accent);
   border-color: var(--accent);
@@ -343,7 +343,7 @@ input::placeholder, textarea::placeholder { color: var(--ink-3); }
 
 /* ─── Focus groups ("Also today" / "Later" / "Can wait") ─────────────────── */
 .show-more-btn { color: var(--accent); font-weight: 500; }
-.show-more-btn:hover { background: var(--accent-soft); color: var(--accent); }
+@media (hover: hover) and (pointer: fine) { .show-more-btn:hover { background: var(--accent-soft); color: var(--accent); } }
 
 /* ─── Completed section — checklist look ─────────────────────────────────── */
 .completed-section { border-top: 1px solid var(--line); }
@@ -359,7 +359,7 @@ input::placeholder, textarea::placeholder { color: var(--ink-3); }
   border-bottom: 1px solid var(--line-soft);
   transition: background var(--duration-fast) ease;
 }
-.done-row:hover { background: var(--bg-2); }
+@media (hover: hover) and (pointer: fine) { .done-row:hover { background: var(--bg-2); } }
 .done-check { color: var(--accent); }
 .done-title { color: var(--ink-2); font-weight: 500; }
 .done-when { color: var(--ink-3); font-size: 12px; }
@@ -379,7 +379,7 @@ input::placeholder, textarea::placeholder { color: var(--ink-3); }
   color: var(--ink-2);
 }
 .page-info-hint-x { color: var(--ink-3); }
-.page-info-hint-x:hover { background: rgba(0, 0, 0, 0.06); }
+@media (hover: hover) and (pointer: fine) { .page-info-hint-x:hover { background: rgba(0, 0, 0, 0.06); } }
 
 /* ─── Task modal (detail view) ──────────────────────────────────────────── */
 .task-modal {
@@ -389,7 +389,7 @@ input::placeholder, textarea::placeholder { color: var(--ink-3); }
   box-shadow: var(--shadow-pop);
 }
 .task-modal-x { color: var(--ink-3); border-radius: var(--radius-xs); }
-.task-modal-x:hover { background: var(--bg-2); color: var(--ink); }
+@media (hover: hover) and (pointer: fine) { .task-modal-x:hover { background: var(--bg-2); color: var(--ink); } }
 
 /* Focus view panels */
 .step-hero, .task-chat, .crash-card {
@@ -437,7 +437,7 @@ input::placeholder, textarea::placeholder { color: var(--ink-3); }
   padding: var(--space-5) var(--space-5);
   transition: border-color var(--duration-fast) ease;
 }
-.settings-sec:hover { border-color: #D5D5D5; }
+@media (hover: hover) and (pointer: fine) { .settings-sec:hover { border-color: #D5D5D5; } }
 .settings-sec h2 {
   font-weight: 600;
   letter-spacing: -0.015em;
@@ -520,8 +520,8 @@ input::placeholder, textarea::placeholder { color: var(--ink-3); }
 }
 .deck-btn-right { background: var(--accent); border-color: var(--accent); color: #fff; border-radius: var(--radius-sm); }
 .deck-btn-wrong { background: #FFFFFF; border: 1px solid var(--line); color: var(--ink); border-radius: var(--radius-sm); }
-.deck-btn-right:hover { background: var(--accent-hover); }
-.deck-btn-wrong:hover { background: var(--bg-2); }
+@media (hover: hover) and (pointer: fine) { .deck-btn-right:hover { background: var(--accent-hover); } }
+@media (hover: hover) and (pointer: fine) { .deck-btn-wrong:hover { background: var(--bg-2); } }
 .deck-progress { background: var(--bg-2); border-radius: var(--radius-pill); }
 .deck-progress-fill { background: var(--accent); }
 .deck-score-ring { color: var(--accent); }
@@ -566,7 +566,7 @@ input::placeholder, textarea::placeholder { color: var(--ink-3); }
   border: 1px solid var(--line);
   border-radius: var(--radius);
 }
-.first-action:hover { border-color: #D5D5D5; }
+@media (hover: hover) and (pointer: fine) { .first-action:hover { border-color: #D5D5D5; } }
 
 /* ─── Misc small parts ──────────────────────────────────────────────────── */
 .spinner { border-color: var(--line); border-top-color: var(--accent); }
@@ -578,7 +578,7 @@ input::placeholder, textarea::placeholder { color: var(--ink-3); }
 /* Modals / panels from ui.tsx */
 .modal-row { border-top: 1px solid var(--line-soft); }
 .disclosure-head { border-radius: var(--radius-xs); }
-.disclosure-head:hover { background: var(--bg-2); }
+@media (hover: hover) and (pointer: fine) { .disclosure-head:hover { background: var(--bg-2); } }
 
 /* ─── Mobile ────────────────────────────────────────────────────────────── */
 @media (max-width: 640px) {
@@ -622,7 +622,7 @@ input::placeholder, textarea::placeholder { color: var(--ink-3); }
 *::-webkit-scrollbar { width: 6px; height: 6px; }
 *::-webkit-scrollbar-track { background: transparent; }
 *::-webkit-scrollbar-thumb { background: var(--bg-3); border-radius: 3px; }
-*::-webkit-scrollbar-thumb:hover { background: var(--ink-3); }
+@media (hover: hover) and (pointer: fine) { *::-webkit-scrollbar-thumb:hover { background: var(--ink-3); } }
 
 /* The old sidebar/topbar chrome was removed in the restyle to the Framer prototype —
    navigation is now the single top nav (styles.css .topnav*). Content is centered too. */
@@ -764,7 +764,7 @@ input::placeholder, textarea::placeholder { color: var(--ink-3); }
   flex-shrink: 0;
   transition: border-color var(--duration-fast) ease, background var(--duration-fast) ease;
 }
-.card-check:hover { border-color: var(--accent); }
+@media (hover: hover) and (pointer: fine) { .card-check:hover { border-color: var(--accent); } }
 .card-check.checked {
   background: var(--accent);
   border-color: var(--accent);
@@ -778,8 +778,8 @@ input::placeholder, textarea::placeholder { color: var(--ink-3); }
   opacity: 0;
   transition: opacity var(--duration-fast) ease, background var(--duration-fast) ease, color var(--duration-fast) ease;
 }
-.card:hover .card-x { opacity: 1; }
-.card-x:hover { background: var(--bg-2); color: var(--ink); }
+@media (hover: hover) and (pointer: fine) { .card:hover .card-x { opacity: 1; } }
+@media (hover: hover) and (pointer: fine) { .card-x:hover { background: var(--bg-2); color: var(--ink); } }
 .card-study {
   width: 28px;
   height: 28px;
@@ -787,8 +787,8 @@ input::placeholder, textarea::placeholder { color: var(--ink-3); }
   opacity: 0;
   transition: opacity var(--duration-fast) ease, background var(--duration-fast) ease, color var(--duration-fast) ease;
 }
-.card:hover .card-study { opacity: 1; }
-.card-study:hover { background: var(--accent-soft); color: var(--accent); }
+@media (hover: hover) and (pointer: fine) { .card:hover .card-study { opacity: 1; } }
+@media (hover: hover) and (pointer: fine) { .card-study:hover { background: var(--accent-soft); color: var(--accent); } }
 .card .chip { font-size: 12px; padding: 2px var(--space-2); }
 .card-quadrant {
   font-size: 12px;
@@ -844,7 +844,7 @@ input::placeholder, textarea::placeholder { color: var(--ink-3); }
   transition: background var(--duration-fast) ease;
 }
 .done-row:last-child { border-bottom: none; }
-.done-row:hover { background: var(--bg-2); }
+@media (hover: hover) and (pointer: fine) { .done-row:hover { background: var(--bg-2); } }
 .done-title { font-size: 14px; font-weight: 500; color: var(--ink-2); }
 .done-when { font-size: 12px; color: var(--ink-3); }
 .done-check { color: var(--accent); }
@@ -929,9 +929,9 @@ input::placeholder, textarea::placeholder { color: var(--ink-3); }
   border-radius: var(--radius-xs);
   transition: background var(--duration-fast) ease;
 }
-.toast-x:hover { background: var(--bg-2); }
+@media (hover: hover) and (pointer: fine) { .toast-x:hover { background: var(--bg-2); } }
 .toast.error .toast-x { color: rgba(255,255,255,0.6); }
-.toast.error .toast-x:hover { background: rgba(255,255,255,0.1); }
+@media (hover: hover) and (pointer: fine) { .toast.error .toast-x:hover { background: rgba(255,255,255,0.1); } }
 
 /* ─── Settings — refined form sections ──────────────────────────────────── */
 .settings-sec {
@@ -1046,7 +1046,7 @@ input::placeholder, textarea::placeholder { color: var(--ink-3); }
   font-size: 14px;
   font-weight: 500;
 }
-.disclosure-head:hover { background: var(--bg-2); }
+@media (hover: hover) and (pointer: fine) { .disclosure-head:hover { background: var(--bg-2); } }
 .disclosure-label { font-size: 14px; }
 
 /* ─── Dark mode refinements ─────────────────────────────────────────────── */

@@ -655,7 +655,7 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
         setLocalBoard(cur.id, merged, userId);
         if (taskRef.current?.id === cur.id) taskRef.current = { ...cur, board: merged };
         setTask((prev) => (prev && prev.id === cur.id ? { ...prev, board: merged } : prev));
-      } catch (e: any) { if (e?.status === 502 || e?.status === 503) boardBackoffRef.current = Date.now() + 45_000; setBoardNote(e?.status === 429 ? "Today's board limit is reached — the voice still works." : "The board couldn't be updated just now."); }
+      } catch (e: any) { if (e?.status === 502 || e?.status === 503) boardBackoffRef.current = Date.now() + 45_000; setBoardNote(e?.status === 429 ? "Today's page limit is reached — the voice still works." : "The page couldn't be updated just now."); }
     }).finally(() => { setBoardPending((n) => Math.max(0, n - 1)); setBoardPromised(false); });
   }, [userId]);
   // LEARNING NOTES: after each finished tutor turn a small call writes notes grounded in the student's own words; they are kept with the session and
@@ -1113,7 +1113,7 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
           )}
           {hasBoard && (
             <a className={`tutor-review-tab${view === "board" ? " on" : ""}`} href={`${base}/board`} aria-current={view === "board" ? "page" : undefined}>
-              {"See the board"}
+              {"See the page"}
             </a>
           )}
           {hasChat && (
@@ -1132,9 +1132,9 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
               {report.practice ? <section><h3>{"Try alone next time"}</h3><p>{report.practice}</p></section> : null}
             </div>
           ) : !hasBoard && !hasChat ? (
-            <p className="tutor-review-empty">{"Nothing to review — this session has no saved board or chat."}</p>
+            <p className="tutor-review-empty">{"Nothing to review — this session has no saved page or chat."}</p>
           ) : view === "board" ? (
-            hasBoard ? <BoardArtifact task={{ board: reviewSession.board } as unknown as WebTask} /> : <p className="tutor-review-empty">{"No board for this session."}</p>
+            hasBoard ? <BoardArtifact task={{ board: reviewSession.board } as unknown as WebTask} /> : <p className="tutor-review-empty">{"No page for this session."}</p>
           ) : hasChat ? (
             <div className="tutor-chat-history">
               {reviewSession.chat!.map((msg, i) => (
@@ -1256,7 +1256,7 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
                         <button type="button" className="btn primary xs tutor-history-resume" onClick={() => resumePast(s)}>{"Resume"}</button>
                         {!!s.board?.length && (
                           <a href={`/tutor/session/${s.id}/board`} className="btn ghost xs tutor-history-view-board">
-                            {"See the board"}
+                            {"See the page"}
                           </a>
                         )}
                         {!!s.chat?.length && (
