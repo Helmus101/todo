@@ -250,7 +250,7 @@ export function registerTutorRoutes(app: express.Express): void {
     try {
       const r: any = await createTutorChat({ max_tokens: 1800, temperature: 0.2, response_format: { type: "json_object" }, messages: [{ role: "system", content: NOTES_SYSTEM }, { role: "user", content: `PRIOR NOTES:\n${prior || "(none)"}\nCONVERSATION:\n${transcript}` }] }, true);
       const u = usageOf(r); tokens.in += u.in; tokens.out += u.out; tokens.cachedIn += u.cachedIn;
-      const studentText = transcript.split("\n").filter((l) => l.startsWith("Student:")).map((l) => l.slice(8)).join("\n");
+      const studentText = transcript.split("\n").filter((l: string) => l.startsWith("Student:")).map((l: string) => l.slice(8)).join("\n");
       memory = groundedLearningMemory(extractJsonObject(String(r?.choices?.[0]?.message?.content || "")), studentText);
     } catch { /* no notes this turn */ }
     const profile = req.session.profile || emptyProfile();

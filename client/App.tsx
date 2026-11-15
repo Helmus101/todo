@@ -24,13 +24,9 @@ import { applyPendingHandled, loadPendingHandled, savePendingHandled, type Pendi
 // Heavy routes load on demand (each is its own chunk) so the landing/login visit doesn't download the whole study + tutor app.
 const StudyMode = lazy(() => import("./study/StudyMode.tsx").then((m) => ({ default: m.StudyMode })));
 const TutorSession = lazy(() => import("./tutor/TutorSession.tsx").then((m) => ({ default: m.TutorSession })));
-const Coursework = lazy(() => import("./CourseworkPage.tsx").then((m) => ({ default: m.Coursework })));
-const ExercisesPage = lazy(() => import("./ExercisesPage.tsx").then((m) => ({ default: m.ExercisesPage })));
 const Onboarding = lazy(() => import("./pages/Onboarding.tsx").then((m) => ({ default: m.Onboarding })));
 const SettingsPage = lazy(() => import("./pages/Settings.tsx").then((m) => ({ default: m.SettingsPage })));
 const StudyLogPage = lazy(() => import("./pages/Journal.tsx").then((m) => ({ default: m.StudyLogPage })));
-const AdminPage = lazy(() => import("./pages/Admin.tsx").then((m) => ({ default: m.AdminPage })));
-const MistakeLogPage = lazy(() => import("./pages/MistakeLog.tsx").then((m) => ({ default: m.MistakeLogPage })));
 const StandaloneStudyEntry = lazy(() => import("./pages/StudyEntry.tsx").then((m) => ({ default: m.StandaloneStudyEntry })));
 const lazyFallback = <div className="screen"><Spinner /></div>;
 
@@ -257,7 +253,7 @@ export function App() {
   // Dense workspaces remain restricted, but tutor is intentionally designed as a single-column, touch-first
   // surface and must be reachable from a phone without being redirected back to Today.
   const isPhone = useIsPhone();
-  const PHONE_ALLOWED_ROUTES = ["", "tasks", "log", "settings", "tutor", "exercises", "full"];
+  const PHONE_ALLOWED_ROUTES = ["", "tasks", "log", "settings", "tutor", "full"];
   const phoneRouteAllowed = (r: string) => PHONE_ALLOWED_ROUTES.includes(r) || r.startsWith("task/") || r.startsWith("tutor/session/");
   useEffect(() => {
     if (isPhone && status?.loggedIn && !phoneRouteAllowed(route)) navigate("tasks");
@@ -780,7 +776,7 @@ export function App() {
   const [fullTry, setFullTry] = useState(0);
   useEffect(() => {
     if (!status?.loggedIn || fullApp) return;
-    const ok = route === "tutor" || route.startsWith("tutor/session/") || route === "settings" || route === "full" || (route === "admin" && !!status?.isAdmin) || route === "privacy" || route === "terms" || route === "research" || route === "blog" || route.startsWith("blog/");
+    const ok = route === "tutor" || route.startsWith("tutor/session/") || route === "settings" || route === "full" || route === "privacy" || route === "terms" || route === "research" || route === "blog" || route.startsWith("blog/");
     if (!ok) navigate("tutor");
   }, [status?.loggedIn, fullApp, route]);
   // /full: unlock everything for this account, then show Today.
@@ -1007,7 +1003,6 @@ export function App() {
           <nav className="topnav-links">
             <a className={`topnav-link ${route === "tutor" || route.startsWith("tutor/session/") ? "active" : ""}`} href="/tutor">{"Tutor"}</a>
             <a className={`topnav-link ${route === "settings" ? "active" : ""}`} href="/settings">{"Settings"}</a>
-            {!isPhone && !!status?.isAdmin && <a className={`topnav-link ${route === "admin" ? "active" : ""}`} href="/admin">{"Usage"}</a>}
             <button type="button" className="topnav-link" onClick={() => void signOut()}>{"Sign out"}</button>
           </nav>
         ) : (
@@ -1016,7 +1011,7 @@ export function App() {
             className={`topnav-link ${route === "" || route === "tasks" || route.startsWith("task/") ? "active" : ""}`}
             href="/tasks"
           >
-            {"Today"}
+            {"Tasks"}
           </a>
           <a
             className={`topnav-link ${route === "tutor" || route.startsWith("tutor/session/") ? "active" : ""}`}
@@ -1030,22 +1025,7 @@ export function App() {
           >
             {isPhone ? "Flashcards" : "Journal"}
           </a>
-          {!isPhone && <a
-            className={`topnav-link ${route === "coursework" ? "active" : ""}`}
-            href="/coursework"
-          >
-            {"Coursework"}
-          </a>}
-          {/* Hick's law: four primary destinations stay in view; the rest sit one tap away under "More" so the bar offers fewer
-              choices at once. The "More" label itself lights up when one of its pages is open. */}
-          <details className="topnav-more" key={route}>
-            <summary className={`topnav-link ${["errorlog", "settings"].includes(route) ? "active" : ""}`}>{"More"}</summary>
-            <div className="topnav-more-menu">
-              {!isPhone && <a className={`topnav-link ${route === "errorlog" ? "active" : ""}`} href="/errorlog">{"Mistakes"}</a>}
-              <a className={`topnav-link ${route === "settings" ? "active" : ""}`} href="/settings">{"Settings"}</a>
-              {!isPhone && !!status?.isAdmin && <a className={`topnav-link ${route === "admin" ? "active" : ""}`} href="/admin">{"Usage"}</a>}
-            </div>
-          </details>
+          <a className={`topnav-link ${route === "settings" ? "active" : ""}`} href="/settings">{"Settings"}</a>
         </nav>
         )}
       </header>
@@ -1088,7 +1068,7 @@ export function App() {
       {onboard && <Suspense fallback={null}><Onboarding mode={onboardMode ?? (status?.fullApp ? "full" : "tutor")} status={status} onStatus={loadStatus} onDone={finishOnboard} /></Suspense>}
       {/* First visit to a page: an interactive guide pointing at the real controls (client/PageTour.tsx). */}
       {(() => {
-        const id = route === "" || route === "tasks" ? "tasks" : route === "log" ? "journal" : route === "errorlog" ? "mistakes" : route === "coursework" ? "coursework" : route === "settings" ? "settings" : null;
+        const id = route === "" || route === "tasks" ? "tasks" : route === "log" ? "journal" : route === "settings" ? "settings" : null;
         if (!id || isPhone) return null;
         return <PageTour key={id} id={id} steps={TOURS[id]} ready={!onboard} />;
       })()}
@@ -1121,14 +1101,6 @@ export function App() {
         <Suspense fallback={lazyFallback}><TutorSession userId={status?.user || null} onExit={() => navigate("tasks")} visionReady={!!status?.visionReady} sessionId={route.split("/")[2]} reviewView={route.split("/")[3]} /></Suspense>
       ) : route === "study" ? (
         <Suspense fallback={lazyFallback}><StandaloneStudyEntry tasks={tasks} setTasks={setTasks} status={status} notify={notify} navigate={navigate} /></Suspense>
-      ) : route === "coursework" ? (
-        <Suspense fallback={lazyFallback}><Coursework onTasksChanged={() => { void api.tasks().then(setTasks).catch(() => {}); }} /></Suspense>
-      ) : route === "admin" && !!status?.isAdmin ? (
-        <Suspense fallback={lazyFallback}><AdminPage /></Suspense>
-      ) : route === "errorlog" ? (
-        <Suspense fallback={lazyFallback}><MistakeLogPage lang={status?.language} /></Suspense>
-      ) : route === "exercises" ? (
-        <Suspense fallback={lazyFallback}><ExercisesPage /></Suspense>
       ) : !status.googleConnected && !status.pronoteConnected && !skippedConnect ? (
         <main className="list-wrap"><ConnectCard status={status} onSkip={() => {
           setSkippedConnect(true);

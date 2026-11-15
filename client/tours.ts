@@ -8,7 +8,7 @@ export const TOURS: Record<string, TourStep[]> = {
     { target: ".add-task-input", title: "Add anything", body: "Type a task your own way — “revise physics chapter 5”. Otto sharpens it, dates it and prepares a plan.", action: "Try it: click into the field.", interactive: true },
     { target: ".list .card .card-main", title: "Open a task", body: "Each task has a step-by-step plan, flashcards or a quiz when useful, and a way to ask the tutor for help." },
     { target: ".list .card .card-check", title: "Tick it when it's done", body: "Your day's progress updates, and Otto learns your pace." },
-    { target: ".topnav-links", title: "The rest of Otto", body: "Tutor to learn by thinking, Journal to remember, Mistakes so you don't repeat them, Coursework for your documents, Settings to tune it all. Each page shows you how it works the first time you open it." },
+    { target: ".topnav-links", title: "The rest of Otto", body: "Tasks for what's due, Tutor to learn by thinking, Journal to remember. Each page shows you how it works the first time you open it." },
   ],
   "tutor-landing": [
     { target: "#tutor-opening", title: "Tell Otto what you're working on", body: "Paste a problem, name a topic or say what's blocking you — Otto works out the subject on its own.", action: "Try it: type a sentence.", interactive: true },

@@ -734,7 +734,7 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
     onWriteBoard: BOARD_ENABLED ? onWriteBoard : undefined, // no pen tool while the board is off
     quietResume: Number.isFinite(lastChatAt) && Date.now() - lastChatAt < 30 * 60_000,
     pastSessions: task ? sessionMemoryForPrompt(pastSessions, task.sourceSubject, Date.now(), openerLang) : undefined,
-    learningHistory: pastSessions.filter((s) => s.memory?.summary && s.id !== task?.id).slice(0, 6).map((s) => `${s.subject || "Session"} (${relativeWhen(s.endTime, "en")}): ${learningContext(s.memory)}`).join("\n").slice(0, 6000),
+    learningHistory: pastSessions.filter((s) => s.memory?.summary && s.id !== task?.id).slice(0, 6).map((s) => `${s.subject || "Session"} (${relativeWhen(s.endTime, Date.now(), "en")}): ${learningContext(s.memory)}`).join("\n").slice(0, 6000),
     resuming: (task?.chat?.length || 0) > 0,
     resumeTail: (task?.chat || []).slice(-8).map((m) => `${m.role === "user" ? "Student" : "Otto"}: ${String(m.text || "")}`),
     onTurn: onLiveTurn,

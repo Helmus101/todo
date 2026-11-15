@@ -3,7 +3,6 @@ import { masteryState, MASTERY_LABEL } from "../../shared/masteryState.ts";
 import { IbSubjectPicker } from "./IbSubjectPicker.tsx";
 import { examSessionOptions } from "../../shared/ibExamDates.ts";
 import type { IbSubject } from "../../shared/ibSubjectList.ts";
-import { StudyStatsSection } from "./StudyStats.tsx";
 import { AdminTools } from "./AdminTools.tsx";
 import { useEffect, useState, useCallback, useRef } from "react";
 import type { WebTask, ConnectionStatus, Profile } from "../../shared/types.ts";
@@ -408,7 +407,7 @@ export function SettingsPage({ status, tasks, onSignOut, onChanged, onTasksChang
         </div>
       </section>
 
-      {status.weekly ? (
+      {status.weekly?.over ? (
         <section className="settings-sec reveal">
           <h3>{"AI allowance this week"}</h3>
           <div className="set-list">
@@ -421,7 +420,6 @@ export function SettingsPage({ status, tasks, onSignOut, onChanged, onTasksChang
         </section>
       ) : null}
 
-      <StudyStatsSection userId={status.user || null} />
 
       <ConceptsPanel profile={profile} />
 
