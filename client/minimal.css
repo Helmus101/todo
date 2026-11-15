@@ -336,3 +336,12 @@ button.topnav-link:hover { color: var(--ink); }
 
 /* Status text, not a code snippet. */
 .dash-late, .dash-working { font-family: var(--sans); font-size: var(--text-sm); letter-spacing: 0; padding: 0 !important; background: none !important; color: var(--ink-2); }
+
+/* Task check-off: a real 44px button (the tap target) with the 24px circle drawn inside it. A negative margin keeps the row's layout footprint at 24px. */
+.card-check { width: 44px !important; height: 44px !important; min-width: 44px; margin: -10px !important; border: 0 !important; background: transparent !important; z-index: 1; }
+.card-check::before { content: ""; position: absolute; inset: 10px; border: 2px solid var(--ink); border-radius: 50%; background: #fff; }
+@media (hover: hover) and (pointer: fine) { .card-check:hover { background: transparent !important; } .card-check:hover::before { background: #ececec; } }
+.card-check.checked { background: transparent !important; }
+.card-check.checked::before { content: "✓"; position: absolute; inset: 10px; display: flex; align-items: center; justify-content: center; background: var(--ink); color: #fff; font-size: 15px; font-weight: 700; line-height: 1; }
+.list.compact .card-check { width: 44px !important; height: 44px !important; min-width: 44px; margin: -12px !important; }
+.list.compact .card-check::before, .list.compact .card-check.checked::before { inset: 12px; }
