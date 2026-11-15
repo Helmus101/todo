@@ -112,7 +112,7 @@ export function BlogPostPage({ slug }: { slug: string }): ReactNode {
   return (
     <div className="landing legal-page">
       <header className="landing-nav glass-nav">
-        <a className="brand" href="/">{"Otto"}</a>
+        <a className="brand-lockup" href="/"><svg className="logo" width={20} height={20} viewBox="0 0 48 48" fill="none" aria-hidden="true"><circle cx="24" cy="24" r="14" stroke="currentColor" strokeWidth="6" fill="none" /></svg><span>otto</span></a>
         <nav className="landing-navlinks"><a className="btn ghost" href="/research">{"Approach"}</a><a className="btn ghost" href="/blog">{"Blog"}</a></nav>
       </header>
       <main className="legal blog-page">{post ? <BlogPostBody post={post} /> : <><h1>{"Page not found"}</h1><p><a href="/blog">{"Back to the blog"}</a></p></>}</main>
@@ -124,7 +124,7 @@ export function BlogIndexPage(): ReactNode {
   return (
     <div className="landing legal-page">
       <header className="landing-nav glass-nav">
-        <a className="brand" href="/">{"Otto"}</a>
+        <a className="brand-lockup" href="/"><svg className="logo" width={20} height={20} viewBox="0 0 48 48" fill="none" aria-hidden="true"><circle cx="24" cy="24" r="14" stroke="currentColor" strokeWidth="6" fill="none" /></svg><span>otto</span></a>
         <nav className="landing-navlinks"><a className="btn ghost" href="/research">{"Approach"}</a><a className="btn ghost" href="/blog">{"Blog"}</a></nav>
       </header>
       <main className="legal blog-page"><BlogIndexBody /></main>

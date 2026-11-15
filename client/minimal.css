@@ -82,9 +82,9 @@ hr { border: 0; border-top: 1px solid var(--line-soft); }
 
 /* landing */
 .landing-min { max-width: 640px; margin: 0 auto; padding: var(--space-5) var(--space-5) var(--space-8); min-height: 100vh; display: flex; flex-direction: column; }
-.landing-min-nav { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: clamp(48px, 12vh, 120px); }
+.landing-min-nav { display: flex; justify-content: space-between; align-items: center; margin-bottom: clamp(48px, 12vh, 120px); }
 .landing-min-brand { font-weight: 600; }
-.landing-min-nav nav { display: flex; gap: var(--space-5); align-items: baseline; }
+.landing-min-nav nav { display: flex; gap: var(--space-5); align-items: center; }
 .landing-min-nav button { background: none; border: 0; padding: 0; font: inherit; color: var(--ink); text-decoration: underline; cursor: pointer; }
 .landing-min-main h1 { font-size: clamp(2rem, 6vw, 3rem) !important; font-weight: 650 !important; letter-spacing: -0.03em !important; line-height: 1.08; max-width: 16ch; margin: 0 0 var(--space-4); text-wrap: balance; }
 .landing-min-main p { color: var(--ink-2); margin: 0 0 var(--space-5); max-width: 52ch; font-size: var(--text-lg); line-height: 1.55; text-wrap: pretty; }
@@ -329,3 +329,7 @@ html { scrollbar-gutter: stable; scroll-behavior: smooth; }
 /* Nav buttons (Sign out) carry only the underline, never the browser's default button border. */
 button.topnav-link { border-width: 0 0 1px; border-style: solid; border-color: transparent; background: none; font: inherit; font-size: 14px; font-weight: 500; }
 button.topnav-link:hover { color: var(--ink); }
+
+/* One wordmark everywhere: the ring plus lowercase "otto". */
+.brand-lockup, .topnav-brand.brand-lockup, .landing-min-brand.brand-lockup { display: inline-flex; align-items: center; gap: var(--space-2); font-family: var(--display); font-size: 20px; font-weight: 600; letter-spacing: -0.02em; line-height: 1; text-transform: lowercase; color: var(--ink); text-decoration: none !important; }
+.brand-lockup svg { display: block !important; flex: none; }

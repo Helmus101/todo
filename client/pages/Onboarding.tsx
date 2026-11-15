@@ -76,7 +76,7 @@ export function Onboarding({ onStatus, onDone }: { status?: ConnectionStatus | n
       <div className="onboard-card">
         <button className="onboard-skip" onClick={onDone} aria-label={"Skip"}>{"Skip"}</button>
         <div className="onboard-top">
-          <div className="onboard-brand"><Logo size={20} /> <span>Otto</span> <LanguagePicker compact /></div>
+          <div className="onboard-brand"><Logo size={20} /> <span>otto</span> <LanguagePicker compact /></div>
           <div className="onboard-progress" role="progressbar" aria-valuemin={1} aria-valuemax={OB_STEPS} aria-valuenow={at + 1} aria-label={`Step ${at + 1} of ${OB_STEPS}`}>
             {Array.from({ length: OB_STEPS }, (_, d) => <span key={d} aria-hidden="true" className={d <= at ? "on" : ""} />)}
           </div>

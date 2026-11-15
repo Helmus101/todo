@@ -24,7 +24,7 @@ export function Landing({ lang, onLangChange }: { lang: "fr" | "en"; onLangChang
   return (
     <div className="landing landing-min">
       <header className="landing-min-nav">
-        <span className="landing-min-brand">otto</span>
+        <a className="landing-min-brand brand-lockup" href="/"><svg className="logo" width={20} height={20} viewBox="0 0 48 48" fill="none" aria-hidden="true"><circle cx="24" cy="24" r="14" stroke="currentColor" strokeWidth="6" fill="none" /></svg><span>otto</span></a>
         <nav>
           <a href="/research">{"Approach"}</a>
           <a href="/blog">{"Blog"}</a>

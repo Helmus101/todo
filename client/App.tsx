@@ -998,7 +998,7 @@ export function App() {
           own breadcrumb row ("All sessions / Mathematics … End session") below this header, and the stage
           subtracts --topnav-h from the viewport so it still fits exactly. */}
       <header className="topnav">
-        <a className="topnav-brand" href={fullApp && status?.home === "tasks" ? "/tasks" : "/tutor"}>otto</a>
+        <a className="topnav-brand brand-lockup" href={fullApp && status?.home === "tasks" ? "/tasks" : "/tutor"}><Logo size={20} /><span>otto</span></a>
         {!fullApp ? (
           <nav className="topnav-links">
             <a className={`topnav-link ${route === "tutor" || route.startsWith("tutor/session/") ? "active" : ""}`} href="/tutor">{"Tutor"}</a>

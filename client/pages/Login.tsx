@@ -82,7 +82,7 @@ export function LoginPage({ status, lang, onLangChange, onDone, initialMode }: {
       {/* Same nav chrome as the landing page (landing-nav-framer) — the prototype's public pages share
           one shell: lowercase "otto" wordmark left, language toggle right. */}
       <header className="landing-nav-framer">
-        <a className="brand-framer" href="/"><Logo size={20} /> <span className="brand-name-framer">otto</span></a>
+        <a className="brand-lockup" href="/"><Logo size={20} /><span>otto</span></a>
       </header>
       <main className="login-main">
         <div className="login-card">

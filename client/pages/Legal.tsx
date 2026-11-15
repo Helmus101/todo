@@ -151,7 +151,7 @@ export function ResearchPageBody() {
   return (
     <div className="landing research-page">
       <header className="landing-nav-framer">
-        <a className="brand-framer" href="/"><Logo size={20} /> <span className="brand-name-framer">otto</span></a>
+        <a className="brand-lockup" href="/"><Logo size={20} /><span>otto</span></a>
         <nav className="landing-navlinks-framer">
           <a className="btn ghost-framer" href="/">{"Home"}</a>
         </nav>
