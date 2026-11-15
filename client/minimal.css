@@ -68,7 +68,7 @@ a { color: var(--ink); text-decoration-color: var(--ink-3); text-underline-offse
 .topnav-link.active { color: var(--ink); border-bottom-color: var(--ink) !important; }
 
 /* decorative icons and avatars go; functional toolbar icons stay (they have no wrapper background now) */
-h1 svg, h2 svg, h3 svg, [class*="title"] svg, [class*="empty"] svg, .brand svg, [class*="avatar"]:not(.tutor-face), [class*="mascot"] { display: none !important; }
+h1 svg, h2 svg, h3 svg, [class*="title"] svg, [class*="empty"] svg, .brand svg, [class*="avatar"]:not(.tutor-face):not(.otto-avatar), [class*="mascot"] { display: none !important; }
 
 /* page rhythm: one column, generous whitespace, no dividers except where they separate items */
 .list-wrap, main { max-width: 640px; margin-left: auto; margin-right: auto; }
