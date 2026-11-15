@@ -930,6 +930,12 @@ input:focus, textarea:focus {
    at every width it just produces a second, confusingly independent scroll region. Let the single outer
    modal scroll instead. */
 .note-popup, .deck-popup { max-height: none; overflow-y: visible; }
+/* Sheet grab handle: phones only (drag-to-dismiss, see TaskModal). Generous 44px hit area, 36x5 visible bar. */
+.task-modal-grab { display: none; }
+@media (max-width: 640px) and (pointer: coarse) {
+  .task-modal-grab { display: block; position: absolute; top: 0; left: 50%; transform: translateX(-50%); width: 120px; height: 28px; touch-action: none; cursor: grab; z-index: 3; }
+  .task-modal-grab::after { content: ""; position: absolute; top: 8px; left: 50%; width: 36px; height: 5px; margin-left: -18px; border-radius: 3px; background: var(--line); }
+}
 .task-modal-x {
   /* `position: absolute` is against the modal's BORDER box, which ignores its own padding-top — on a
      notched phone the ✕ would land under the status bar/Dynamic Island, effectively untappable, without

@@ -10,6 +10,6 @@ export class BlockBoundary extends Component<{ children: ReactNode }, { failed: 
   render() {
     if (!this.state.failed) return this.props.children;
     const en = currentLang() === "en";
-    return <p className="sm-board-block-error" role="note">{"This part of the board couldn't be shown."}</p>;
+    return <p className="sm-board-block-error" role="note">{"This part of the page couldn't be shown."}</p>;
   }
 }

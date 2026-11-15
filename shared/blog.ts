@@ -88,7 +88,7 @@ export const POSTS: Post[] = [
       { t: "h2", text: "When to stop reading and start solving" },
       { t: "p", text: "When you can predict the next line before you reveal it, you are ready to practise without support. If you get stuck twice on the same step, go back to an example." },
       { t: "h2", text: "Where Otto fits" },
-      { t: "p", text: "Otto works the same way: it shows a worked case with different numbers when you are stuck, then hands you the last step, then a fresh problem. The board keeps the working so you can read it back later." },
+      { t: "p", text: "Otto works the same way: it shows a worked case with different numbers when you are stuck, then hands you the last step, then a fresh problem. The page keeps the working so you can read it back later." },
     ],
   },
   {

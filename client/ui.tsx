@@ -9,7 +9,7 @@
 import { useEffect, useMemo, useState, useCallback, useRef, useContext, createContext, type ReactNode } from "react";
 import katex from "katex";
 import { createPortal } from "react-dom";
-import { motion, useReducedMotion } from "motion/react";
+import { motion, useReducedMotion, useDragControls } from "motion/react";
 import type { WebTask, TaskFlashcards, TaskQuiz, DailyPracticeProblem } from "../shared/types.ts";
 import { canonStatus, LEITNER_BOX_LABEL } from "../shared/types.ts";
 import { gradeExerciseAnswer } from "../shared/exerciseVerification.ts";
@@ -1416,6 +1416,14 @@ export function TaskModal({ onClose, children, nested, title, wide }: { onClose:
   }, [onClose]);
 
   const panelRef = useRef<HTMLDivElement>(null);
+  // Apple Design §2/§5/§6/§9 — phone sheet gesture. Drag starts ONLY from the grab handle (so scrolling the
+  // content never fights the sheet), tracks the finger 1:1, resists upward with rubber-banding, and on release
+  // projects where the flick is headed (decelerationRate 0.99) — dismiss if that endpoint passes 140px.
+  const dragControls = useDragControls();
+  const onDragEnd = useCallback((_: unknown, info: { offset: { y: number }; velocity: { y: number } }) => {
+    const projected = info.offset.y + (info.velocity.y / 1000) * 0.99 / (1 - 0.99);
+    if (projected > 140) doCloseRef.current();
+  }, []);
 
   // `doClose` depends on `onClose`, which callers overwhelmingly pass as an inline arrow
   // (`onClose={() => navigate("")}`) — a fresh function identity on EVERY parent re-render (any poll tick,
@@ -1513,7 +1521,8 @@ export function TaskModal({ onClose, children, nested, title, wide }: { onClose:
           quiz's own <h3>, or TaskFocus's <h2>) in whatever markup that component chooses, so there's no
           reliable element to point an id at from here — the caller passes the same text as a plain string
           instead. Falls back to a generic name so the dialog is never announced completely unlabelled. */}
-      <motion.div ref={panelRef} className={`task-modal ${nested ? "nested" : ""} ${wide ? "wide" : ""}`} onClick={(e) => e.stopPropagation()} role="dialog" aria-modal="true" aria-label={title || "Details"} tabIndex={-1} {...panelMotion}>
+      <motion.div ref={panelRef} drag={reduceMotion ? false : "y"} dragControls={dragControls} dragListener={false} dragConstraints={{ top: 0, bottom: 0 }} dragElastic={{ top: 0.08, bottom: 0.7 }} onDragEnd={onDragEnd} className={`task-modal ${nested ? "nested" : ""} ${wide ? "wide" : ""}`} onClick={(e) => e.stopPropagation()} role="dialog" aria-modal="true" aria-label={title || "Details"} tabIndex={-1} {...panelMotion}>
+        <div className="task-modal-grab" aria-hidden="true" onPointerDown={(e) => dragControls.start(e)} />
         <button className={`task-modal-x ${nested ? "nested" : ""}`} onClick={doClose} aria-label={"Close"}>✕</button>
         {children}
       </motion.div>

@@ -389,7 +389,7 @@ export function SettingsPage({ status, tasks, onSignOut, onChanged, onTasksChang
         <h3>{"About you"}</h3>
         <div className="set-list">
           <label className="set-row">
-            <span className="set-text"><b>{"Language"}</b><span className="settings-hint">{"The whole app, and Otto's voice and board, use this language."}</span></span>
+            <span className="set-text"><b>{"Language"}</b><span className="settings-hint">{"The whole app, and Otto's voice and page, use this language."}</span></span>
             <LanguagePicker />
           </label>
           {status.fullApp ? <label className="set-row">
@@ -412,7 +412,7 @@ export function SettingsPage({ status, tasks, onSignOut, onChanged, onTasksChang
           <h3>{"AI allowance this week"}</h3>
           <div className="set-list">
             <div className="set-row">
-              <span className="set-text"><b>{`$${status.weekly.usd.toFixed(2)} of $${status.weekly.limit.toFixed(2)}`}</b><span className="settings-hint">{"Resets every Monday. Voice, board and everything else count."}</span></span>
+              <span className="set-text"><b>{`$${status.weekly.usd.toFixed(2)} of $${status.weekly.limit.toFixed(2)}`}</b><span className="settings-hint">{"Resets every Monday. Voice, page and everything else count."}</span></span>
               {status.weekly.over && !status.weekly.requested ? <button type="button" className="btn xs primary" onClick={() => { void api.requestMoreUsage().then(() => onStatusUpdate?.()).catch((e: any) => notify(e?.message || "Couldn't send the request — try again.", "error")); }}>{"Request more"}</button> : status.weekly.requested ? <span className="settings-hint">{"Requested"}</span> : null}
             </div>
             <div className="concept-bar" aria-hidden="true"><span style={{ width: `${Math.min(100, Math.round((status.weekly.usd / status.weekly.limit) * 100))}%` }} /></div>
@@ -450,7 +450,7 @@ export function SettingsPage({ status, tasks, onSignOut, onChanged, onTasksChang
 
       <details className="settings-sec reveal">
         <summary>{"Where your data goes"}</summary>
-        <p className="settings-hint">{"Sessions and boards stay in this browser. Voice and typing are processed by Google (Gemini), with OpenAI or DeepSeek as backups, under their own terms. Deleting your account erases your profile and notes from Otto."}</p>
+        <p className="settings-hint">{"Sessions and pages stay in this browser. Voice and typing are processed by Google (Gemini), with OpenAI or DeepSeek as backups, under their own terms. Deleting your account erases your profile and notes from Otto."}</p>
       </details>
 
       {status.isAdmin ? <AdminTools /> : null}

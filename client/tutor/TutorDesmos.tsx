@@ -26,7 +26,7 @@ export function TutorDesmos({ onClose }: { onClose: () => void }) {
           {"Open in a tab"} ↗
         </a>
         <button type="button" className="btn ghost xs tutor-desmos-close" onClick={onClose}>
-          {"Back to board"}
+          {"Back to page"}
         </button>
       </div>
       <div className="tutor-desmos-full-frame-wrap">
