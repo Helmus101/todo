@@ -30,7 +30,7 @@
   --hover-wash: #F2F0E9;
   --ink: #26221f;
   --ink-2: #5f5a54;
-  --ink-3: #948d85;
+  --ink-3: #6b645c; /* 5.8:1 on white, 4.8:1 on --bg-3 (was #948d85, 3.3:1) */
   --graphite: #5f5a54;
   --line: #e6e1da;
   --line-soft: #f0ece6;
@@ -42,12 +42,16 @@
   --accent-hover: #000;
   --accent-active: #000;
   --accent-soft: #f4f1ec;
+  /* The one signal colour: it only ever means "your turn / needs you" (mic open, focus, a question for the student). */
+  --signal: #2447c8;
+  --signal-soft: #eef1fc;
+  --signal-rgb: 36, 71, 200;
   --accent-rgb: 38, 34, 31;
   --accent-2: #26221f;
   --accent-2-soft: #f4f1ec;
   --accent-2-rgb: 38, 34, 31;
   --brand-mark: #26221f;
-  --focus-ring: #26221f;
+  --focus-ring: rgba(var(--signal-rgb), 0.28);
   --chat-user-bg: #26221f;
   --chat-user-bg-2: #26221f;
   --vermilion: #c40000;
@@ -76,14 +80,14 @@
   --radius-pill: 999px;
 
   /* Type */
-  --sans: "Helvetica Neue", Helvetica, Arial, sans-serif;
-  --display: "Helvetica Neue", Helvetica, Arial, sans-serif;
+  --sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI Variable Text", "Segoe UI", system-ui, Roboto, "Helvetica Neue", Arial, sans-serif;
+  --display: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Segoe UI Variable Display", "Segoe UI", system-ui, Roboto, "Helvetica Neue", Arial, sans-serif;
   --mono: ui-monospace, 'SF Mono', SFMono-Regular, Menlo, Monaco, Consolas, monospace;
   --label: var(--mono);
   --font-serif: "Helvetica Neue", Helvetica, Arial, sans-serif;
   --font-hand: "Handlee", "Bradley Hand", "Segoe Print", cursive;
   --font-board: KaTeX_Main, 'Times New Roman', serif;
-  --text-xs: 11px;
+  --text-xs: 12px;
   --text-sm: 13px;
   --text-base: 14px;
   --text-md: 15px;
@@ -4610,19 +4614,20 @@ label.set-row.disabled { cursor: default; opacity: 0.5; }
 /* Otto's dock — avatar + ONLY the latest answer + the input */
 /* The live transcript (the board is off, shared/features.ts): the conversation is the page. */
 .ts-transcript { position: relative; flex: 1; min-height: 0; overflow-y: auto; background: var(--bg); scroll-behavior: smooth; }
-.ts-transcript-col { max-width: 720px; margin: 0 auto; padding: var(--space-6) var(--space-4) 0; display: flex; flex-direction: column; gap: var(--space-5); }
-.ts-transcript-pad { height: 190px; flex: none; }
-.ts-transcript-empty { margin: 18vh 0 0; text-align: center; color: var(--ink-3); font-size: 1rem; line-height: 1.6; }
-.ts-line { display: flex; flex-direction: column; gap: 3px; max-width: 88%; animation: ts-line-in .18s ease-out; }
-.ts-line.you { align-self: flex-end; align-items: flex-end; }
-.ts-line.otto { align-self: flex-start; }
-.ts-line-who { font-size: 0.72rem; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; color: var(--ink-3); }
-.ts-line-text { font-size: 1.05rem; line-height: 1.55; color: var(--ink); white-space: pre-wrap; overflow-wrap: anywhere; }
-.ts-line.you .ts-line-text { color: var(--ink-2, var(--ink)); text-align: right; }
-.ts-line.live .ts-line-text { color: var(--ink-2, var(--ink)); }
-.ts-caret { display: inline-block; width: 2px; height: 1.05em; margin-left: 3px; vertical-align: text-bottom; background: var(--accent); animation: ts-caret 1s steps(2, start) infinite; }
+.ts-transcript-col { max-width: 640px; margin: 0 auto; padding: var(--space-7) var(--space-4) 0; display: flex; flex-direction: column; gap: var(--space-6); }
+.ts-transcript-pad { height: 200px; flex: none; }
+.ts-transcript-empty { margin: 20vh 0 0; text-align: center; color: var(--ink-2); font-size: var(--text-lg); line-height: 1.55; text-wrap: balance; }
+/* One left edge for both speakers: no bubbles, no right-aligned replies. Otto is full ink; the student is quieter and indented. */
+.ts-line { display: flex; flex-direction: column; gap: var(--space-1); animation: ts-line-in var(--duration-base) var(--ease-out) both; }
+.ts-line.you { padding-left: var(--space-5); }
+.ts-line-who { font-size: var(--text-sm); font-weight: var(--weight-semibold); letter-spacing: 0; text-transform: none !important; color: var(--ink-2); }
+.ts-line.you .ts-line-who { color: var(--signal); }
+.ts-line-text { font-size: 1.0625rem; line-height: 1.6; color: var(--ink); white-space: pre-wrap; overflow-wrap: anywhere; max-width: 62ch; text-wrap: pretty; }
+.ts-line.you .ts-line-text { color: var(--ink-2); }
+.ts-line.live .ts-line-text { color: var(--ink-2); }
+.ts-caret { display: inline-block; width: 2px; height: 1.05em; margin-left: 3px; vertical-align: text-bottom; background: var(--signal); animation: ts-caret 1s steps(2, start) infinite; }
 @keyframes ts-caret { to { visibility: hidden; } }
-@keyframes ts-line-in { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
+@keyframes ts-line-in { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
 @media (prefers-reduced-motion: reduce) { .ts-line { animation: none; } .ts-caret { animation: none; } .ts-transcript { scroll-behavior: auto; } }
 .ts-dock { position: absolute; z-index: 4; left: 50%; bottom: 14px; transform: translateX(-50%); width: min(760px, calc(100% - 24px)); }
 .otto-dock { display: flex; flex-direction: column; gap: var(--space-2); padding: var(--space-3); background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-xl); box-shadow: 0 10px 40px rgba(0,0,0,.14), 0 2px 6px rgba(0,0,0,.06); }
@@ -4656,7 +4661,7 @@ label.set-row.disabled { cursor: default; opacity: 0.5; }
 .otto-speaking .otto-ripple { animation: otto-ripple 1.6s ease-out infinite; }
 .otto-speaking .otto-ripple.r2 { animation-delay: .8s; }
 .otto-listening .otto-face { box-shadow: 0 0 0 3px var(--accent); }
-.otto-listening .otto-ripple { opacity: .6; animation: otto-ripple 2.2s ease-out infinite; }
+.otto-listening .otto-ripple { border-color: var(--signal); opacity: .6; animation: otto-ripple 2.2s ease-out infinite; }
 .otto-dots { position: absolute; inset: -4px; border-radius: 50%; border: 2px solid transparent; border-top-color: var(--accent); opacity: 0; }
 .otto-thinking .otto-dots { opacity: 1; animation: otto-orbit 1s linear infinite; }
 @media (max-width: 640px) {
@@ -4925,10 +4930,10 @@ button[aria-expanded="true"] > .sm-chev { transform: rotate(45deg); }
 /* ── Live voice bar (Socra-style): Otto's presence, one caption line, a few controls. ───────────────────────── */
 .live-bar { display: flex; flex-direction: column; align-items: center; gap: var(--space-3); padding: var(--space-4) var(--space-4) var(--space-3); }
 .live-bar-main { display: flex; align-items: center; gap: var(--space-4); max-width: 720px; width: 100%; justify-content: center; }
-.live-caption { margin: 0; background-color: rgba(250,248,244,.94); padding: 4px 12px; border-radius: 12px; font-size: 18px; line-height: 1.45; color: var(--ink); max-width: 60ch; min-height: 1.45em; }
-.live-caption.is-you { color: var(--muted, var(--ink)); font-style: italic; }
+.live-caption { margin: 0; padding: 4px 0; font-size: var(--text-lg); line-height: 1.5; color: var(--ink); max-width: 60ch; min-height: 1.5em; text-wrap: pretty; }
+.live-caption.is-you { color: var(--ink-2); font-style: normal; }
 .live-caption.is-error { color: var(--vermilion, #b3261e); font-size: 15px; }
-.live-controls { display: flex; align-items: center; gap: var(--space-2); padding: 6px 8px; border: 1px solid var(--line); border-radius: 999px; background: var(--surface); box-shadow: 0 6px 24px rgba(0,0,0,.08) !important; }
+.live-controls { display: flex; align-items: center; gap: var(--space-2); padding: 6px 8px; border: 1px solid var(--line); border-radius: 999px; background: var(--surface); box-shadow: none !important; }
 /* (!important: a global `button { background: transparent !important }` reset would otherwise make these invisible) */
 .live-main-btn { display: inline-flex; align-items: center; gap: 8px; height: 44px; min-width: 160px; padding: 0 20px; border-radius: 999px; border: 0; background: var(--accent) !important; color: #fff !important; font: inherit; font-weight: 600; cursor: pointer; justify-content: center; }
 .live-main-btn.is-on { background: var(--bg-2) !important; color: var(--ink) !important; box-shadow: 0 0 0 1px var(--line) inset; }
@@ -4952,7 +4957,7 @@ button[aria-expanded="true"] > .sm-chev { transform: rotate(45deg); }
 .tutor-stage .sm-board-why { font-family: "Kalam", "Handlee", cursive; color: #6b5f4a; }
 .tutor-stage .sm-board-header-subject { font-family: "Instrument Serif", ui-serif, Georgia, serif; font-size: 1.9rem; font-style: italic; color: #b45309; }
 .tutor-stage .sm-board-lineno { color: #3b6ea5; font-family: "Kalam", "Handlee", cursive; }
-.tutor-stage .live-caption { font-family: "Instrument Serif", ui-serif, Georgia, serif; font-size: 1.35rem; }
+.tutor-stage .live-caption { font-size: 1.1875rem; }
 @keyframes otto-write-in { from { opacity: 0; transform: translateY(6px); filter: blur(2px); } to { opacity: 1; transform: none; filter: none; } }
 .tutor-stage .sm-board-reveal { animation: otto-write-in .5s ease-out both; }
 @media (prefers-reduced-motion: reduce) { .tutor-stage .sm-board-reveal { animation: none; } }
@@ -4988,7 +4993,7 @@ button[aria-expanded="true"] > .sm-chev { transform: rotate(45deg); }
 .live-orb .otto-avatar { display: inline-grid !important; }
 .live-orb .tutor-face { display: inline-flex !important; background: #f3efe6 !important; border: 1px solid #d9d2c3 !important; }
 .live-orb .tutor-face-eye { background: #2b2a27 !important; }
-.live-bar[data-state="listening"] .otto-avatar::after { content: ""; position: absolute; inset: -4px; border-radius: 50%; border: 2px solid #2b2a27; opacity: .5; animation: otto-ripple 1.6s ease-out infinite; }
+.live-bar[data-state="listening"] .otto-avatar::after { content: ""; position: absolute; inset: -4px; border-radius: 50%; border: 2px solid var(--signal); opacity: .6; animation: otto-ripple 1.6s ease-out infinite; }
 /* Board layout: a definition is a quiet card, a formula or result stands on its own line, calculations stay tight. */
 .sm-board-body .sm-board-entry { padding-top: var(--space-2); padding-bottom: var(--space-2); }
 .sm-board-body .sm-board-entry-definition .sm-board-entry-main { padding: var(--space-2) var(--space-3); border-left: 3px solid #cfc7b4; background: rgba(120,100,60,.06) !important; border-radius: 0 6px 6px 0; }

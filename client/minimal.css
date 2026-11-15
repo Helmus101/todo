@@ -60,7 +60,7 @@ button, .btn { border-radius: var(--radius); }
 :where(input, textarea, select):disabled { opacity: .55; cursor: not-allowed; }
 input[type="checkbox"], input[type="radio"] { padding-left: 0 !important; }
 a { color: var(--ink); text-decoration-color: var(--ink-3); text-underline-offset: 3px; }
-:focus-visible { outline: 2px solid var(--ink) !important; outline-offset: 2px; }
+:focus-visible { outline: 2px solid var(--signal) !important; outline-offset: 2px; }
 
 /* nav: text, underline the current page */
 .topnav, header.topnav { border-bottom: 1px solid var(--line) !important; background: #fff !important; }
