@@ -372,7 +372,7 @@ export function StudyLogPage({ lang, tasks, status, phoneOnly }: { lang?: "fr" |
       <>
       <div className="studylog-weeknav">
         <button type="button" className="btn xs ghost" onClick={() => setMonday(addDays(monday, -7))}>{"← " + "Prev week"}</button>
-        <span className="studylog-weeklabel">{fmtDate(monday, L)} – {fmtDate(addDays(monday, 4), L)}</span>
+        <span className="studylog-weeklabel">{fmtDate(monday, L)} – {fmtDate(addDays(monday, 6), L)}</span>
         <button type="button" className="btn xs ghost" onClick={() => setMonday(addDays(monday, 7))}>{"Next week" + " →"}</button>
       </div>
 
