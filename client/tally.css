@@ -19,7 +19,7 @@ a { color: var(--accent); }
 /* Focus rings — Tally uses a soft blue ring */
 :focus-visible {
   outline: none;
-  box-shadow: 0 0 0 3px var(--focus-ring);
+  box-shadow: 0 0 0 3px var(--focus-halo);
   border-radius: var(--radius-xs);
 }
 

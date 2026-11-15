@@ -51,7 +51,8 @@
   --accent-2-soft: #f4f1ec;
   --accent-2-rgb: 38, 34, 31;
   --brand-mark: #26221f;
-  --focus-ring: rgba(var(--signal-rgb), 0.28);
+  --focus-ring: var(--signal);
+  --focus-halo: rgba(var(--signal-rgb), 0.22);
   --chat-user-bg: #26221f;
   --chat-user-bg-2: #26221f;
   --vermilion: #c40000;
@@ -247,8 +248,8 @@ input, textarea {
 input::placeholder, textarea::placeholder { color: var(--ink-3); }
 input:focus, textarea:focus { 
   outline: none; 
-  border-color: var(--accent); 
-  box-shadow: 0 0 0 3px var(--focus-ring); 
+  border-color: var(--signal); 
+  box-shadow: 0 0 0 3px var(--focus-halo); 
   /* Instant response on focus */
   transition-duration: var(--duration-instant);
 }
@@ -456,7 +457,6 @@ input:focus, textarea:focus {
 @media (hover: hover) and (pointer: fine) { .topnav-link:hover { color: var(--accent); } }
 }
 .topnav-link.active { color: var(--accent); }
-.topnav-link:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 4px; }
 /* Phone: same header, tightened — five links + wordmark must fit 360px, so step the type down
    and drop the gap. (The prototype's own narrow rendering does exactly this.) */
 @media (max-width: 640px) {
@@ -1066,7 +1066,7 @@ input:focus, textarea:focus {
   border-radius: var(--radius-sm); font-size: var(--text-sm); background: var(--surface); color: var(--ink);
   margin-bottom: var(--space-1); font-family: inherit; transition: border-color var(--duration-fast) var(--ease-spring), box-shadow var(--duration-fast) var(--ease-spring);
 }
-.quiz-mistake-textarea:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--focus-ring); outline: none; }
+.quiz-mistake-textarea:focus { border-color: var(--signal); box-shadow: 0 0 0 3px var(--focus-halo); outline: none; }
 .deck-btn-back { display: block; margin: var(--space-2) auto 0; }
 /* Deliberately quieter than Wrong/Correct — an escape hatch for an off-syllabus card, not a third grade. */
 .deck-btn-learnt { display: block; margin: var(--space-1) auto 0; color: var(--ink-2); font-size: 12px; }
@@ -1597,7 +1597,7 @@ input:focus, textarea:focus {
   /* Apple Design §1 — instant feedback on focus */
   transition: opacity var(--duration-instant) var(--ease-spring), border-color var(--duration-instant) var(--ease-spring);
 }
-.draft-body-edit:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--focus-ring); }
+.draft-body-edit:focus { outline: none; border-color: var(--signal); box-shadow: 0 0 0 3px var(--focus-halo); }
 .draft-body-edit:disabled, .draft-subject:disabled { opacity: 0.55; cursor: not-allowed; }
 .draft-edit-acts { display: flex; gap: var(--space-2); margin-top: var(--space-2); }
 .rewrite-toggle { margin-top: var(--space-3); }
@@ -1829,7 +1829,7 @@ label.set-row.disabled { cursor: default; opacity: 0.5; }
   width: 18px; height: 18px; border-radius: 50%; background: var(--accent); border: 2px solid var(--bg);
   box-shadow: var(--shadow-card); cursor: pointer;
 }
-.hint-density-slider input[type="range"]:focus-visible { box-shadow: var(--focus-ring); }
+.hint-density-slider input[type="range"]:focus-visible { box-shadow: 0 0 0 3px var(--focus-halo); }
 .hint-density-slider-labels { display: flex; justify-content: space-between; gap: var(--space-1); font-size: 11px; color: var(--ink-3); }
 .hint-density-slider-labels .active { color: var(--accent); font-weight: 600; }
 
@@ -3655,7 +3655,7 @@ label.set-row.disabled { cursor: default; opacity: 0.5; }
   font-size: var(--text-sm); background: var(--bg); color: var(--ink);
   transition: border-color var(--duration-base) var(--ease-spring), box-shadow var(--duration-base) var(--ease-spring);
 }
-.sm-inline-problem-input:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--focus-ring); }
+.sm-inline-problem-input:focus { outline: none; border-color: var(--signal); box-shadow: 0 0 0 3px var(--focus-halo); }
 /* (the board's own inline answer row/input is gone by direct instruction — a gap shows the line and its
    "Your turn: …" chip; the student answers in chat, same as everything else.) */
 .sm-inline-problem-result {
@@ -4065,7 +4065,7 @@ label.set-row.disabled { cursor: default; opacity: 0.5; }
   font-family: inherit;
   transition: border-color var(--duration-fast) var(--ease), box-shadow var(--duration-fast) var(--ease);
 }
-.sm-submit-note:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--focus-ring); outline: none; }
+.sm-submit-note:focus { border-color: var(--signal); box-shadow: 0 0 0 3px var(--focus-halo); outline: none; }
 .sm-modal-review { display: grid; gap: var(--space-3); margin-top: var(--space-4); }
 .sm-modal-review label { display: grid; gap: var(--space-1); font-size: var(--text-xs); font-weight: var(--weight-medium); color: var(--ink-3); }
 .sm-modal-review input { padding: var(--space-2) var(--space-3); }
@@ -4196,7 +4196,7 @@ label.set-row.disabled { cursor: default; opacity: 0.5; }
    Applied to the textarea so composition feels like writing the prototype's entry, and entries read
    as handwriting once saved (the rendered text below reuses the same class via studylog-day-cards). */
 .studylog-textarea { font-family: var(--font-hand, inherit); font-size: 17px; }
-.studylog-textarea:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--focus-ring); outline: none; }
+.studylog-textarea:focus { border-color: var(--signal); box-shadow: 0 0 0 3px var(--focus-halo); outline: none; }
 /* Error log's three fields used to share .studylog-textarea, whose 260px min-height is sized for the big
    daily journal entry — reported live as three giant empty boxes for what's usually a one-line question/
    mistake/fix. Starts at one line and grows with the content instead (see the onInput handler at each call
@@ -4207,7 +4207,7 @@ label.set-row.disabled { cursor: default; opacity: 0.5; }
   background: var(--surface); padding: var(--space-2) var(--space-3); font-size: 14px; line-height: 1.5; font-family: inherit;
   resize: none; overflow-y: auto; transition: height 0.1s ease;
 }
-.errorlog-textarea:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--focus-ring); outline: none; }
+.errorlog-textarea:focus { border-color: var(--signal); box-shadow: 0 0 0 3px var(--focus-halo); outline: none; }
 .studylog-actions { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; }
 .studylog-summary-sec { margin-top: var(--space-3); padding-top: var(--space-3); border-top: 1px solid var(--line-soft); }
 .studylog-summary-sec h3 { font-size: var(--text-md); font-weight: var(--weight-semibold); margin-bottom: var(--space-2); }
@@ -4226,7 +4226,7 @@ label.set-row.disabled { cursor: default; opacity: 0.5; }
   flex: 1; min-width: 160px; border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--surface);
   padding: var(--space-2) var(--space-3); font-size: 14px; font-family: inherit;
 }
-.practice-problem-input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--focus-ring); outline: none; }
+.practice-problem-input:focus { border-color: var(--signal); box-shadow: 0 0 0 3px var(--focus-halo); outline: none; }
 .practice-problem-input:disabled { opacity: 0.7; }
 .practice-problem-verdict { font-size: 13px; font-weight: 600; margin-top: var(--space-3); }
 .practice-problem-verdict.correct { color: var(--accent); }
@@ -4556,7 +4556,7 @@ label.set-row.disabled { cursor: default; opacity: 0.5; }
   transition: border-color var(--duration-base) var(--ease-spring), box-shadow var(--duration-base) var(--ease-spring);
 }
 @media (hover: hover) and (pointer: fine) { .tutor-subject-select select:hover { border-color: var(--accent); } }
-.tutor-subject-select select:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--focus-ring); }
+.tutor-subject-select select:focus { outline: none; border-color: var(--signal); box-shadow: 0 0 0 3px var(--focus-halo); }
 
 /* Board problem mode toggle */
 

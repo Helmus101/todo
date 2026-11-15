@@ -62,6 +62,8 @@ button, .btn { border-radius: var(--radius); }
 input[type="checkbox"], input[type="radio"] { padding-left: 0 !important; }
 a { color: var(--ink); text-decoration-color: var(--ink-3); text-underline-offset: 3px; }
 :focus-visible { outline: 2px solid var(--signal) !important; outline-offset: 2px; }
+/* Text fields: one edge, not an outline floating beside the border. */
+:where(input:not([type="checkbox"]):not([type="radio"]):not([type="range"]), textarea, select):focus-visible { outline: 2px solid var(--signal) !important; outline-offset: -1px; border-color: var(--signal) !important; }
 
 /* nav: text, underline the current page */
 .topnav, header.topnav { border-bottom: 1px solid var(--line) !important; background: #fff !important; }
@@ -317,3 +319,9 @@ html { scrollbar-gutter: stable; scroll-behavior: smooth; }
   :root { --line: #8a847c; --line-soft: #b9b3ab; --ink-2: #26221f; --ink-3: #4a453f; }
   .btn:not(.primary), button:not(.primary) { outline: 1px solid var(--ink); outline-offset: -1px; }
 }
+
+
+/* Choice chips: a hairline so they read as controls, and a filled state so what is chosen is obvious. */
+.tutor-chip, .onboard-chips .btn { border: 1px solid var(--line) !important; border-radius: var(--radius-pill) !important; background: transparent !important; color: var(--ink) !important; padding: var(--space-2) var(--space-4) !important; min-height: 36px; }
+@media (hover: hover) and (pointer: fine) { .tutor-chip:hover, .onboard-chips .btn:hover { border-color: var(--ink-3) !important; } }
+.tutor-chip.on, .onboard-chips .btn[aria-pressed="true"] { background: var(--ink) !important; color: #fff !important; border-color: var(--ink) !important; }
