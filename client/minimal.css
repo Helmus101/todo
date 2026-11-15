@@ -354,3 +354,11 @@ button.topnav-link:hover { color: var(--ink); }
 .seg .btn[aria-pressed="true"] { background: var(--ink) !important; color: #fff !important; }
 
 .set-row select { padding-left: var(--space-3); }
+
+/* Flashcard review: a reading-width card, a visible progress line, and the next sensible action as the primary button (Flip before the answer is shown, Correct after). */
+.deck-popup:has(.deck-card-3d) { max-width: 680px; margin-left: auto; margin-right: auto; }
+.deck-popup .deck-progress-bar { display: block !important; }
+.deck-popup .deck-progress { background: none; font-family: var(--sans); font-size: var(--text-sm); color: var(--ink-2); }
+.deck-popup:has(.deck-card-3d) .deck-acts .btn { border: 1px solid var(--line) !important; min-height: 44px; padding: 0 var(--space-5); background: transparent !important; color: var(--ink) !important; }
+.deck-popup:has(.deck-card-3d):not(:has(.deck-card-3d.flipped)) .deck-acts > .btn:nth-child(2),
+.deck-popup:has(.deck-card-3d.flipped) .deck-acts .deck-btn-right { background: var(--ink) !important; color: #fff !important; border-color: var(--ink) !important; }

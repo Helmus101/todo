@@ -4422,7 +4422,7 @@ label.set-row.disabled { cursor: default; opacity: 0.5; }
 .tutor-past-sessions { width: 100%; text-align: left; margin-top: var(--space-7); }
 /* The prototype renders past sessions as a section: plain heading over a hairline, then quiet rows —
    not a boxed collapsible. The toggle keeps its collapse behaviour, just dressed as the heading. */
-.tutor-history-toggle { background: none; border: none; border-bottom: 1px solid var(--line); border-radius: 0; color: var(--ink); font-size: 1.4rem; cursor: pointer; padding: 0 0 var(--space-4); font-family: inherit; font-weight: 650; display: flex; align-items: baseline; justify-content: space-between; width: 100%; text-align: left; letter-spacing: var(--tracking-tight); }
+.tutor-history-toggle { background: none; border: none; border-bottom: 1px solid var(--line); border-radius: 0; color: var(--ink); font-size: var(--text-lg); cursor: pointer; padding: 0 0 var(--space-4); font-family: inherit; font-weight: 600; display: flex; align-items: center; justify-content: flex-start; gap: var(--space-2); width: 100%; text-align: left; letter-spacing: var(--tracking-tight); }
 @media (hover: hover) and (pointer: fine) { .tutor-history-toggle:hover { background: none; border-color: var(--ink-3); } }
 .tutor-history-list { list-style: none; padding: 0; margin: var(--space-5) 0 0; display: flex; flex-direction: column; gap: var(--space-4); }
 .tutor-history-item { border: 1px solid var(--line); border-radius: var(--radius-sm); padding: var(--space-5); text-align: left; background: var(--surface); transition: border-color var(--duration-fast) var(--ease), box-shadow var(--duration-fast) var(--ease); }
@@ -4495,14 +4495,15 @@ label.set-row.disabled { cursor: default; opacity: 0.5; }
   flex: 1;
 }
 
-.tutor-chat-history { display: flex; flex-direction: column; gap: var(--space-4); max-height: 500px; overflow-y: auto; padding: var(--space-4); }
+.tutor-chat-history { display: flex; flex-direction: column; gap: var(--space-6); max-height: 500px; overflow-y: auto; padding: var(--space-4); }
 .tutor-chat-message { display: flex; flex-direction: column; gap: var(--space-1); }
-.tutor-chat-message.user { align-items: flex-end; }
-.tutor-chat-message.assistant { align-items: flex-start; }
-.tutor-chat-role { font-size: 0.75rem; color: var(--ink-3); font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; }
-.tutor-chat-text { font-size: 0.95rem; line-height: 1.5; white-space: pre-wrap; word-wrap: break-word; overflow-wrap: break-word; padding: var(--space-3) var(--space-4); border-radius: var(--radius-sm); max-width: 85%; }
-.tutor-chat-message.user .tutor-chat-text { background: color-mix(in srgb, var(--accent) 15%, transparent); color: var(--ink); }
-.tutor-chat-message.assistant .tutor-chat-text { background: var(--surface); border: 1px solid var(--line); color: var(--ink); }
+.tutor-chat-message.user { align-items: stretch; padding-left: var(--space-5); }
+.tutor-chat-message.assistant { align-items: stretch; }
+.tutor-chat-role { font-size: var(--text-sm); color: var(--ink-2); font-weight: var(--weight-semibold); text-transform: none !important; letter-spacing: 0; }
+.tutor-chat-message.user .tutor-chat-role { color: var(--signal); }
+.tutor-chat-text { font-size: 1.0625rem; line-height: 1.6; white-space: pre-wrap; word-wrap: break-word; overflow-wrap: break-word; padding: 0; background: none; border: 0; border-radius: 0; max-width: 62ch; text-wrap: pretty; }
+.tutor-chat-message.user .tutor-chat-text { background: none !important; color: var(--ink-2); }
+.tutor-chat-message.assistant .tutor-chat-text { background: none !important; border: 0 !important; color: var(--ink); }
 
 /* Phone-first tutor layout: keep /tutor reachable and usable at 390px without horizontal clipping. */
 @media (max-width: 640px) {
