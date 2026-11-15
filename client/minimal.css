@@ -333,3 +333,6 @@ button.topnav-link:hover { color: var(--ink); }
 /* One wordmark everywhere: the ring plus lowercase "otto". */
 .brand-lockup, .topnav-brand.brand-lockup, .landing-min-brand.brand-lockup { display: inline-flex; align-items: center; gap: var(--space-2); font-family: var(--display); font-size: 20px; font-weight: 600; letter-spacing: -0.02em; line-height: 1; text-transform: lowercase; color: var(--ink); text-decoration: none !important; }
 .brand-lockup svg { display: block !important; flex: none; }
+
+/* Status text, not a code snippet. */
+.dash-late, .dash-working { font-family: var(--sans); font-size: var(--text-sm); letter-spacing: 0; padding: 0 !important; background: none !important; color: var(--ink-2); }
