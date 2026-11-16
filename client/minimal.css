@@ -378,3 +378,42 @@ button.topnav-link:hover { color: var(--ink); }
 .tutor-history-actions { display: flex; align-items: center; gap: var(--space-2); }
 .tutor-history-actions { justify-content: flex-start; }
 .tutor-history-resume { background: var(--ink) !important; color: #fff !important; border-radius: var(--radius); min-height: 36px; padding: 0 var(--space-4); }
+
+/* ── Apple pass: landing + main page ────────────────────────────────────────────────────────────────────────
+   Entrance: one choreographed rise per container (opacity + 10px translate only — compositor-friendly), staggered
+   with non-uniform delays so the eye is led headline → promise → action → proof. Runs once on mount; reduced-motion
+   collapses it via the global rule in styles.css. Press: the CTA responds on pointer-down (global :active rule),
+   and has a 48px hit area. Typography: tight display tracking, balanced headline, a readable measure. */
+@keyframes otto-rise { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
+
+.landing-min-nav { animation: otto-rise 300ms var(--ease-out) backwards; }
+.landing-min-main > h1 { animation: otto-rise 380ms var(--ease-out) 40ms backwards; }
+.landing-min-main > p:nth-of-type(1) { animation: otto-rise 380ms var(--ease-out) 110ms backwards; }
+.landing-min-main > p:nth-of-type(2) { animation: otto-rise 380ms var(--ease-out) 190ms backwards; }
+.landing-demo { animation: otto-rise 420ms var(--ease-out) 270ms backwards; }
+.landing-demo .ts-line { animation: otto-rise 360ms var(--ease-out) backwards; }
+.landing-demo .ts-line:nth-of-type(1) { animation-delay: 340ms; }
+.landing-demo .ts-line:nth-of-type(2) { animation-delay: 440ms; }
+.landing-demo .ts-line:nth-of-type(3) { animation-delay: 560ms; }
+.landing-demo .ts-line:nth-of-type(4) { animation-delay: 650ms; }
+
+.landing-min-main > h1 { font-size: clamp(2.25rem, 7.5vw, 3.5rem) !important; line-height: 1.04 !important; letter-spacing: -0.035em !important; max-width: 16ch; }
+.landing-min-main > p { line-height: 1.55; font-size: 1.0625rem; }
+.landing-min-cta { min-height: 48px; display: inline-flex !important; align-items: center; padding: 0 var(--space-6) !important; font-weight: 600; letter-spacing: -0.005em !important; border-radius: 999px !important; }
+.landing-min-nav a, .landing-min-foot a { transition: color .15s ease, opacity .15s ease; }
+.landing-min-nav nav a { padding: 10px 0; }   /* 44px+ touch target without changing the look */
+
+/* Main page: header leads, rows follow. Delays are capped after 5 rows so a long list never feels slow, and only
+   rows that MOUNT animate (polling re-renders keep their DOM nodes, so nothing replays). */
+.dash-head > * { animation: otto-rise 340ms var(--ease-out) backwards; }
+.dash-head > *:nth-child(2) { animation-delay: 50ms; }
+.dash-head > *:nth-child(3) { animation-delay: 100ms; }
+.list-wrap .list > .card { animation: otto-rise 320ms var(--ease-out) backwards; }
+.list-wrap .list > .card:nth-child(1) { animation-delay: 120ms; }
+.list-wrap .list > .card:nth-child(2) { animation-delay: 160ms; }
+.list-wrap .list > .card:nth-child(3) { animation-delay: 195ms; }
+.list-wrap .list > .card:nth-child(4) { animation-delay: 225ms; }
+.list-wrap .list > .card:nth-child(5) { animation-delay: 250ms; }
+.list-wrap .list > .card:nth-child(n+6) { animation-delay: 270ms; }
+.dash-line { text-wrap: pretty; max-width: 52ch; }
+.list-head { letter-spacing: -0.03em !important; }
