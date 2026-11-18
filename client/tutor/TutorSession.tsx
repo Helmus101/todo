@@ -108,6 +108,8 @@ export function friendlyExerciseText(text: string, en: boolean): string {
 
 export function TutorSession({ userId, onExit, visionReady, sessionId, reviewView }: { userId: string | null; onExit: () => void; visionReady: boolean; sessionId?: string; reviewView?: string }) {
   const L = useLang();
+  // Scopes the warm-paper look in tutor/socra.css to this screen only.
+  useEffect(() => { document.body.classList.add("tutor-look"); return () => document.body.classList.remove("tutor-look"); }, []);
   const [task, setTask] = useState<WebTask | null>(null);
   const [loadError, setLoadError] = useState(false);
   const [input, setInput] = useState("");

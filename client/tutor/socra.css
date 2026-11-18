@@ -1,0 +1,58 @@
+/* Tutor screen look: warm paper, navy ink, amber highlight, a serif voice and a handwritten title.
+   Scoped to body.tutor-look so the rest of the app keeps its own tokens. No web fonts are fetched (the app is cookie- and tracker-free);
+   the stacks fall back to what every device already has. */
+body.tutor-look {
+  --bg: oklch(0.965 0.018 85);
+  --bg-2: oklch(0.93 0.02 85);
+  --bg-3: oklch(0.9 0.03 85);
+  --surface: oklch(0.985 0.012 88);
+  --surface-raised: oklch(0.985 0.012 88);
+  --bar: oklch(0.95 0.02 85);
+  --ink: oklch(0.27 0.03 255);
+  --ink-2: oklch(0.42 0.03 255);
+  --ink-3: oklch(0.48 0.03 255);
+  --line: oklch(0.85 0.03 85);
+  --line-soft: oklch(0.89 0.025 85);
+  --signal: oklch(0.42 0.11 255);
+  --signal-soft: oklch(0.94 0.03 255);
+  --signal-rgb: 41, 70, 150;
+  --accent: oklch(0.42 0.11 255);
+  --accent-soft: oklch(0.92 0.03 85);
+  --highlight: oklch(0.78 0.13 75);
+  --radius: 6px;
+  --tutor-serif: Newsreader, "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, serif;
+  --tutor-hand: Kalam, "Bradley Hand", "Segoe Print", "Comic Sans MS", cursive;
+  background: var(--bg);
+  color: var(--ink);
+  font-family: var(--tutor-serif);
+}
+body.tutor-look .tutor-landing-title,
+body.tutor-look .tutor-review-subject,
+body.tutor-look .tutor-history-title,
+body.tutor-look .brand {
+  font-family: var(--tutor-hand);
+  font-weight: 700;
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--signal);
+}
+body.tutor-look .tutor-landing-title { font-size: clamp(30px, 5vw, 44px); line-height: 1.15; text-wrap: balance; }
+body.tutor-look .tutor-landing-sub,
+body.tutor-look .tutor-chat-text,
+body.tutor-look .tutor-report-summary,
+body.tutor-look .tutor-history-summary { font-family: var(--tutor-serif); font-size: 1.1rem; line-height: 1.55; }
+body.tutor-look .tutor-face { background: var(--surface); border: 2px solid var(--ink); }
+body.tutor-look .tutor-face-eye { background: var(--ink); }
+body.tutor-look .tutor-history-item,
+body.tutor-look .tutor-dock-chat,
+body.tutor-look .tutor-report { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: none; }
+body.tutor-look .tutor-chat-role { color: var(--signal); font-size: 12px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; }
+/* The writing board reads as graph paper. */
+body.tutor-look .tutor-board, body.tutor-look .board-page, body.tutor-look .tutor-canvas {
+  background-color: var(--surface);
+  background-image: linear-gradient(oklch(0.72 0.06 240 / .18) 1px, transparent 1px), linear-gradient(90deg, oklch(0.72 0.06 240 / .18) 1px, transparent 1px);
+  background-size: 24px 24px;
+}
+body.tutor-look .btn.primary { background: var(--signal); border-color: var(--signal); color: oklch(0.98 0.01 88); border-radius: var(--radius); }
+body.tutor-look ::selection { background: var(--highlight); color: oklch(0.25 0.04 60); }
+@media (prefers-contrast: more) { body.tutor-look { --line: oklch(0.6 0.03 85); } }

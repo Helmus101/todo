@@ -15,6 +15,7 @@ import "@fontsource/kalam/latin-700.css";
 import "@fontsource/handlee/latin-400.css";
 import "./styles.css";
 import "./tally.css";
+import "./tutor/socra.css";
 import "./lab.css";
 import "./coursework.css";
 import "./tour.css";
