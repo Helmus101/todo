@@ -67,6 +67,7 @@ export class Player {
     this.live.add(s); this.onSpeaking(true);
     s.onended = () => { this.live.delete(s); if (!this.live.size) this.onSpeaking(false); };
   }
+  get active() { return this.live.size > 0; }
   interrupt() {
     for (const s of this.live) { try { s.onended = null; s.stop(); } catch { /* already stopped */ } }
     this.live.clear(); this.next = 0; this.onSpeaking(false);

@@ -236,7 +236,13 @@ export function useGeminiLive(opts: LiveOptions) {
       if (!session) throw Object.assign(new Error(modelErrs.join("; ") || "no model accepted the call"), { status: 503 });
       if (!aliveRef.current) { try { session.close(); } catch { /* */ } return; }
       sessionRef.current = session;
-      const mic = await startMic((b64) => { try { sessionRef.current?.sendRealtimeInput({ audio: { data: b64, mimeType: "audio/pcm;rate=16000" } }); } catch { /* socket closing */ } });
+      let loud = 0;
+      const mic = await startMic((b64) => {
+        // Barge-in: the moment the student clearly speaks over Otto, cut his audio locally (about 0.3 s) instead of waiting for the server to notice.
+        // Echo cancellation keeps Otto's own voice below this level; the server still confirms with `interrupted`.
+        const m = micRef.current, pl = playerRef.current;
+        if (pl?.active && m && m.level() > 0.08) { if (++loud >= 3) { pl.interrupt(); loud = 0; } } else loud = 0;
+        try { sessionRef.current?.sendRealtimeInput({ audio: { data: b64, mimeType: "audio/pcm;rate=16000" } }); } catch { /* socket closing */ } });
       // The call may have been ended while the microphone was still starting: then the microphone must not stay open.
       if (!aliveRef.current) { mic.stop(); try { session.close(); } catch { /* */ } return; }
       micRef.current = mic;
