@@ -4,8 +4,9 @@ import { SPEAKER_RATE, micChunk, speakerChunk } from "./pcm.ts";
 export interface Mic { setMuted(m: boolean): void; stop(): void; level(): number }
 
 export async function startMic(onChunk: (b64: string) => void): Promise<Mic> {
-  const stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } });
-  const ctx = new AudioContext();
+  const stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true, channelCount: 1 } });
+  let ctx: AudioContext;
+  try { ctx = new AudioContext({ sampleRate: 16000 }); } catch { ctx = new AudioContext(); } // 16 kHz capture: the browser resamples with a proper filter (clearer speech recognition)
   await ctx.audioWorklet.addModule("/otto-tap.js");
   const src = ctx.createMediaStreamSource(stream);
   const node = new AudioWorkletNode(ctx, "otto-tap");
@@ -35,6 +36,15 @@ export async function startMic(onChunk: (b64: string) => void): Promise<Mic> {
 }
 
 /** Gapless playback of Gemini's 24 kHz PCM chunks, with an instant interrupt (barge-in). */
+/** One speaker context for the whole page. Browsers only let sound start from a tap, but the call often starts a moment after the tap (after the session is created),
+ *  so the context is created and resumed inside the tap by unlockAudio() and reused by every Player; a context made later would sit suspended and Otto would be silent. */
+let sharedCtx: AudioContext | null = null;
+export function unlockAudio(): AudioContext {
+  if (!sharedCtx || sharedCtx.state === "closed") sharedCtx = new AudioContext();
+  if (sharedCtx.state === "suspended") void sharedCtx.resume().catch(() => {});
+  return sharedCtx;
+}
+
 export class Player {
   private ctx: AudioContext | null = null;
   private next = 0;
@@ -42,7 +52,7 @@ export class Player {
   constructor(private onSpeaking: (s: boolean) => void) {}
   get state(): AudioContextState | "none" { return this.ctx ? this.ctx.state : "none"; }
   /** Call from a click so the browser allows sound. */
-  unlock() { if (!this.ctx) this.ctx = new AudioContext(); if (this.ctx.state === "suspended") void this.ctx.resume(); }
+  unlock() { this.ctx = unlockAudio(); }
   push(b64: string) {
     this.unlock();
     const ctx = this.ctx!;
@@ -61,5 +71,5 @@ export class Player {
     for (const s of this.live) { try { s.onended = null; s.stop(); } catch { /* already stopped */ } }
     this.live.clear(); this.next = 0; this.onSpeaking(false);
   }
-  close() { this.interrupt(); void this.ctx?.close().catch(() => {}); this.ctx = null; }
+  close() { this.interrupt(); this.ctx = null; } // the shared context stays open for the next call
 }

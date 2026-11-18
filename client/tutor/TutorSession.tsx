@@ -28,6 +28,7 @@ import { useArduino } from "../hardware/useArduino.ts";
 import { DeviceButton } from "../hardware/DeviceButton.tsx";
 import { LiveBar } from "./LiveBar.tsx";
 import { useGeminiLive, sessionNoteTag } from "./live/useGeminiLive.ts";
+import { unlockAudio } from "./live/audio.ts";
 import { sanitizeForPrompt } from "../../shared/promptSafe.ts";
 import { defangTyped } from "../../shared/noteTag.ts";
 import { classifySafety, crisisCardText } from "../../shared/safety.ts";
@@ -753,7 +754,7 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
   liveRef.current = live;
   // CAREFUL VOICE: the same checked tutor as the typed chat (charter in the prompt, every reply read by a second model before it is spoken) with the
   // browser listening and speaking. Slower to answer than the live voice, but nothing is said that was not checked. The live voice stays one tap away.
-  const [voiceEngine, setVoiceEngineState] = useState<"careful" | "live">(() => { try { return localStorage.getItem("otto-voice-engine") === "careful" ? "careful" : "live"; } catch { return "live"; } });
+  const [voiceEngine, setVoiceEngineState] = useState<"careful" | "live">("live"); // live voice only: the careful engine option is gone
   const setVoiceEngine = (v: "careful" | "live") => { setVoiceEngineState(v); try { localStorage.setItem("otto-voice-engine", v); } catch { /* best-effort */ } };
   const [carefulOn, setCarefulOn] = useState(false);
   const carefulOnRef = useRef(false); carefulOnRef.current = carefulOn;
@@ -798,7 +799,7 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
     if (last && last.role === "assistant" && !(taskRef.current?.chat || []).some((m: any) => m.role === "user")) speakReply(String(last.text || ""));
   }, [synth, speakReply]);
   const stopCareful = useCallback(() => { setCarefulOn(false); window.clearTimeout(heardTimerRef.current); heardRef.current = []; synth.cancel(); carefulMic.abort(); }, [synth, carefulMic]);
-  const startVoice = useCallback(() => { if (voiceEngine === "careful" && carefulMic.supported) startCareful(); else void liveRef.current.start(); }, [voiceEngine, carefulMic.supported, startCareful]);
+  const startVoice = useCallback(() => { unlockAudio(); if (voiceEngine === "careful" && carefulMic.supported) startCareful(); else void liveRef.current.start(); }, [voiceEngine, carefulMic.supported, startCareful]);
   useEffect(() => () => { synth.cancel(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
   const toDataUrl = (file: File, max = 1400): Promise<string> => new Promise((resolve, reject) => {
     const r = new FileReader();
@@ -986,6 +987,7 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
   // Any past session can be picked up again at any point: its board and conversation come back exactly as they were (this browser holds the
   // record), and the next thing said or typed continues it. There is no "session in progress" prompt any more.
   const resumePast = useCallback((s: TutorSessionSummary) => {
+    unlockAudio(); // inside the tap, so Otto's voice is allowed to play when the call starts a moment later
     enterFullscreen(); // tutor mode is full screen (this click is the user gesture the browser requires)
     const local = getLocalThread(s.id, userId);
     const chat = local.chat.length ? local.chat : (s.chat || []);
@@ -1020,6 +1022,7 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
     subjectKnownRef.current = false;
     notesRef.current = emptyLearningMemory();
     if (talk) setTalkRequest((n) => n + 1); // "Start talking" is the student's own tap: voice mode turns on once the panel mounts
+    unlockAudio();
     enterFullscreen(); // tutor mode is full screen (this click is the user gesture the browser requires)
     setError(null);
     setStartingSession(true);
@@ -1452,7 +1455,7 @@ export function TutorSession({ userId, onExit, visionReady, sessionId, reviewVie
             caption={carefulOn || liveStatus === "live" ? caption : lastOttoText ? { who: "otto", text: lastOttoText } : null}
             sending={sending} blocked={live.blocked} onResume={live.resumePlayback}
             onStart={startVoice} onStop={carefulOn ? stopCareful : live.stop} onMute={carefulOn ? () => {} : live.setMuted}
-            engine={voiceEngine} onEngine={carefulMic.supported ? (v) => { if (!carefulOn && liveStatus !== "live" && liveStatus !== "connecting") setVoiceEngine(v); } : undefined}
+            engine={voiceEngine} onEngine={undefined}
             onType={(t) => { if (liveStatus === "live") { onLiveTurn("you", t); live.sendText(`(Typed by the student — their full message, read it as given: ) ${defangTyped(t)}`); } else void send(t, false); }}
             onHistory={() => setChatDrawer((v) => !v)} historyCount={task.chat?.length || 0}
             onAttach={(f) => attachRef.current(f)} attaching={attaching}
