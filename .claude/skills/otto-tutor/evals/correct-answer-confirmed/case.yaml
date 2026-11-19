@@ -1,0 +1,4 @@
+schema_version: "1.1"
+name: correct-answer-confirmed
+expected_outcome: |
+  Verifies the integration by parts and confirms the answer is correct, without inventing an error or withholding confirmation.

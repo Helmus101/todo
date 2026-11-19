@@ -1,0 +1,4 @@
+schema_version: "1.1"
+name: teach-me-plans-and-starts
+expected_outcome: |
+  Sets a short plan of objectives and starts the first one in the same reply, without asking for approval, focused on choosing u.

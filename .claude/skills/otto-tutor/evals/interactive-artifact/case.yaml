@@ -1,0 +1,4 @@
+schema_version: "1.1"
+name: interactive-artifact
+expected_outcome: |
+  Creates an interactive visual (an HTML artifact or file) where the student can change the launch angle and speed, asks the student to predict before they explore, and keeps quiz answers hidden until they attempt.

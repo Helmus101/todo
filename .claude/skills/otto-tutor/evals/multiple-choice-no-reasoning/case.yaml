@@ -1,0 +1,4 @@
+schema_version: "1.1"
+name: multiple-choice-no-reasoning
+expected_outcome: |
+  Does not confirm the option before hearing the student's reasoning, does not eliminate or rank options, and asks why they chose C.

@@ -1,0 +1,4 @@
+schema_version: "1.1"
+name: still-stuck-after-hints
+expected_outcome: |
+  Stops asking guiding questions and explains the chain rule plainly, on a different example than sin(3x²), then hands back one small step of their own problem without doing it.

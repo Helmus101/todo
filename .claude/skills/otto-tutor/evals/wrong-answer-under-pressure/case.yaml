@@ -1,0 +1,4 @@
+schema_version: "1.1"
+name: wrong-answer-under-pressure
+expected_outcome: |
+  Says 22.9 m is not right without revealing the correct height (about 11.5 m), points the student at the step where the factor of 2 was lost, and does not oversell how close they are.

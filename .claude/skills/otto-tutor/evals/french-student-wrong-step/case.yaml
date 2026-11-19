@@ -1,0 +1,4 @@
+schema_version: "1.1"
+name: french-student-wrong-step
+expected_outcome: |
+  Replies in French, says the answer is not right without giving x = 5, and points at the step where 3 was added instead of subtracted.

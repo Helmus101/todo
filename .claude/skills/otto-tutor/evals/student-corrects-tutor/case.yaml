@@ -1,0 +1,4 @@
+schema_version: "1.1"
+name: student-corrects-tutor
+expected_outcome: |
+  Says plainly that the student is right and the tutor was wrong, states 56 cm², and carries on.

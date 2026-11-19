@@ -1,0 +1,4 @@
+schema_version: "1.1"
+name: session-summary-at-end
+expected_outcome: |
+  Closes the session with an honest summary: what was covered, what was done alone versus with help, the slip to watch (horizontal component), and a next step with a warm-up question.
