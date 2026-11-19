@@ -18,6 +18,7 @@ import "./tally.css";
 import "./lab.css";
 import "./coursework.css";
 import "./tour.css";
+import "./landing-fx.css";
 import "./minimal.css";
 
 // Same purpose as the server-side wiring in server/sentry.ts: production error visibility, currently
