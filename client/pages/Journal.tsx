@@ -123,7 +123,8 @@ export function StudyLogPage({ lang, tasks, status, phoneOnly }: { lang?: "fr" |
   const [genBusy, setGenBusy] = useState(false);
 
   // Speech-to-text dictation for the Journal entry — never auto-started; explicit user tap required.
-  const speechLang = "en-US";
+  // Dictate in the student's own language (most of Otto's students are French), not always English.
+  const speechLang = typeof navigator !== "undefined" && /^fr/i.test(navigator.language || "") ? "fr-FR" : "en-US";
   const recog = useSpeechRecognition({
     lang: speechLang,
     onResult: (transcript) => {
@@ -142,15 +143,16 @@ export function StudyLogPage({ lang, tasks, status, phoneOnly }: { lang?: "fr" |
   // always holds the LATEST recog for the cleanup to read, without the effect re-subscribing on every render.
   const recogRef = useRef(recog);
   recogRef.current = recog;
-  useEffect(() => {
-    return () => {
-      if (recogRef.current.listening) recogRef.current.stop();
-    };
-  }, [selected, monday, tab]);
   // Editing a day whose deck already exists — false by default so a day WITH a deck shows the deck/quiz
   // straight away, not the entry textarea again. Flipping this back to the textarea is an explicit choice
   // (the "modifier" link), never the default view once a deck exists.
   const [editingDay, setEditingDay] = useState(false);
+  // Turn dictation off when the day, week, tab or editor changes (declared after editingDay so the deps can read it).
+  useEffect(() => {
+    return () => {
+      if (recogRef.current.listening) recogRef.current.stop();
+    };
+  }, [selected, monday, tab, editingDay]);
   const [openDeckFor, setOpenDeckFor] = useState<"summary" | "month" | null>(null);
   // Companion quiz on week/month summaries — separate open-state from the flashcard deck's, since a summary
   // can have both live at once and they're reviewed independently (see generateWeeklyStudyDeck/
@@ -259,10 +261,22 @@ export function StudyLogPage({ lang, tasks, status, phoneOnly }: { lang?: "fr" |
   const dates = Array.from({ length: 7 }, (_, i) => addDays(monday, i));
   const dayLabels = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 
+  // Saving makes the flashcards, so the mic must be fully off first: otherwise dictation keeps listening (and keeps
+  // appending words) while the deck is generated. Whatever was still being heard is kept, then recognition is aborted.
+  const stopDictation = (): string => {
+    const r = recogRef.current;
+    if (!r.listening) return text;
+    const heard = r.interimTranscript.trim();
+    r.abort();
+    const full = heard ? (text ? `${text} ${heard}` : heard) : text;
+    if (full !== text) setText(full);
+    return full;
+  };
   const save = async () => {
+    const entry = stopDictation();
     setSaving(true);
     try {
-      const list = await api.studyLogDay(dates[selected], text);
+      const list = await api.studyLogDay(dates[selected], entry);
       const fresh = list.find((t) => t.logDate === dates[selected]) || null;
       setDays((prev) => {
         const next = prev.map((d, i) => (i === selected ? fresh : d));
@@ -275,13 +289,14 @@ export function StudyLogPage({ lang, tasks, status, phoneOnly }: { lang?: "fr" |
       // see generateDailyStudyCards) — that used to be entirely silent: text saved, no deck, no error, no
       // clue why the flashcards never appeared. Detect it here since the client already has enough info
       // (non-empty text, no cards) without needing a server response-shape change.
-      if (text.trim() && !fresh?.flashcards?.length) {
+      if (entry.trim() && !fresh?.flashcards?.length) {
         notify("Saved, but couldn't make flashcards from that — try saving again.", "error");
       }
     } catch (e: any) { notify(e?.message || ("That didn't save — give it another try."), "error"); }
     finally { setSaving(false); }
   };
   const genSummary = async () => {
+    stopDictation();
     setGenBusy(true);
     try {
       const list = await api.studyLogWeekSummary(monday);
