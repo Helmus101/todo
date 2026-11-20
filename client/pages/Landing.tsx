@@ -1,3 +1,4 @@
+import { useEffect, useRef } from "react";
 import { LanguagePicker } from "../LanguagePicker.tsx";
 import { Testimonials } from "./Testimonials.tsx";
 import { AiLogo } from "./AiLogos.tsx";
@@ -21,8 +22,15 @@ const ASK_TARGETS: { name: string; url: (q: string) => string }[] = [
 export function Landing({ lang, onLangChange }: { lang: "fr" | "en"; onLangChange: (v: "fr" | "en") => void }) {
   const en = lang === "en";
   const L = (fr: string, e: string) => (e);
+  // Motion layer (3D corridor, smooth scroll, reveals): client-only and lazy, so the prerendered HTML and the main bundle are untouched.
+  const root = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    let off: (() => void) | undefined, dead = false;
+    void import("./landingFx.ts").then((m) => { if (!dead && root.current) off = m.mountLandingFx(root.current); }).catch(() => { /* the page works without the motion layer */ });
+    return () => { dead = true; off?.(); };
+  }, []);
   return (
-    <div className="landing landing-min">
+    <div className="landing landing-min" ref={root}>
       <header className="landing-min-nav">
         <a className="landing-min-brand brand-lockup" href="/"><svg className="logo" width={20} height={20} viewBox="0 0 48 48" fill="none" aria-hidden="true"><circle cx="24" cy="24" r="14" stroke="currentColor" strokeWidth="6" fill="none" /></svg><span>otto</span></a>
         <nav>
