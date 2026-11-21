@@ -4943,7 +4943,8 @@ button[aria-expanded="true"] > .sm-chev { transform: rotate(45deg); }
 .live-controls { display: flex; align-items: center; gap: var(--space-2); padding: 6px 8px; border: 1px solid var(--line); border-radius: 999px; background: var(--surface); box-shadow: none; }
 /* (!important: a global `button { background: transparent !important }` reset would otherwise make these invisible) */
 .live-main-btn { display: inline-flex; align-items: center; gap: 8px; height: 44px; min-width: 160px; padding: 0 20px; border-radius: 999px; border: 0; background: var(--accent) !important; color: #fff; font: inherit; font-weight: 600; cursor: pointer; justify-content: center; }
-.live-main-btn.is-on { background: var(--bg-2); color: var(--ink); box-shadow: 0 0 0 1px var(--line) inset; }
+/* "Voice on": the base rule above forces the accent background with !important, so this state needs !important too, or the button stays black with dark text. */
+.live-main-btn.is-on { background: var(--bg-2) !important; color: var(--ink) !important; box-shadow: 0 0 0 1px var(--line) inset; }
 .live-orb { position: relative; flex: none; display: inline-flex; align-items: center; justify-content: center; min-width: 56px; min-height: 56px; }
 .live-bar[data-state="idle"] .live-orb { opacity: .85; }
 @keyframes live-breathe { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.1); } }
@@ -4951,7 +4952,7 @@ button[aria-expanded="true"] > .sm-chev { transform: rotate(45deg); }
 .live-main-btn:disabled { opacity: .5; cursor: default; }
 .live-icon-btn { position: relative; display: inline-grid; place-items: center; width: 44px; height: 44px; border: 0; border-radius: 50%; background: transparent; color: var(--ink); cursor: pointer; }
 @media (hover: hover) and (pointer: fine) { .live-icon-btn:hover { background: var(--bg-2) !important; } }
-.live-icon-btn[aria-pressed="true"] { background: var(--bg-2); }
+.live-icon-btn[aria-pressed="true"] { background: var(--bg-2) !important; }
 .live-icon-btn:disabled { opacity: .4; cursor: default; }
 .live-count { position: absolute; top: 2px; right: 0; min-width: 16px; height: 16px; border-radius: 8px; background: var(--accent); color: var(--accent-ink, #fff); font-size: 10px; display: grid; place-items: center; padding: 0 3px; }
 .live-type { display: flex; align-items: center; gap: var(--space-2); width: min(560px, 100%); border-bottom: 1px solid var(--line); padding-bottom: 4px; }
