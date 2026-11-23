@@ -547,6 +547,84 @@ function formatMath(text: string): string {
 
 export { formatMath, boldify };
 
+/** LaTeX written without any $…$ ("\\frac{1}{2}", "x^{2}\\sqrt{y}", "\\alpha + \\beta"): finds each command with its brace/bracket arguments and
+ *  the script/glue characters touching it, so KaTeX can typeset just that run. Everything else stays plain text. */
+function bareLatexRuns(text: string): Array<{ tex: string | null; text: string }> {
+  const out: Array<{ tex: string | null; text: string }> = [];
+  let plainFrom = 0, i = 0;
+  const skipGroup = (at: number, open: string, close: string): number => {
+    if (text[at] !== open) return at;
+    let depth = 0;
+    for (let j = at; j < text.length; j++) { if (text[j] === open) depth++; else if (text[j] === close && --depth === 0) return j + 1; }
+    return at;
+  };
+  while (i < text.length) {
+    if (text[i] !== "\\" || !/[A-Za-z]/.test(text[i + 1] || "")) { i++; continue; }
+    let start = i;
+    while (start > plainFrom && /[A-Za-z0-9+\-=*.^_(),]/.test(text[start - 1])) start--;
+    let end = i + 1;
+    for (;;) {
+      while (/[A-Za-z]/.test(text[end] || "")) end++;
+      for (;;) { const g = skipGroup(end, "{", "}"); const b = skipGroup(g, "[", "]"); if (b === end) break; end = b; }
+      const c = text[end];
+      if (c === "^" || c === "_") { end++; const g = skipGroup(end, "{", "}"); end = g !== end ? g : end + (/[\w]/.test(text[end] || "") ? 1 : 0); }
+      if (text[end] === "\\" && /[A-Za-z]/.test(text[end + 1] || "")) { end++; continue; }
+      if (/[A-Za-z0-9+\-=*.^_(),]/.test(text[end] || "") && !/\s/.test(text[end])) { end++; continue; }
+      break;
+    }
+    if (start > plainFrom) out.push({ tex: null, text: text.slice(plainFrom, start) });
+    out.push({ tex: text.slice(start, end), text: text.slice(start, end) });
+    plainFrom = i = end;
+  }
+  if (plainFrom < text.length) out.push({ tex: null, text: text.slice(plainFrom) });
+  return out;
+}
+/** Plain (non-LaTeX) text with real <sup>/<sub>: "x^2", "x^(n-1)", "10^-3", "Fe^3+", "a_n", "x_{10}", "H_2O" and bare formulas
+ *  like "H2O", "CO2", "C6H12O6". The Unicode super/subscript block has no letters, so the old text pass left "x^n+1" or "a_k" raw. */
+const FRAC_OPERAND = String.raw`\d+(?:\.\d+)?|[A-Za-z]\d*|\([^()]+\)`;
+const PLAIN_SCRIPT = new RegExp(String.raw`(?<![\w/.)])(?<num>${FRAC_OPERAND})\/(?<den>${FRAC_OPERAND})(?![\w/(.])|` + String.raw`\^(\{[^{}]*\}|\([^()]*\)|[+-]?[A-Za-z0-9]+(?:[+-](?![\w(]))?)|(?:(?<![A-Za-z0-9_])[A-Za-z]|\))_(\{[^{}]*\}|[0-9]+|[A-Za-z]{1,2}(?![A-Za-z]))|\b(?:[A-Z][a-z]?\d*){2,}\b`, "g");
+/** "1/2", "x/2", "(x+1)/(x-2)" as a stacked fraction. Plain letter/letter ("m/s", "and/or") is never a fraction: one side must be a number or a bracketed group. */
+function plainFraction(num: string, den: string): string | null {
+  const strip = (g: string) => g.replace(/^\(|\)$/g, "").trim();
+  const a = strip(num), b = strip(den);
+  const numeric = (g: string) => /^\d/.test(g), grouped = (g: string) => g.length !== strip(g).length;
+  if (!(numeric(num) || numeric(den) || grouped(num) || grouped(den))) return null;
+  if (!/^[\w\s+\-*.^_{}]+$/.test(a) || !/^[\w\s+\-*.^_{}]+$/.test(b)) return null;
+  try { return katex.renderToString(`\\frac{${a}}{${b}}`, { throwOnError: true, strict: false, trust: false, output: "html" }); } catch { return null; }
+}
+const NOT_A_FORMULA = /^(?:HL|SL|IB|AA|AI|TOK|CAS|EE|GDC|SAT|AP|ACT)\d*$/;
+function plainScripts(text: string): ReactNode[] {
+  if (text.includes("\\")) {
+    return bareLatexRuns(text).flatMap((r, n): ReactNode[] => {
+      if (r.tex === null) return r.text.includes("\\") ? [formatMath(r.text)] : plainScripts(r.text);
+      let html: string | null = null;
+      try { html = katex.renderToString(r.tex, { throwOnError: true, strict: false, trust: false, output: "html", maxSize: 20, maxExpand: 500 }); } catch { html = null; }
+      return [html === null ? formatMath(r.text) : <span key={`l${n}`} dangerouslySetInnerHTML={{ __html: html }} />];
+    });
+  }
+  if (!/[\^_/]|\d/.test(text)) return [formatMath(text)];
+  const out: ReactNode[] = [];
+  let last = 0, k = 0;
+  for (const m of text.matchAll(PLAIN_SCRIPT)) {
+    const at = m.index ?? 0, all = m[0];
+    if (m.groups?.num !== undefined) {
+      const html = plainFraction(m.groups.num, m.groups.den);
+      if (html === null) continue;
+      if (at > last) out.push(text.slice(last, at));
+      out.push(<span key={`s${k++}`} className="mt-frac" dangerouslySetInnerHTML={{ __html: html }} />);
+      last = at + all.length; continue;
+    }
+    if (m[1] === undefined && m[2] === undefined && (!/\d/.test(all) || NOT_A_FORMULA.test(all))) continue;
+    if (at > last) out.push(text.slice(last, at));
+    const strip = (g: string) => g.replace(/^[{(]|[})]$/g, "");
+    if (m[1] !== undefined) out.push(<sup key={`s${k++}`} className="mt-sup">{strip(m[1]).replace(/-/g, "\u2212")}</sup>);
+    else if (m[2] !== undefined) { out.push(all.slice(0, all.indexOf("_"))); out.push(<sub key={`s${k++}`} className="mt-sub">{strip(m[2])}</sub>); }
+    else for (const part of all.matchAll(/([A-Z][a-z]?)(\d*)/g)) { out.push(part[1]); if (part[2]) out.push(<sub key={`s${k++}`} className="mt-sub">{part[2]}</sub>); }
+    last = at + all.length;
+  }
+  if (last < text.length) out.push(text.slice(last));
+  return out;
+}
 /** Card text with real typeset maths: $…$, $$…$$, \(…\) and \[…\] go through KaTeX, everything else through formatMath
  *  (so a bare "x^2" still reads well). A piece KaTeX cannot parse falls back to the plain-text conversion. */
 const MATH_SPAN = /\$\$([\s\S]+?)\$\$|\$([^$\n]+?)\$|\\\(([\s\S]+?)\\\)|\\\[([\s\S]+?)\\\]/g;
@@ -556,7 +634,7 @@ export function MathText({ text }: { text: string }) {
     let last = 0, k = 0;
     for (const m of text.matchAll(MATH_SPAN)) {
       const at = m.index ?? 0;
-      if (at > last) out.push(formatMath(text.slice(last, at)));
+      if (at > last) out.push(...plainScripts(text.slice(last, at)));
       const tex = (m[1] ?? m[2] ?? m[3] ?? m[4] ?? "").trim();
       const display = m[1] !== undefined || m[4] !== undefined;
       let html: string | null = null;
@@ -564,7 +642,7 @@ export function MathText({ text }: { text: string }) {
       out.push(html === null ? formatMath(m[0]) : <span key={k++} className={display ? "deck-math-block" : undefined} dangerouslySetInnerHTML={{ __html: html }} />);
       last = at + m[0].length;
     }
-    if (last < text.length) out.push(formatMath(text.slice(last)));
+    if (last < text.length) out.push(...plainScripts(text.slice(last)));
     return out;
   }, [text]);
   return <>{parts}</>;
